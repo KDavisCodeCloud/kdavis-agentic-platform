@@ -1,3 +1,49 @@
+# API keys and secrets
 .env
-*.enc
+*.env
+.env.*
+secrets.enc
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Client secrets — never committed
+clients/*/secrets.enc
+clients/*/.env
+
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform state — contains secrets
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Kubernetes secrets
+*-secret.yaml
+*-secrets.yaml
+
+# LLM audit log — stays local, not pushed
+# (contains timing/usage data you may not want public)
+# Comment this out if you want it tracked
+knowledge/operator/llm-audit.md
+
+# Editor
+.vscode/
+.idea/
+*.swp
