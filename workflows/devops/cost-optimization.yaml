@@ -1,0 +1,65 @@
+# Cost Optimization Workflow — KDavis Agentic Platform
+# workflows/devops/cost-optimization.yaml
+#
+# Trigger: Scheduled (weekly) or manual GitHub Issue
+# Flow: Scan → Analyze → Propose → Human Approval → Implement
+# All cost changes require human approval (Rule 3)
+
+name: cost-optimization
+version: 1.0.0
+client_config: clients/{client_slug}/config.yaml
+
+trigger:
+  type: scheduled
+  cron: "0 9 * * 1"   # Every Monday 9am
+  manual_trigger: true  # Also fires on GitHub Issue with label cost:scan
+
+steps:
+
+  - id: scan
+    agent: agents/devops/finops-agent/agent.py
+    task_type: cost_optimization_analysis
+    system_prompt: |
+      You are a FinOps agent. You analyze cloud cost data and identify
+      waste, rightsizing opportunities, and unused resources.
+      You never make changes — you only identify and report.
+    input:
+      client_config: "{client_config}"
+      lookback_days: 30
+    output:
+      findings: list
+      estimated_monthly_savings: float
+      highest_impact_item: string
+
+  - id: propose
+    agent: agents/devops/finops-agent/agent.py
+    task_type: fix_planning
+    input:
+      findings: "{steps.scan.output.findings}"
+    output:
+      proposals: list
+      total_savings: float
+      risk_level: low | medium | high
+
+  - id: hitl_approval
+    type: human_approval
+    notification_channel: "{client_config.escalation_channel}"
+    message_format: .governance/ESCALATION_PROTOCOL.md
+    input:
+      what_agent_needs: "Approval to implement cost optimization changes"
+      why: "{steps.propose.output.proposals}"
+      without_it: "Estimated waste continues at current rate"
+      option_a: "Approve all proposals — implement immediately"
+      option_b: "Approve low-risk items only"
+      option_c: "Defer — no changes this cycle"
+    write_vault: knowledge/clients/{client_slug}/escalations/{timestamp}.md
+
+  - id: implement
+    agent: agents/devops/finops-agent/agent.py
+    task_type: fix_planning
+    condition: hitl_approval.response == "A" or hitl_approval.response == "B"
+    write_vault: knowledge/clients/{client_slug}/audit-trail/{date}.md
+
+audit:
+  write_before_every_step: true
+  destination: knowledge/clients/{client_slug}/audit-trail/{date}.md

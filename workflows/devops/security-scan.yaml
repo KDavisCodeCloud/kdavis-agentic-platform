@@ -1,0 +1,59 @@
+# Security Scan Workflow — KDavis Agentic Platform
+# workflows/devops/security-scan.yaml
+#
+# Trigger: Scheduled (daily) or manual
+# Flow: Scan → Classify → Report or Escalate
+# Critical findings always escalate immediately
+
+name: security-scan
+version: 1.0.0
+client_config: clients/{client_slug}/config.yaml
+
+trigger:
+  type: scheduled
+  cron: "0 6 * * *"    # Every day at 6am
+  manual_trigger: true
+
+steps:
+
+  - id: scan
+    agent: agents/devops/security-agent/agent.py
+    task_type: security_threat_analysis
+    system_prompt: |
+      You are a security scanning agent. You identify misconfigurations,
+      exposed secrets, overprivileged identities, and compliance drift.
+      You never modify anything — scan and report only.
+    input:
+      client_config: "{client_config}"
+    output:
+      findings: list
+      critical_count: int
+      high_count: int
+      medium_count: int
+
+  - id: classify
+    agent: agents/devops/security-agent/agent.py
+    task_type: issue_triage
+    input:
+      findings: "{steps.scan.output.findings}"
+    output:
+      critical_findings: list
+      non_critical_findings: list
+
+  - id: escalate_critical
+    type: escalation
+    condition: steps.classify.output.critical_count > 0
+    notification_channel: "{client_config.escalation_channel}"
+    message_format: .governance/ESCALATION_PROTOCOL.md
+    write_vault: knowledge/clients/{client_slug}/escalations/{timestamp}.md
+
+  - id: file_issues
+    type: github_issue
+    condition: steps.classify.output.non_critical_findings > 0
+    max_issues: 10
+    label: severity:p3
+    write_vault: knowledge/clients/{client_slug}/audit-trail/{date}.md
+
+audit:
+  write_before_every_step: true
+  destination: knowledge/clients/{client_slug}/audit-trail/{date}.md

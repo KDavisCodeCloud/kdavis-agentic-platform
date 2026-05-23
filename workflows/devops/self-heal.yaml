@@ -1,0 +1,163 @@
+# Self-Healing Workflow — KDavis Agentic Platform
+# workflows/devops/self-heal.yaml
+#
+# Trigger: GitHub Issue filed with no factory: label
+# Flow: Triage → Fix → Validate → Close or Escalate
+# State machine: GitHub labels
+# Memory: knowledge/clients/[slug]/
+
+name: self-heal
+version: 1.0.0
+client_config: clients/{client_slug}/config.yaml
+
+trigger:
+  type: github_issue
+  conditions:
+    - no_factory_label: true
+    - label_any: ["severity:p1", "severity:p2", "severity:p3"]
+
+# ── STEP 1 — TRIAGE ──────────────────────────────────────────
+steps:
+
+  - id: triage
+    agent: agents/devops/triage-agent/agent.py
+    label_on_start: factory:triaging
+    task_type: issue_triage
+    system_prompt: |
+      You are a DevOps triage agent. Your job is to classify
+      infrastructure issues and decide if they are actionable.
+      You follow FACTORY_RULES.md at all times.
+      You never modify .governance/ files.
+    input:
+      issue_title: "{issue.title}"
+      issue_body: "{issue.body}"
+      client_stack: "{client_config.stack}"
+    output:
+      decision: accept | reject
+      severity: p1 | p2 | p3
+      classification: string
+      reasoning: string
+    on_accept:
+      add_label: factory:accepted
+      remove_label: factory:triaging
+      next: fix
+    on_reject:
+      add_label: factory:rejected
+      remove_label: factory:triaging
+      close_issue: true
+      write_vault: knowledge/clients/{client_slug}/audit-trail/{date}.md
+      next: end
+
+# ── STEP 2 — FIX ─────────────────────────────────────────────
+  - id: fix
+    agent: agents/devops/fix-issue-agent/agent.py
+    label_on_start: factory:in-progress
+    task_type: fix_planning
+    max_attempts: 2
+    system_prompt: |
+      You are a DevOps fix agent. You propose and execute approved
+      remediation steps for infrastructure issues.
+      You follow FACTORY_RULES.md at all times.
+      You never execute destructive actions without human approval.
+      You never attempt more than 2 fixes before escalating.
+    input:
+      issue: "{issue}"
+      triage_output: "{steps.triage.output}"
+      client_config: "{client_config}"
+      approved_patterns: "knowledge/clients/{client_slug}/decisions/"
+    output:
+      fix_attempted: boolean
+      fix_description: string
+      is_destructive: boolean
+      confidence: low | medium | high
+      rollback_path: string
+    on_destructive:
+      next: hitl_gate
+    on_non_destructive:
+      execute: true
+      next: validate
+    on_max_attempts_reached:
+      add_label: factory:needs-human
+      next: escalate
+
+# ── STEP 3 — HITL GATE (destructive actions only) ────────────
+  - id: hitl_gate
+    type: human_approval
+    label_on_start: factory:needs-human
+    notification_channel: "{client_config.escalation_channel}"
+    message_format: .governance/ESCALATION_PROTOCOL.md
+    input:
+      what_agent_needs: "{steps.fix.output.fix_description}"
+      why: "{steps.fix.output.reasoning}"
+      without_it: "{steps.fix.output.consequence}"
+      already_tried: "{steps.fix.attempts}"
+      option_a: "Approve destructive action — agent executes immediately"
+      option_b: "Execute read-only diagnostic only — no changes"
+      option_c: "Pause workflow — escalate to senior engineer"
+    write_vault: knowledge/clients/{client_slug}/escalations/{timestamp}.md
+    sla:
+      p1_minutes: 15
+      p2_minutes: 120
+      p3_hours: 24
+    on_response_a:
+      remove_label: factory:needs-human
+      add_label: factory:implementing
+      next: fix_execute
+    on_response_b:
+      next: fix_readonly
+    on_response_c:
+      add_label: factory:needs-human
+      next: end
+
+# ── STEP 4 — VALIDATE ────────────────────────────────────────
+  - id: validate
+    agent: agents/devops/validate-agent/agent.py
+    label_on_start: factory:needs-review
+    task_type: validation
+    system_prompt: |
+      You are a DevOps validation agent. You verify that a fix
+      resolved the original issue. You read the original issue only —
+      you do not read the fix plan. You check outcomes, not intentions.
+    input:
+      original_issue: "{issue}"
+      client_config: "{client_config}"
+    output:
+      resolved: boolean
+      evidence: string
+      confidence: low | medium | high
+    on_resolved:
+      add_label: factory:approved
+      remove_label: factory:needs-review
+      close_issue: true
+      write_vault: knowledge/clients/{client_slug}/incidents/{issue_id}.md
+      next: end
+    on_unresolved:
+      add_label: factory:needs-fix
+      remove_label: factory:needs-review
+      increment_attempt_counter: true
+      next: fix_or_escalate
+
+# ── STEP 5 — ESCALATE ────────────────────────────────────────
+  - id: escalate
+    type: escalation
+    label_on_start: factory:needs-human
+    notification_channel: "{client_config.escalation_channel}"
+    message_format: .governance/ESCALATION_PROTOCOL.md
+    input:
+      attempts: "{steps.fix.attempts}"
+      last_error: "{steps.fix.last_error}"
+      issue: "{issue}"
+    write_vault: knowledge/clients/{client_slug}/escalations/{timestamp}.md
+    next: end
+
+# ── AUDIT ────────────────────────────────────────────────────
+audit:
+  write_before_every_step: true
+  destination: knowledge/clients/{client_slug}/audit-trail/{date}.md
+  include:
+    - step_id
+    - timestamp
+    - action_taken
+    - reasoning
+    - expected_outcome
+    - rollback_path
