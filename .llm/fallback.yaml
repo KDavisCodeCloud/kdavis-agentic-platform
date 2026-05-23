@@ -1,0 +1,37 @@
+on_provider_failure:
+  retry_same_provider: 1
+  retry_delay_seconds: 2
+  log_failure: true
+  notify_on_full_chain_failure: true
+
+provider_failure_rules:
+  anthropic:
+    on_rate_limit: retry_with_backoff
+    on_timeout: skip_to_next
+    on_auth_error: skip_to_next
+    backoff_seconds: [2, 5, 10]
+  openai:
+    on_rate_limit: retry_with_backoff
+    on_timeout: skip_to_next
+    on_auth_error: skip_to_next
+    backoff_seconds: [2, 5, 10]
+  openrouter:
+    on_rate_limit: skip_to_next
+    on_timeout: skip_to_next
+    on_auth_error: skip_to_next
+  aws-bedrock:
+    on_rate_limit: retry_with_backoff
+    on_timeout: skip_to_next
+    on_auth_error: skip_to_next
+  ollama:
+    on_rate_limit: retry_with_backoff
+    on_timeout: fail
+    on_connection_error: fail
+
+full_chain_failure_alert:
+  format: |
+    ## ALERT LLM Chain Failure — {timestamp}
+    - Task Type: {task_type}
+    - Tried Providers: {providers_tried}
+    - Last Error: {last_error}
+    - Action Required: Check API keys, account status, and Ollama service
