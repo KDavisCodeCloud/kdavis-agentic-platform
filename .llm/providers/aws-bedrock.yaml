@@ -1,0 +1,13 @@
+provider: aws-bedrock
+enabled: false
+
+auth:
+  region_env: AWS_BEDROCK_REGION
+
+api:
+  service: bedrock-runtime
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.2
+  timeout_seconds: 120

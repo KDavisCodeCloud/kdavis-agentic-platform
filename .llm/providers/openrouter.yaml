@@ -1,0 +1,15 @@
+provider: openrouter
+enabled: true
+
+auth:
+  api_key_env: OPENROUTER_API_KEY
+
+api:
+  base_url: https://openrouter.ai/api/v1
+  http_referer: https://github.com/KDavisCodeCloud/kdavis-agentic-platform
+  x_title: KDavis Agentic Platform
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.2
+  timeout_seconds: 120

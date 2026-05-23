@@ -1,0 +1,10 @@
+provider: ollama
+enabled: true
+
+api:
+  base_url: http://localhost:11434
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.2
+  timeout_seconds: 300

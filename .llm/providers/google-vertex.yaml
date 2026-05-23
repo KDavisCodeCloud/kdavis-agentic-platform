@@ -1,0 +1,11 @@
+provider: google-vertex
+enabled: false
+
+auth:
+  project_env: GOOGLE_CLOUD_PROJECT
+  location_env: GOOGLE_CLOUD_LOCATION
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.2
+  timeout_seconds: 120

@@ -1,0 +1,13 @@
+provider: openai
+enabled: true
+
+auth:
+  api_key_env: OPENAI_API_KEY
+
+api:
+  base_url: https://api.openai.com/v1
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.2
+  timeout_seconds: 120

@@ -1,0 +1,18 @@
+provider: anthropic
+enabled: true
+
+auth:
+  api_key_env: ANTHROPIC_API_KEY
+
+api:
+  base_url: https://api.anthropic.com
+  version_header: "2023-06-01"
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.2
+  timeout_seconds: 120
+
+rate_limits:
+  requests_per_minute: 50
+  tokens_per_minute: 100000

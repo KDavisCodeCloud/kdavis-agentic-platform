@@ -1,0 +1,55 @@
+active_provider: anthropic
+
+model_routing:
+  tier_1_complex:
+    anthropic:    claude-sonnet-4-20250514
+    openai:       gpt-4o
+    openrouter:   anthropic/claude-sonnet-4
+    ollama:       llama3.1:70b
+  tier_2_standard:
+    anthropic:    claude-haiku-4-5-20251001
+    openai:       gpt-4o-mini
+    openrouter:   anthropic/claude-haiku-4-5
+    ollama:       llama3.1:8b
+  tier_3_bulk:
+    anthropic:    claude-haiku-4-5-20251001
+    openai:       gpt-4o-mini
+    openrouter:   openai/gpt-4o-mini
+    ollama:       llama3.1:8b
+
+task_tier_map:
+  incident_root_cause:        tier_1_complex
+  architecture_decision:      tier_1_complex
+  security_threat_analysis:   tier_1_complex
+  proposal_generation:        tier_1_complex
+  assessment_generation:      tier_1_complex
+  cost_optimization_analysis: tier_1_complex
+  issue_triage:               tier_2_standard
+  fix_planning:               tier_2_standard
+  validation:                 tier_2_standard
+  content_drafting:           tier_2_standard
+  lead_qualification:         tier_2_standard
+  escalation_formatting:      tier_2_standard
+  onboarding_summary:         tier_2_standard
+  log_parsing:                tier_3_bulk
+  label_classification:       tier_3_bulk
+  template_filling:           tier_3_bulk
+  audit_log_formatting:       tier_3_bulk
+  content_scheduling:         tier_3_bulk
+
+failover_chain:
+  - anthropic
+  - openrouter
+  - ollama
+
+budget_caps:
+  max_tokens_per_run: 50000
+  max_cost_per_run_usd: 0.50
+  max_api_calls_per_run: 25
+  alert_threshold_usd: 0.25
+
+logging:
+  log_provider_used: true
+  log_token_usage: true
+  log_cost_estimate: true
+  log_destination: knowledge/operator/llm-audit.md

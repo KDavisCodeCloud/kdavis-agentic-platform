@@ -1,0 +1,18 @@
+provider: azure-openai
+enabled: false
+
+auth:
+  api_key_env: AZURE_OPENAI_API_KEY
+  endpoint_env: AZURE_OPENAI_ENDPOINT
+
+api:
+  api_version: "2024-02-01"
+
+deployments:
+  gpt-4o: your-gpt4o-deployment-name
+  gpt-4o-mini: your-gpt4omini-deployment-name
+
+defaults:
+  max_tokens: 4096
+  temperature: 0.2
+  timeout_seconds: 120
