@@ -1,0 +1,32 @@
+# ═══════════════════════════════════════════════════════════
+# KDavis Agentic Platform — Proprietary & Confidential
+# Copyright © 2026 Kelvin Davis. All rights reserved.
+# Client: test-client
+# ═══════════════════════════════════════════════════════════
+
+client_slug: test-client
+client_name: Test Client Inc
+tier: 2
+created: 2026-05-23
+status: active
+
+# LLM preference — overrides global active_provider
+llm_provider: anthropic
+
+# Cloud provider
+cloud: aws                    # aws | azure | gcp | multi
+
+# Stack
+kubernetes: none              # eks | aks | gke | none
+iac: terraform                # terraform | bicep | arm | cdk | cloudformation
+cicd: github-actions          # github-actions | azure-devops | jenkins
+
+# Escalation
+escalation_channel: slack     # slack | email | pagerduty
+secondary_contact: ""         # email or phone for unanswered escalations
+
+# SLA windows
+sla:
+  p1_minutes: 15
+  p2_minutes: 120
+  p3_hours: 24

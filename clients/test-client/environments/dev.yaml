@@ -1,0 +1,41 @@
+# ═══════════════════════════════════════════════════════════
+# KDavis Agentic Platform — Proprietary & Confidential
+# Copyright © 2026 Kelvin Davis. All rights reserved.
+# Client: test-client — Environment: DEV
+# ═══════════════════════════════════════════════════════════
+
+environment: dev
+client_slug: test-client
+created: 2026-05-23
+
+# Cloud configuration
+cloud_account: ""             # AWS account ID or Azure subscription ID
+region: ""                    # Primary region
+resource_group: ""            # Azure RG or AWS equivalent tag
+
+# Kubernetes (if applicable)
+cluster_name: ""
+namespace: dev
+kubeconfig_secret: ""         # Secret name in secrets manager
+
+# Database (if applicable)
+db_host: ""
+db_name: ""
+db_secret: ""                 # Secret name — never plaintext
+
+# Backup policy
+backup:
+  enabled: true
+  schedule: "0 2 * * *"       # Daily at 2am
+  retention_days: 7
+  destination: ""             # S3 bucket or Azure Storage Account
+
+# Disaster recovery
+disaster_recovery:
+  rto_hours: 24               # Recovery Time Objective
+  rpo_hours: 4                # Recovery Point Objective
+  enabled: false              # DR not required for dev
+
+# Promotion gate
+promotion_target: staging
+promotion_requires_approval: true

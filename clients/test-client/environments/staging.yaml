@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════
+# KDavis Agentic Platform — Proprietary & Confidential
+# Copyright © 2026 Kelvin Davis. All rights reserved.
+# Client: test-client — Environment: STAGING
+# ═══════════════════════════════════════════════════════════
+
+environment: staging
+client_slug: test-client
+created: 2026-05-23
+
+# Cloud configuration
+cloud_account: ""
+region: ""
+resource_group: ""
+
+# Kubernetes (if applicable)
+cluster_name: ""
+namespace: staging
+kubeconfig_secret: ""
+
+# Database (if applicable)
+db_host: ""
+db_name: ""
+db_secret: ""
+
+# Backup policy
+backup:
+  enabled: true
+  schedule: "0 1 * * *"       # Daily at 1am
+  retention_days: 14
+  destination: ""
+
+# Disaster recovery
+disaster_recovery:
+  rto_hours: 8
+  rpo_hours: 2
+  enabled: true
+  failover_region: ""
+
+# Promotion gate
+promotion_target: prod
+promotion_requires_approval: true
