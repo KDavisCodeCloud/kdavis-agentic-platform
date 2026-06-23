@@ -34,6 +34,13 @@ cryptography==43.0.1
 # Caching / state
 redis==5.1.1
 
+# LangGraph Postgres checkpointer (uses psycopg, separate from asyncpg)
+langgraph-checkpoint-postgres==2.0.4
+psycopg[binary,pool]==3.2.3
+
+# Rate limiting
+slowapi==0.1.9
+
 # LLM providers (router deps — do not call directly in agent code)
 anthropic==0.34.2
 openai==1.52.0
