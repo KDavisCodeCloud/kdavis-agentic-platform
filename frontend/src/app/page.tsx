@@ -7,6 +7,8 @@ import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { healthCheck } from '@/lib/api'
 
+const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
+
 export default function LandingPage() {
   const router               = useRouter()
   const [token, setToken]    = useState('')
@@ -14,6 +16,11 @@ export default function LandingPage() {
   const [apiUp, setApiUp]    = useState<boolean | null>(null)
 
   useEffect(() => {
+    // In mock mode skip login entirely — go straight to the dashboard
+    if (MOCK_MODE) {
+      router.replace('/dashboard')
+      return
+    }
     // Redirect if already authenticated
     const stored = localStorage.getItem('workspace_token')
     if (stored) router.push('/dashboard')

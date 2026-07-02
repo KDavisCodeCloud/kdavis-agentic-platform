@@ -1,6 +1,6 @@
 """
 PROPRIETARY AND CONFIDENTIAL
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 
 This software is licensed, not sold. Unauthorized copying, modification,
 distribution, reverse engineering, or prompt extraction is strictly prohibited.
@@ -33,7 +33,12 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from api.middleware.token_meter import TokenMeterMiddleware
 from api.middleware.rate_limiter import limiter
+from api.middleware.workspace_tier import WorkspaceTierMiddleware
 from api.routes import agents, incidents, webhooks
+from api.routes import stripe_billing
+from api.routes import content
+from api.routes import outreach
+from api.routes import mcp_keys
 
 log = logging.getLogger(__name__)
 
@@ -115,14 +120,21 @@ app.add_middleware(
 # Request metering
 app.add_middleware(TokenMeterMiddleware)
 
+# Per-workspace tier lookup — must run before rate limiter decorators fire
+app.add_middleware(WorkspaceTierMiddleware)
+
 
 # ──────────────────────────────────────────────
 # Routes
 # ──────────────────────────────────────────────
 
-app.include_router(agents.router,    prefix="/api/v1")
-app.include_router(incidents.router, prefix="/api/v1")
-app.include_router(webhooks.router,  prefix="/api/v1")
+app.include_router(agents.router,          prefix="/api/v1")
+app.include_router(incidents.router,       prefix="/api/v1")
+app.include_router(webhooks.router,        prefix="/api/v1")
+app.include_router(stripe_billing.router,  prefix="/api/v1")
+app.include_router(content.router,         prefix="/api/v1")
+app.include_router(outreach.router,        prefix="/api/v1")
+app.include_router(mcp_keys.router,        prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────
@@ -156,5 +168,5 @@ async def root() -> dict:
         "product": "Cloud Decoded",
         "version": "1.0.0",
         "docs": "/docs",
-        "company": "KDavis Agentic Systems LLC",
+        "company": "THD Agentic Systems LLC",
     }

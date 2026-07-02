@@ -1,12 +1,12 @@
 # End User License Agreement (EULA)
-# Cloud Decoded — KDavis Agentic Systems LLC
+# Cloud Decoded — THD Agentic Systems LLC
 # Effective Date: 2026-01-01
 
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 
 ## 1. Grant of License
 
-KDavis Agentic Systems LLC ("Licensor") grants you ("Licensee") a non-exclusive, non-transferable, revocable license to access and use the Cloud Decoded platform ("Software") strictly in accordance with this Agreement and your active subscription tier.
+THD Agentic Systems LLC ("Licensor") grants you ("Licensee") a non-exclusive, non-transferable, revocable license to access and use the Cloud Decoded platform ("Software") strictly in accordance with this Agreement and your active subscription tier.
 
 ## 2. Restrictions
 
@@ -34,7 +34,7 @@ Access is contingent on an active, paid subscription. The Software automatically
 - Token budget limits per workspace per calendar month
 - Automatic suspension upon non-payment, exceeding limits, or terms violation
 
-KDavis Agentic Systems LLC reserves the right to suspend or terminate access without refund for material violations of this Agreement.
+THD Agentic Systems LLC reserves the right to suspend or terminate access without refund for material violations of this Agreement.
 
 ## 5. No Autonomous Execution
 

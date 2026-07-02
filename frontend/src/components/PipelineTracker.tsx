@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { GitBranch, Zap, CheckCircle2, XCircle, Clock, Loader2 } from 'lucide-react'
+import { GitBranch, Zap, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
@@ -31,19 +31,21 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
     pending_approval: 2,
     executing:        3,
     executed:         4,
-    held:             4,
+    held:             2, // stopped at HITL gate — steps 3-4 stay waiting
     failed:           3,
     budget_exceeded:  2,
   }
 
   const active = activeIndex[status] ?? 2
+  // Any terminal status: the active step is done, not spinning
+  const isTerminal = ['executed', 'held', 'budget_exceeded'].includes(status)
 
   return steps.map((s, i) => ({
     ...s,
     status:
       status === 'failed' && i === active
         ? 'error'
-        : i < active
+        : i < active || (isTerminal && i === active)
         ? 'done'
         : i === active
         ? 'active'
@@ -93,8 +95,20 @@ function IncidentRow({ incident, isSelected, onClick }: {
       {/* Top row */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          {isPending && (
+          {incident.status === 'pending_approval' && (
             <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400 animate-pulse" />
+          )}
+          {incident.status === 'executing' && (
+            <Loader2 className="h-3 w-3 shrink-0 text-blue-400 animate-spin" />
+          )}
+          {incident.status === 'executed' && (
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+          )}
+          {incident.status === 'held' && (
+            <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-500" />
+          )}
+          {incident.status === 'failed' && (
+            <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
           )}
           <span className="truncate text-xs font-mono text-zinc-400">
             #{incident.incident_id.slice(0, 8)}
@@ -138,9 +152,14 @@ function IncidentRow({ incident, isSelected, onClick }: {
           </div>
         ))}
         <span className="ml-2 text-xs text-zinc-600">
-          {steps.find(s => s.status === 'active' || s.status === 'error')?.label
-            ?? steps.find(s => s.status === 'done' && steps.every((x, i2) => i2 > steps.indexOf(s) ? x.status === 'waiting' : true))?.label
-            ?? ''}
+          {{
+            pending_approval: 'Awaiting Approval',
+            executing:        'Executing',
+            executed:         'Resolved',
+            held:             'Held',
+            failed:           'Failed',
+            budget_exceeded:  'Budget Exceeded',
+          }[incident.status]}
         </span>
       </div>
     </motion.div>
@@ -216,8 +235,9 @@ export function PipelineTracker({ incidents, onSelect, selectedId }: PipelineTra
 
       {resolved.length > 0 && (
         <section>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-600">
-            Recent ({resolved.length})
+          <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-400">
+            <CheckCircle2 className="h-3 w-3" />
+            Resolved ({resolved.length})
           </h3>
           <div className="space-y-2">
             {resolved.slice(0, 10).map(inc => (

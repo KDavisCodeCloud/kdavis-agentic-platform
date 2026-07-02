@@ -35,6 +35,9 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
   const [connected, setConnected]     = useState(true)
   const [lastPoll, setLastPoll]       = useState<Date | null>(null)
   const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Ref so fetchIncidents can read latest selected without being in its deps
+  const selectedRef                   = useRef<Incident | null>(null)
+  selectedRef.current = selected
 
   const fetchIncidents = useCallback(async () => {
     try {
@@ -45,9 +48,11 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
       setError(null)
       setLastPoll(new Date())
 
-      // Keep selected incident in sync with latest data
-      if (selected) {
-        const updated = data.find(i => i.incident_id === selected.incident_id)
+      // Keep selected incident in sync — use ref to avoid this callback
+      // being recreated (and the poll being restarted) on every selection change
+      const cur = selectedRef.current
+      if (cur) {
+        const updated = data.find(i => i.incident_id === cur.incident_id)
         if (updated) setSelected(updated)
       }
     } catch (e: unknown) {
@@ -56,7 +61,7 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
     } finally {
       setLoading(false)
     }
-  }, [token, filter, selected])
+  }, [token, filter])
 
   useEffect(() => {
     setLoading(true)

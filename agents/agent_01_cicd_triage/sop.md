@@ -1,5 +1,5 @@
 # SOP: CI/CD Pipeline Failure Triage (Agent 01)
-# Cloud Decoded — KDavis Agentic Systems LLC
+# Cloud Decoded — THD Agentic Systems LLC
 
 ## Purpose
 

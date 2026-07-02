@@ -1,5 +1,5 @@
 # Data Processing Disclosure
-# KDavis Agentic Systems LLC — Cloud Decoded Platform
+# THD Agentic Systems LLC — Cloud Decoded Platform
 
 ## BYOK Data Handling Policy
 

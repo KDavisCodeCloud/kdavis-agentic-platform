@@ -1,4 +1,4 @@
-# Cloud Decoded — KDavis Agentic Systems LLC
+# Cloud Decoded — THD Agentic Systems LLC
 
 **Autonomous DevOps agents for mid-market engineering teams.**
 
@@ -123,4 +123,4 @@ The following directories are read-only or managed by the platform engine:
 Proprietary and confidential. See `legal/LICENSE.md`, `legal/PROPRIETARY_NOTICE.md`, and
 `legal/DATA_PROCESSING.md`.
 
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.

@@ -1,6 +1,6 @@
 """
 PROPRIETARY AND CONFIDENTIAL
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 
 This software is licensed, not sold. Unauthorized copying, modification,
 distribution, reverse engineering, or prompt extraction is strictly prohibited.
@@ -25,6 +25,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from api.middleware.auth import get_workspace
+from pydantic import BaseModel
+
 from db.models import (
     Incident,
     IncidentApproveRequest,
@@ -32,6 +34,10 @@ from db.models import (
     ApprovalResponse,
     RemediationOption,
 )
+
+
+class IncidentRejectRequest(BaseModel):
+    reason: str
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -204,6 +210,55 @@ async def approve_incident(
         selected_option_id=selected_id,
         message="Held — no action taken" if new_status == "held" else "Remediation initiated",
     )
+
+
+@router.post("/{incident_id}/reject")
+async def reject_incident(
+    incident_id: str,
+    body: IncidentRejectRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> dict:
+    """
+    Reject a proposed remediation fix. Records the reason to the audit trail.
+    Callable from the dashboard or via the MCP server (mcp:write scope required).
+    """
+    db = request.app.state.db_pool
+
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, execution_status FROM incidents WHERE id = $1 AND workspace_id = $2",
+            UUID(incident_id),
+            workspace["id"],
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    if row["execution_status"] != "pending_approval":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Incident is '{row['execution_status']}' — only pending_approval incidents can be rejected",
+        )
+
+    async with db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE incidents
+            SET execution_status = 'rejected', custom_solution_input = $1
+            WHERE id = $2
+            """,
+            f"REJECTED: {body.reason}",
+            UUID(incident_id),
+        )
+
+    log.info("[IncidentsRoute] Incident %s rejected: reason=%s", incident_id, body.reason[:80])
+
+    return {
+        "incident_id": incident_id,
+        "status": "rejected",
+        "reason": body.reason,
+    }
 
 
 @router.get("", response_model=list[IncidentResponse])

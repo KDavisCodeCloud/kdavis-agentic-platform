@@ -1,0 +1,164 @@
+{
+  "incidents": [
+    {
+      "incident_id": "inc-001",
+      "workspace_id": "ws-test-001",
+      "agent_id": "agent_01_cicd_triage",
+      "cloud_provider": "aws",
+      "repository": "acme/backend",
+      "branch": "main",
+      "parsed_error": "AWS IAM permission denied: Action 's3:PutObject' is not authorized on resource 'arn:aws:s3:::prod-assets-bucket'. The GitHub Actions runner role 'github-deploy-role' is missing write access to this S3 bucket. This caused the 'Deploy Frontend Assets' step to fail at 02:14 UTC.",
+      "options": [
+        {
+          "id": "opt_1",
+          "title": "Attach S3 write policy to runner role",
+          "description": "Modifies the existing 'github-deploy-role' IAM policy to explicitly allow s3:PutObject on the prod-assets-bucket. Lowest risk — scoped to this bucket only.",
+          "impact": "low",
+          "docs_url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/example-policies-s3.html"
+        },
+        {
+          "id": "opt_2",
+          "title": "Create a new scoped S3 deployment policy",
+          "description": "Creates a separate managed policy with least-privilege S3 access and attaches it to the runner role. Cleaner architecture, slightly more work.",
+          "impact": "low",
+          "docs_url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_create.html"
+        },
+        {
+          "id": "hold",
+          "title": "Hold for manual resolution",
+          "description": "Pause this incident and handle it manually. No automated action will be taken.",
+          "impact": "low",
+          "docs_url": ""
+        }
+      ],
+      "status": "failed",
+      "estimated_duration_seconds": 45,
+      "created_at": "2026-06-24T02:14:33Z"
+    },
+    {
+      "incident_id": "inc-002",
+      "workspace_id": "ws-test-001",
+      "agent_id": "agent_02_k8s_alert",
+      "cloud_provider": "azure",
+      "repository": "contoso/payment-service",
+      "branch": "main",
+      "parsed_error": "Kubernetes pod 'payment-service-7d9f8b-xkq2p' in namespace 'production' is in CrashLoopBackOff state. Container exit code 137 (OOMKilled) — the pod exceeded its 512Mi memory limit 4 times in the last 10 minutes. The payment-service deployment has been degraded since 01:52 UTC.",
+      "options": [
+        {
+          "id": "opt_1",
+          "title": "Increase memory limit to 1Gi",
+          "description": "Updates the payment-service Deployment manifest to set resources.limits.memory: 1Gi. Generates a PR to your GitOps repo for approval before applying.",
+          "impact": "low",
+          "docs_url": "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"
+        },
+        {
+          "id": "opt_2",
+          "title": "Add horizontal pod autoscaler",
+          "description": "Configures HPA to scale payment-service between 2-10 replicas based on memory pressure, distributing load instead of increasing per-pod limits.",
+          "impact": "medium",
+          "docs_url": "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/"
+        },
+        {
+          "id": "opt_3",
+          "title": "Roll back to previous deployment",
+          "description": "Runs kubectl rollout undo deployment/payment-service to restore the last stable version while the memory issue is investigated.",
+          "impact": "medium",
+          "docs_url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#rolling-back-a-deployment"
+        },
+        {
+          "id": "hold",
+          "title": "Hold for manual resolution",
+          "description": "Pause this incident and handle it manually.",
+          "impact": "low",
+          "docs_url": ""
+        }
+      ],
+      "status": "executed",
+      "estimated_duration_seconds": 30,
+      "created_at": "2026-06-24T01:52:11Z"
+    },
+    {
+      "incident_id": "inc-003",
+      "workspace_id": "ws-test-001",
+      "agent_id": "agent_08_drift_detection",
+      "cloud_provider": "aws",
+      "repository": "acme/infra-terraform",
+      "branch": "main",
+      "parsed_error": "Terraform drift detected on 3 resources in 'prod-us-east-1' workspace. Someone manually modified the 'api-server-sg' security group in the AWS console at 00:31 UTC — added inbound rule TCP:5432 from 0.0.0.0/0 (open PostgreSQL to the internet). This is a critical security misconfiguration. The Terraform state no longer matches live infrastructure.",
+      "options": [
+        {
+          "id": "opt_1",
+          "title": "Generate Terraform code to close the port",
+          "description": "Agent writes the corrected aws_security_group_rule resource block and opens a PR to bring the Terraform config back in sync. The open 5432 rule will be removed on next apply.",
+          "impact": "low",
+          "docs_url": "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group_rule"
+        },
+        {
+          "id": "opt_2",
+          "title": "Immediately close the port via AWS CLI",
+          "description": "Runs aws ec2 revoke-security-group-ingress to close the 0.0.0.0/0:5432 rule NOW, then generates a PR to document the fix in Terraform.",
+          "impact": "high",
+          "docs_url": "https://docs.aws.amazon.com/cli/latest/reference/ec2/revoke-security-group-ingress.html"
+        },
+        {
+          "id": "hold",
+          "title": "Hold for manual resolution",
+          "description": "Pause this incident and handle it manually.",
+          "impact": "low",
+          "docs_url": ""
+        }
+      ],
+      "status": "executed",
+      "estimated_duration_seconds": 60,
+      "created_at": "2026-06-24T00:31:47Z"
+    },
+    {
+      "incident_id": "inc-004",
+      "workspace_id": "ws-test-001",
+      "agent_id": "agent_01_cicd_triage",
+      "cloud_provider": "aws",
+      "repository": "acme/frontend",
+      "branch": "feature/upgrade-webpack",
+      "parsed_error": "Node.js dependency conflict in CI pipeline: 'react-scripts@5.0.1' requires 'webpack@4.x' but 'next@14.2.0' requires 'webpack@5.x'. Both are present in package-lock.json causing the build to fail at the 'npm ci' step with ERESOLVE error.",
+      "options": [
+        {
+          "id": "opt_1",
+          "title": "Remove react-scripts, consolidate on Next.js webpack",
+          "description": "Removes react-scripts from package.json (redundant with Next.js) and runs npm install --legacy-peer-deps to regenerate the lockfile.",
+          "impact": "medium",
+          "docs_url": "https://nextjs.org/docs/getting-started/installation"
+        },
+        {
+          "id": "opt_2",
+          "title": "Pin webpack version explicitly",
+          "description": "Adds webpack@5 to package.json resolutions field to force a single version and prevent the conflict.",
+          "impact": "low",
+          "docs_url": "https://docs.npmjs.com/cli/v8/configuring-npm/package-json#overrides"
+        },
+        {
+          "id": "hold",
+          "title": "Hold for manual resolution",
+          "description": "Pause this incident and handle it manually.",
+          "impact": "low",
+          "docs_url": ""
+        }
+      ],
+      "status": "executed",
+      "estimated_duration_seconds": 90,
+      "created_at": "2026-06-23T23:44:02Z"
+    }
+  ],
+  "workspaces": [
+    {
+      "id": "ws-test-001",
+      "company_name": "Acme Engineering",
+      "product_tier": "growth",
+      "cloud_providers": [
+        "aws",
+        "azure"
+      ],
+      "monthly_token_budget_usd": 50,
+      "current_month_spend_usd": 12.4
+    }
+  ]
+}

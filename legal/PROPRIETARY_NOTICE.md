@@ -1,13 +1,13 @@
 # Proprietary Notice
-# KDavis Agentic Systems LLC — Cloud Decoded Platform
+# THD Agentic Systems LLC — Cloud Decoded Platform
 
 PROPRIETARY AND CONFIDENTIAL
 
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 
 This software, including all source code, agent prompt templates, workflow logic, LLM routing
 architecture, system prompts, SOPs, and associated documentation (collectively, "Intellectual
-Property"), is the exclusive proprietary property of KDavis Agentic Systems LLC.
+Property"), is the exclusive proprietary property of THD Agentic Systems LLC.
 
 ## Notice to All Users
 
@@ -26,7 +26,7 @@ authorized to take autonomous remediation action. See `.governance/FACTORY_RULES
 ## IP Ownership
 
 All improvements, customizations, or derivative works created using the Cloud Decoded API or
-agent framework remain the property of KDavis Agentic Systems LLC unless otherwise agreed in
+agent framework remain the property of THD Agentic Systems LLC unless otherwise agreed in
 a separate written Enterprise License Agreement.
 
 ## Reporting Violations
