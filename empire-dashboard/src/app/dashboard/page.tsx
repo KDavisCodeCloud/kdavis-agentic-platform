@@ -13,16 +13,27 @@ export default function DashboardPage() {
   const router = useRouter()
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        router.replace('/login')
-      } else {
-        setReady(true)
-      }
-    })
+    // Implicit flow: tokens arrive in the URL hash (#access_token=...).
+    // detectSessionInUrl processes the hash automatically, then fires
+    // onAuthStateChange with SIGNED_IN. We must NOT redirect to login
+    // before that event fires — check the URL first.
+    const hasAuthInUrl =
+      window.location.hash.includes('access_token') ||
+      window.location.search.includes('code=')
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (!session) router.replace('/login')
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        // Clear the hash from the URL so it doesn't show in the address bar
+        if (window.location.hash) {
+          window.history.replaceState(null, '', window.location.pathname)
+        }
+        setReady(true)
+      } else if (event === 'SIGNED_OUT') {
+        router.replace('/login')
+      } else if (event === 'INITIAL_SESSION' && !hasAuthInUrl) {
+        // No existing session and no tokens incoming — send to login
+        router.replace('/login')
+      }
     })
 
     return () => subscription.unsubscribe()
