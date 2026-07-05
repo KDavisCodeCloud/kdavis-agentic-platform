@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #0b0e13; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #1c222b; border-radius: 4px; }
+</style>
+</helmet>
+
+<div style="display:flex; width:100vw; height:100vh; background:#0b0e13; font-family:'Inter',sans-serif; overflow:hidden;">
+
+  <!-- icon rail -->
+  <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:20px 0; width:60px; background:#0e1218; border-right:1px solid #1c222b; flex-shrink:0;">
+    <div style="width:32px; height:32px; border-radius:9px; background:#5eead4; display:flex; align-items:center; justify-content:center; font-weight:800; color:#0b0e13; font-size:14px; margin-bottom:6px;">C</div>
+    <sc-for list="{{ teamOps }}" as="t" hint-placeholder-count="3">
+      <div style="width:34px; height:34px; border-radius:10px; background:{{ t.bg }}; display:flex; align-items:center; justify-content:center; color:{{ t.color }}; font-size:12px; font-weight:700; cursor:pointer;" title="{{ t.name }}">{{ t.initials }}</div>
+    </sc-for>
+  </div>
+
+  <!-- labeled sidebar -->
+  <div style="display:flex; flex-direction:column; padding:22px 12px; width:196px; background:#0e1218; border-right:1px solid #1c222b; flex-shrink:0; overflow-y:auto;">
+    <div style="font-size:14px; font-weight:700; color:#eef2f5; padding:0 10px 4px;">CEO DECODED</div>
+    <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673; padding:0 10px 16px;">THD Agentic Systems LLC</div>
+    <div style="display:flex; flex-direction:column; gap:2px;">
+      <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="10">
+        <div onClick="{{ n.onClick }}" style="display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:8px; background:{{ n.bg }}; color:{{ n.color }}; font-size:12.5px; font-weight:{{ n.weight }}; cursor:pointer;">
+          <span style="width:12px; height:12px; border:1.5px solid currentColor; border-radius:3px; flex-shrink:0;"></span>{{ n.label }}
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- main -->
+  <div style="flex:1; min-width:0; display:flex; flex-direction:column; overflow-y:auto;">
+
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:20px 30px; border-bottom:1px solid #1c222b; flex-shrink:0;">
+      <div style="font-size:19px; font-weight:700; color:#eef2f5;">{{ activeDeptLabel }}</div>
+      <div style="display:flex; align-items:center; gap:16px;">
+        <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#5b6673;">synced 2026-07-04</span>
+        <div style="width:30px; height:30px; border-radius:50%; background:#5eead4; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#0b0e13;">K</div>
+      </div>
+    </div>
+
+    <div style="padding:24px 30px 40px; display:flex; flex-direction:column; gap:18px;">
+
+      <!-- ============ OVERVIEW ============ -->
+      <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:16px;">
+            <sc-for list="{{ overviewMetrics }}" as="m" hint-placeholder-count="4">
+              <div style="background:{{ m.gradient }}; border:1px solid #1c222b; border-radius:14px; padding:16px 18px; display:flex; flex-direction:column; gap:8px;">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#8b96a3; letter-spacing:0.04em;">{{ m.label }}</div>
+                <div style="font-size:24px; font-weight:800; color:{{ m.color }};">{{ m.value }}</div>
+                <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#5b6673;">{{ m.sub }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">ALL PRODUCTS</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px;">
+              <sc-for list="{{ allProducts }}" as="p" hint-placeholder-count="5">
+                <div style="display:flex; flex-direction:column; background:#10151b; border:1px solid #1c222b; border-radius:12px; padding:14px; gap:8px; cursor:pointer;">
+                  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <span style="font-size:13px; font-weight:700; color:#eef2f5;">{{ p.name }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:20px; background:{{ p.statusBg }}; color:{{ p.statusColor }};">{{ p.status }}</span>
+                  </div>
+                  <div style="font-size:16px; font-weight:800; color:#5eead4;">{{ p.mrr }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673; display:flex; flex-direction:column; gap:2px;">
+                    <span>{{ p.agents }} agents active</span>
+                    <span>{{ p.queueOpen }} open in queue</span>
+                    <span>last run {{ p.lastRun }}</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">AGENT ACTIVITY FEED</div>
+              <sc-for list="{{ activityFeed }}" as="a" hint-placeholder-count="6">
+                <div style="display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid #1c222b;">
+                  <span style="width:7px; height:7px; border-radius:50%; background:{{ a.dotColor }}; flex-shrink:0;"></span>
+                  <span style="font-size:12.5px; font-weight:600; color:#eef2f5; width:100px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ a.agent }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:70px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ a.dept }}</span>
+                  <span style="font-size:12px; color:#aab4bd; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ a.action }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:10px; padding:3px 8px; border-radius:6px; background:{{ a.verdictBg }}; color:{{ a.verdictColor }}; flex-shrink:0;">{{ a.verdict }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:56px; text-align:right; flex-shrink:0;">{{ a.time }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">HITL APPROVAL QUEUE</div>
+              <sc-for list="{{ hitlQueue }}" as="h" hint-placeholder-count="3">
+                <div style="padding:12px 0; border-top:1px solid #1c222b; display:flex; flex-direction:column; gap:8px;">
+                  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                    <span style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ h.agent }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ h.blastBg }}; color:{{ h.blastColor }}; flex-shrink:0;">{{ h.blast }} blast</span>
+                  </div>
+                  <div style="font-size:12px; color:#aab4bd;">{{ h.action }}</div>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="flex:1; height:5px; background:#1c222b; border-radius:3px; overflow:hidden;"><div style="height:100%; width:{{ h.confidence }}%; background:#5eead4; border-radius:3px;"></div></div>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673;">{{ h.confidence }}%</span>
+                  </div>
+                  <div style="display:flex; gap:8px;">
+                    <div style="padding:5px 14px; background:#5eead41a; border:1px solid #5eead455; border-radius:6px; color:#5eead4; font-size:11px; font-weight:600; cursor:pointer;">Approve</div>
+                    <div style="padding:5px 14px; background:transparent; border:1px solid #2a2a2a; border-radius:6px; color:#8b96a3; font-size:11px; font-weight:600; cursor:pointer;">Reject</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">TEAM OPS</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px;">
+              <sc-for list="{{ teamOps }}" as="t" hint-placeholder-count="3">
+                <div style="display:flex; gap:12px; background:{{ t.gradient }}; border:1px solid #1c222b; border-radius:12px; padding:14px;">
+                  <div style="width:34px; height:34px; border-radius:50%; background:{{ t.bg }}; color:{{ t.color }}; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; flex-shrink:0;">{{ t.initials }}</div>
+                  <div style="display:flex; flex-direction:column; gap:3px;">
+                    <span style="font-size:13px; font-weight:600; color:#eef2f5;">{{ t.name }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673;">{{ t.assignment }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">last login {{ t.lastLogin }} · {{ t.pending }} pending</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ FINANCE ============ -->
+      <sc-if value="{{ isFinance }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:16px;">
+            <sc-for list="{{ financeMetrics }}" as="m" hint-placeholder-count="4">
+              <div style="background:{{ m.gradient }}; border:1px solid #1c222b; border-radius:14px; padding:16px 18px; display:flex; flex-direction:column; gap:8px;">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#8b96a3;">{{ m.label }}</div>
+                <div style="font-size:24px; font-weight:800; color:{{ m.color }};">{{ m.value }}</div>
+                <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#5b6673;">{{ m.sub }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">MRR BREAKDOWN</div>
+            <div style="display:flex; flex-direction:column;">
+              <div style="display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,0.8fr) minmax(0,0.8fr) minmax(0,0.8fr) minmax(0,0.8fr); padding:0 0 8px; font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673;">
+                <span>PRODUCT</span><span>MRR</span><span>SUBS</span><span>CHURN</span><span>MOM Δ</span>
+              </div>
+              <sc-for list="{{ mrrBreakdown }}" as="r" hint-placeholder-count="5">
+                <div style="display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,0.8fr) minmax(0,0.8fr) minmax(0,0.8fr) minmax(0,0.8fr); padding:10px 0; border-top:1px solid #1c222b; align-items:center;">
+                  <span style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ r.product }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#5eead4;">{{ r.mrr }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#aab4bd;">{{ r.subs }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#aab4bd;">{{ r.churn }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:{{ r.deltaColor }};">{{ r.delta }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">OPERATING STACK COST</div>
+              <sc-for list="{{ stackCosts }}" as="s" hint-placeholder-count="8">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-top:1px solid #1c222b;">
+                  <div style="display:flex; flex-direction:column;">
+                    <span style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ s.tool }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">{{ s.category }}</span>
+                  </div>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ s.statusBg }}; color:{{ s.statusColor }};">{{ s.status }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:12.5px; color:#eef2f5; width:50px; text-align:right;">{{ s.cost }}</span>
+                </div>
+              </sc-for>
+              <div style="display:flex; justify-content:space-between; padding:12px 0 0; margin-top:4px; border-top:1px solid #2a323d;">
+                <span style="font-size:12.5px; font-weight:700; color:#eef2f5;">Total / month</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:700; color:#5eead4;">{{ stackTotal }}</span>
+              </div>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:16px;">
+              <div style="background:radial-gradient(circle at 15% 15%, #6fce8f22, #10201a 70%); border:1px solid #1f3d2e; border-radius:14px; padding:18px 20px; display:flex; flex-direction:column; gap:9px;">
+                <div style="font-size:13px; font-weight:700; color:#c7cfd6;">EXIT GATE TRACKER</div>
+                <sc-for list="{{ exitGateRows }}" as="r" hint-placeholder-count="5">
+                  <div style="display:flex; justify-content:space-between; padding:7px 0; border-top:1px solid #1a3626;">
+                    <span style="font-size:12px; color:#c7cfd6;">{{ r.label }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:11.5px; color:#5eead4;">{{ r.value }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:18px 20px;">
+                <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:10px;">FINANCE AGENTS</div>
+                <sc-for list="{{ financeAgents }}" as="a" hint-placeholder-count="3">
+                  <div style="padding:9px 0; border-top:1px solid #1c222b;">
+                    <div style="display:flex; justify-content:space-between;">
+                      <span style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ a.name }}</span>
+                      <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ a.statusBg }}; color:{{ a.statusColor }};">{{ a.status }}</span>
+                    </div>
+                    <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; margin-top:3px;">last run {{ a.lastRun }} · {{ a.summary }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ MARKETING & SALES ============ -->
+      <sc-if value="{{ isMarketing }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">PIPELINE</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px;">
+              <sc-for list="{{ pipelineStages }}" as="s" hint-placeholder-count="5">
+                <div style="background:#10151b; border:1px solid #1c222b; border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:6px;">
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#8b96a3;">{{ s.stage }}</div>
+                  <div style="font-size:20px; font-weight:800; color:#eef2f5;">{{ s.count }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5eead4;">{{ s.potential }} MRR potential</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">CONTENT CALENDAR — THIS WEEK</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;">
+              <sc-for list="{{ contentCalendar }}" as="c" hint-placeholder-count="7">
+                <div style="background:#10151b; border:1px solid #1c222b; border-radius:10px; padding:11px; display:flex; flex-direction:column; gap:6px; min-height:110px;">
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">{{ c.day }}</div>
+                  <div style="font-size:12px; font-weight:600; color:#eef2f5; flex:1;">{{ c.post }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#5b6673;">{{ c.product }} · {{ c.platform }}</div>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:9px; padding:3px 7px; border-radius:5px; background:{{ c.statusBg }}; color:{{ c.statusColor }}; align-self:flex-start;">{{ c.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">MARKETING AGENTS</div>
+              <sc-for list="{{ marketingAgents }}" as="a" hint-placeholder-count="3">
+                <div style="padding:10px 0; border-top:1px solid #1c222b;">
+                  <div style="display:flex; justify-content:space-between;">
+                    <span style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ a.name }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ a.statusBg }}; color:{{ a.statusColor }};">{{ a.status }}</span>
+                  </div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; margin-top:3px;">{{ a.preview }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">COLD OUTREACH</div>
+              <sc-for list="{{ outreachSequences }}" as="o" hint-placeholder-count="3">
+                <div style="padding:10px 0; border-top:1px solid #1c222b; display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <div style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ o.sequence }}</div>
+                    <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">{{ o.product }}</div>
+                  </div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#aab4bd; text-align:right;">{{ o.sent }} sent · {{ o.openRate }} open · {{ o.meetings }} mtgs</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ R&D ============ -->
+      <sc-if value="{{ isRnd }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">OPPORTUNITY PIPELINE</div>
+            <sc-for list="{{ opportunities }}" as="o" hint-placeholder-count="5">
+              <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid #1c222b;">
+                <span style="font-size:12.5px; font-weight:600; color:#eef2f5; flex:1;">{{ o.name }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:100px;">{{ o.foundBy }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#5eead4; width:60px;">{{ o.confidence }}%</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ o.verdictBg }}; color:{{ o.verdictColor }}; width:70px; text-align:center;">{{ o.verdict }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:80px; text-align:right;">{{ o.date }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">MSE AGENT SWARM</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px;">
+              <sc-for list="{{ mseAgents }}" as="a" hint-placeholder-count="8">
+                <div style="background:#10151b; border:1px solid #1c222b; border-radius:10px; padding:13px; display:flex; flex-direction:column; gap:5px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:12.5px; font-weight:700; color:#eef2f5;">{{ a.name }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; font-size:9px; padding:2px 7px; border-radius:5px; background:{{ a.statusBg }}; color:{{ a.statusColor }};">{{ a.status }}</span>
+                  </div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">{{ a.focus }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">last run {{ a.lastRun }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">BUILD PIPELINE — 29-DAY CYCLE</div>
+            <sc-for list="{{ buildPipeline }}" as="b" hint-placeholder-count="3">
+              <div style="padding:11px 0; border-top:1px solid #1c222b;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ b.product }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673;">day {{ b.day }}/29 · {{ b.phase }}</span>
+                </div>
+                <div style="height:5px; background:#1c222b; border-radius:3px; overflow:hidden; margin-top:6px;"><div style="height:100%; width:{{ b.pct }}%; background:#5eead4; border-radius:3px;"></div></div>
+                <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673; margin-top:4px;">{{ b.floorNote }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ HR ============ -->
+      <sc-if value="{{ isHr }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">TEAM ROSTER</div>
+            <sc-for list="{{ teamRoster }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:14px; padding:11px 0; border-top:1px solid #1c222b;">
+                <div style="width:30px; height:30px; border-radius:50%; background:{{ r.bg }}; color:{{ r.color }}; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0;">{{ r.initials }}</div>
+                <span style="font-size:13px; font-weight:600; color:#eef2f5; width:110px;">{{ r.name }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#aab4bd; width:110px;">{{ r.role }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#aab4bd; flex:1;">{{ r.access }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ r.permBg }}; color:{{ r.permColor }};">{{ r.permission }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:80px; text-align:right;">{{ r.lastActive }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">ONBOARDING FLOW</div>
+              <sc-for list="{{ onboardingSteps }}" as="s" hint-placeholder-count="5">
+                <div style="display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px solid #1c222b;">
+                  <span style="width:20px; height:20px; border-radius:50%; background:#1c222b; color:#8b96a3; font-family:'JetBrains Mono',monospace; font-size:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">{{ s.n }}</span>
+                  <span style="font-size:12.5px; color:#eef2f5;">{{ s.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">HITL ROUTING RULES</div>
+              <sc-for list="{{ routingRules }}" as="r" hint-placeholder-count="4">
+                <div style="padding:9px 0; border-top:1px solid #1c222b; display:flex; justify-content:space-between;">
+                  <span style="font-size:12px; color:#eef2f5;">{{ r.action }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#5eead4;">→ {{ r.routesTo }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:16px;">APPROVAL CHAIN</div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
+              <div style="background:#5eead41a; border:1px solid #5eead455; border-radius:10px; padding:10px 20px; color:#5eead4; font-size:13px; font-weight:700;">Kelvin — full access, all approvals</div>
+              <div style="width:1px; height:16px; background:#2a323d;"></div>
+              <div style="display:flex; gap:20px;">
+                <div style="background:#16342a; border:1px solid #1c222b; border-radius:10px; padding:9px 16px; color:#6fce8f; font-size:12px; font-weight:600;">Wife — Marketing, Ops, HR</div>
+                <div style="background:#332a18; border:1px solid #1c222b; border-radius:10px; padding:9px 16px; color:#e8963f; font-size:12px; font-weight:600;">Son — R&D, Tech (read-only)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ TECHNOLOGY ============ -->
+      <sc-if value="{{ isTech }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">INFRASTRUCTURE HEALTH</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px;">
+              <sc-for list="{{ infraHealth }}" as="i" hint-placeholder-count="5">
+                <div style="background:#10151b; border:1px solid #1c222b; border-radius:10px; padding:13px; display:flex; flex-direction:column; gap:6px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ i.service }}</span>
+                    <span style="width:8px; height:8px; border-radius:50%; background:{{ i.statusColor }}; flex-shrink:0;"></span>
+                  </div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">checked {{ i.checked }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">AGENT HEALTH</div>
+            <sc-for list="{{ agentHealth }}" as="a" hint-placeholder-count="6">
+              <div style="display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid #1c222b;">
+                <span style="font-size:12.5px; font-weight:600; color:#eef2f5; flex:1;">{{ a.name }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:110px;">{{ a.product }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:70px;">{{ a.lastRun }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ a.statusBg }}; color:{{ a.statusColor }}; width:70px; text-align:center;">{{ a.status }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#e05d5d; width:50px; text-align:right;">{{ a.errors }} err</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">BUILD QUEUE</div>
+              <sc-for list="{{ buildQueue }}" as="b" hint-placeholder-count="6">
+                <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid #1c222b;">
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:2px 7px; border-radius:5px; background:{{ b.prioBg }}; color:{{ b.prioColor }};">{{ b.priority }}</span>
+                  <span style="font-size:12px; color:#eef2f5; flex:1;">{{ b.item }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">{{ b.repo }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673; width:60px; text-align:right;">{{ b.owner }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">COST OPTIMIZER</div>
+              <sc-for list="{{ costFlags }}" as="c" hint-placeholder-count="2">
+                <div style="padding:9px 0; border-top:1px solid #1c222b;">
+                  <div style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ c.service }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#e8963f; margin-top:3px;">{{ c.flag }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ LEGAL ============ -->
+      <sc-if value="{{ isLegal }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="background:#241a10; border:1px solid #3d2e1f; border-radius:10px; padding:12px 18px; font-family:'JetBrains Mono',monospace; font-size:11.5px; color:#e8963f;">
+            This is AI-assisted information, not legal advice. Consult a licensed attorney before acting.
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">DOCUMENT VAULT</div>
+            <sc-for list="{{ legalDocs }}" as="d" hint-placeholder-count="5">
+              <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid #1c222b;">
+                <span style="font-size:12.5px; font-weight:600; color:#eef2f5; flex:1;">{{ d.name }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:110px;">{{ d.product }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:50px;">{{ d.version }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:80px; text-align:right;">{{ d.updated }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">LEGAL AGENTS</div>
+              <sc-for list="{{ legalAgents }}" as="a" hint-placeholder-count="3">
+                <div style="padding:9px 0; border-top:1px solid #1c222b;">
+                  <div style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ a.name }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; margin-top:3px;">{{ a.desc }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">QUICK Q&A</div>
+              <div style="background:#10151b; border:1px solid #1c222b; border-radius:10px; padding:12px; font-size:12px; color:#aab4bd;">"Does an EULA need updating when adding a new product tier?"</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; margin-top:8px;">logged 2026-07-02 · Entity Advisor · cited AZ LLC operating agreement §4</div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ OPERATIONS ============ -->
+      <sc-if value="{{ isOps }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">BUILD ORDER</div>
+            <sc-for list="{{ buildOrder }}" as="b" hint-placeholder-count="8">
+              <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid #1c222b;">
+                <span style="width:14px; height:14px; border:1.5px solid {{ b.doneColor }}; background:{{ b.doneBg }}; border-radius:3px; flex-shrink:0;"></span>
+                <span style="font-size:12.5px; color:{{ b.textColor }};">{{ b.item }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">WEEKLY RHYTHM</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;">
+              <sc-for list="{{ weeklyRhythm }}" as="w" hint-placeholder-count="7">
+                <div style="background:{{ w.bg }}; border:1px solid #1c222b; border-radius:10px; padding:11px; display:flex; flex-direction:column; gap:5px; min-height:90px;">
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">{{ w.day }}</div>
+                  <div style="font-size:12px; font-weight:600; color:{{ w.textColor }};">{{ w.session }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:9.5px; color:#5b6673;">{{ w.note }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">GAP TRACKER</div>
+              <sc-for list="{{ gaps }}" as="g" hint-placeholder-count="3">
+                <div style="padding:9px 0; border-top:1px solid #1c222b; display:flex; justify-content:space-between;">
+                  <span style="font-size:12px; color:#eef2f5;">{{ g.name }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ g.statusBg }}; color:{{ g.statusColor }};">{{ g.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">SESSION LOG</div>
+              <sc-for list="{{ sessionLog }}" as="s" hint-placeholder-count="4">
+                <div style="padding:9px 0; border-top:1px solid #1c222b;">
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673;">{{ s.date }} · {{ s.product }}</div>
+                  <div style="font-size:12px; color:#aab4bd; margin-top:2px;">{{ s.summary }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ============ ADVISORY ============ -->
+      <sc-if value="{{ isAdvisory }}" hint-placeholder-val="{{ false }}">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px;">
+          <sc-for list="{{ advisors }}" as="a" hint-placeholder-count="3">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px; display:flex; flex-direction:column; gap:12px;">
+              <div style="font-size:14px; font-weight:700; color:{{ a.color }};">{{ a.name }}</div>
+              <div style="background:#10151b; border:1px solid #1c222b; border-radius:10px; padding:12px; font-size:12px; color:#aab4bd;">{{ a.threadPreview }}</div>
+              <div>
+                <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673; margin-bottom:4px;">MEMORY SUMMARY</div>
+                <div style="font-size:11.5px; color:#aab4bd;">{{ a.memory }}</div>
+              </div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">context: {{ a.context }}</div>
+              <div style="padding:8px 14px; background:{{ a.color }}1a; border:1px solid {{ a.color }}55; border-radius:7px; color:{{ a.color }}; font-size:12px; font-weight:600; text-align:center; cursor:pointer;">Brief this advisor</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- ============ VIDEO / CREATIVE ============ -->
+      <sc-if value="{{ isVideo }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:18px;">
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">SCRIPT QUEUE</div>
+            <sc-for list="{{ scripts }}" as="s" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid #1c222b;">
+                <span style="font-size:12.5px; font-weight:600; color:#eef2f5; flex:1;">{{ s.title }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; width:100px;">{{ s.product }}</span>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ s.statusBg }}; color:{{ s.statusColor }};">{{ s.status }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px;">
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">HEYGEN RENDERS</div>
+              <sc-for list="{{ renders }}" as="r" hint-placeholder-count="3">
+                <div style="display:flex; align-items:center; gap:12px; padding:9px 0; border-top:1px solid #1c222b;">
+                  <div style="width:40px; height:26px; border-radius:5px; background:repeating-linear-gradient(45deg, #1c222b 0 4px, #10151b 4px 8px); flex-shrink:0;"></div>
+                  <span style="font-size:12px; color:#eef2f5; flex:1;">{{ r.title }}</span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ r.statusBg }}; color:{{ r.statusColor }};">{{ r.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+              <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">DISTRIBUTION QUEUE</div>
+              <sc-for list="{{ distribution }}" as="d" hint-placeholder-count="3">
+                <div style="padding:9px 0; border-top:1px solid #1c222b; display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <div style="font-size:12px; font-weight:600; color:#eef2f5;">{{ d.title }}</div>
+                    <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:#5b6673;">{{ d.platform }} · {{ d.time }}</div>
+                  </div>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:9.5px; padding:3px 8px; border-radius:5px; background:{{ d.statusBg }}; color:{{ d.statusColor }};">{{ d.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#141a22; border:1px solid #1c222b; border-radius:14px; padding:20px;">
+            <div style="font-size:13px; font-weight:700; color:#c7cfd6; margin-bottom:14px;">CREATIVE AGENTS</div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px;">
+              <sc-for list="{{ videoAgents }}" as="a" hint-placeholder-count="3">
+                <div style="background:#10151b; border:1px solid #1c222b; border-radius:10px; padding:13px;">
+                  <div style="font-size:12.5px; font-weight:600; color:#eef2f5;">{{ a.name }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5b6673; margin-top:3px;">{{ a.desc }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { dept: 'overview' };
+
+  renderVals() {
+    const dept = this.state.dept;
+    const setDept = (d) => this.setState({ dept: d });
+
+    const navRaw = [
+      { id: 'overview', label: 'Overview' },
+      { id: 'finance', label: 'Finance' },
+      { id: 'marketing', label: 'Marketing & Sales' },
+      { id: 'rnd', label: 'R&D' },
+      { id: 'hr', label: 'HR' },
+      { id: 'tech', label: 'Technology' },
+      { id: 'legal', label: 'Legal' },
+      { id: 'ops', label: 'Operations' },
+      { id: 'advisory', label: 'Advisory' },
+      { id: 'video', label: 'Video / Creative' },
+    ];
+    const navItems = navRaw.map(n => {
+      const active = n.id === dept;
+      return {
+        ...n,
+        bg: active ? '#5eead41a' : 'transparent',
+        color: active ? '#5eead4' : '#8b96a3',
+        weight: active ? 600 : 400,
+        onClick: () => setDept(n.id),
+      };
+    });
+    const activeDeptLabel = (navRaw.find(n => n.id === dept) || navRaw[0]).label;
+
+    const teamOpsRaw = [
+      { initials: 'KD', name: 'Kelvin', bg: '#1e2a3d', color: '#7ea6f5', assignment: 'All departments · all approvals', lastLogin: '2m ago', pending: 3 },
+      { initials: 'W', name: 'Wife', bg: '#16342a', color: '#6fce8f', assignment: 'Marketing, Operations, HR approvals', lastLogin: '3h ago', pending: 2 },
+      { initials: 'S', name: 'Son', bg: '#332a18', color: '#e8963f', assignment: 'R&D, Technology (read-only)', lastLogin: '1d ago', pending: 0 },
+    ];
+    const teamOps = teamOpsRaw.map(t => ({ ...t, gradient: `linear-gradient(150deg, ${t.color}18, #141a22 85%)` }));
+
+    const overviewMetrics = [
+      { label: 'PORTFOLIO MRR', value: '$0', color: '#5eead4', sub: 'exit gate: $15K × 3mo', gradient: 'linear-gradient(150deg, #5eead424, #141a22 75%)' },
+      { label: 'PRODUCTS LIVE', value: '0 / 5', color: '#eef2f5', sub: 'building → launch', gradient: 'linear-gradient(150deg, #ffffff14, #141a22 75%)' },
+      { label: 'OPEN HITL ITEMS', value: '3', color: '#e8963f', sub: 'awaiting Kelvin approval', gradient: 'linear-gradient(150deg, #e8963f24, #141a22 75%)' },
+      { label: 'STACK BURN / MO', value: '$142', color: '#7c9eff', sub: '8 tools active', gradient: 'linear-gradient(150deg, #7c9eff24, #141a22 75%)' },
+    ];
+
+    const allProducts = [
+      { name: 'Cloud Decoded', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', mrr: '$0', agents: 3, queueOpen: 2, lastRun: '14m ago' },
+      { name: 'Micro SaaS Engine', status: 'Building', statusBg: '#5b8def22', statusColor: '#7ea6f5', mrr: '$0', agents: 2, queueOpen: 6, lastRun: '2h ago' },
+      { name: 'GTA 6 Hub', status: 'Planning', statusBg: '#2a2a2a', statusColor: '#9aa2ab', mrr: '$0', agents: 0, queueOpen: 1, lastRun: '—' },
+      { name: 'CEO Decoded', status: 'Building', statusBg: '#5b8def22', statusColor: '#7ea6f5', mrr: '$0', agents: 1, queueOpen: 4, lastRun: '6m ago' },
+      { name: 'Hustle Decoded', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', mrr: '$0', agents: 1, queueOpen: 1, lastRun: '1d ago' },
+    ];
+
+    const activityFeed = [
+      { agent: 'Ledger', dept: 'R&D', action: 'Scored 3 new opportunities in fintech vertical', verdict: 'Pass', verdictBg: '#6fce8f22', verdictColor: '#6fce8f', dotColor: '#6fce8f', time: '2m ago' },
+      { agent: 'Revenue Tracker', dept: 'Finance', action: 'Synced MRR from Stripe — no change', verdict: 'Pass', verdictBg: '#6fce8f22', verdictColor: '#6fce8f', dotColor: '#6fce8f', time: '8m ago' },
+      { agent: 'Contract Review', dept: 'Legal', action: 'Flagged non-standard indemnity clause in DPA draft', verdict: 'Flagged', verdictBg: '#e05d5d22', verdictColor: '#e05d5d', dotColor: '#e05d5d', time: '22m ago' },
+      { agent: 'LinkedIn Content', dept: 'Marketing', action: 'Drafted post for Cloud Decoded launch', verdict: 'Pending', verdictBg: '#e8963f22', verdictColor: '#e8963f', dotColor: '#e8963f', time: '41m ago' },
+      { agent: 'Cost Optimizer', dept: 'Technology', action: 'Flagged Vercel plan as underutilized', verdict: 'Flagged', verdictBg: '#e05d5d22', verdictColor: '#e05d5d', dotColor: '#e05d5d', time: '1h ago' },
+      { agent: 'Dispatch', dept: 'R&D', action: 'Kicked off swarm cadence run #142', verdict: 'Pass', verdictBg: '#6fce8f22', verdictColor: '#6fce8f', dotColor: '#6fce8f', time: '3h ago' },
+    ];
+
+    const hitlQueue = [
+      { agent: 'Contract Review', action: 'Approve updated DPA template for Cloud Decoded', confidence: 82, blast: 'Medium', blastBg: '#e8963f22', blastColor: '#e8963f' },
+      { agent: 'LinkedIn Content', action: 'Publish 3 scheduled posts for this week', confidence: 91, blast: 'Low', blastBg: '#6fce8f22', blastColor: '#6fce8f' },
+      { agent: 'Cost Optimizer', action: 'Downgrade Vercel plan to save $12/mo', confidence: 88, blast: 'Low', blastBg: '#6fce8f22', blastColor: '#6fce8f' },
+    ];
+
+    const financeMetrics = [
+      { label: 'TOTAL MRR', value: '$0', color: '#5eead4', sub: 'across 5 products', gradient: 'linear-gradient(150deg, #5eead424, #141a22 75%)' },
+      { label: 'MOM GROWTH', value: '+0%', color: '#eef2f5', sub: 'pre-revenue', gradient: 'linear-gradient(150deg, #ffffff14, #141a22 75%)' },
+      { label: 'RUNWAY', value: '18 mo', color: '#7c9eff', sub: 'at current burn', gradient: 'linear-gradient(150deg, #7c9eff24, #141a22 75%)' },
+      { label: 'STACK BURN', value: '$142/mo', color: '#e8963f', sub: '8 tools active', gradient: 'linear-gradient(150deg, #e8963f24, #141a22 75%)' },
+    ];
+
+    const mrrBreakdown = [
+      { product: 'Cloud Decoded', mrr: '$0', subs: '0', churn: '—', delta: '—', deltaColor: '#5b6673' },
+      { product: 'Micro SaaS Engine', mrr: '$0', subs: '0', churn: '—', delta: '—', deltaColor: '#5b6673' },
+      { product: 'GTA 6 Hub', mrr: '$0', subs: '0', churn: '—', delta: '—', deltaColor: '#5b6673' },
+      { product: 'CEO Decoded', mrr: '$0', subs: '0', churn: '—', delta: '—', deltaColor: '#5b6673' },
+      { product: 'Hustle Decoded', mrr: '$0', subs: '0', churn: '—', delta: '—', deltaColor: '#5b6673' },
+    ];
+
+    const stackCosts = [
+      { tool: 'Supabase', category: 'Infra', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$25' },
+      { tool: 'Vercel', category: 'Infra', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$20' },
+      { tool: 'n8n', category: 'Automation', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$0' },
+      { tool: 'Anthropic API', category: 'AI', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$38' },
+      { tool: 'Videomule', category: 'Video', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$15' },
+      { tool: 'ElevenLabs', category: 'Video', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$11' },
+      { tool: 'HeyGen', category: 'Video', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$29' },
+      { tool: 'Resend', category: 'Email', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', cost: '$0' },
+    ];
+    const stackTotal = '$138/mo';
+
+    const exitGateRows = [
+      { label: 'CorVel exit threshold', value: '$15K MRR × 3 consecutive months' },
+      { label: 'Client count at threshold', value: '~27 clients · blended $299/$699/$2,499' },
+      { label: 'Projected MRR at 27 clients', value: '$19K – $24K/month' },
+      { label: '$15M exit requires', value: '~$2.5M ARR · 6× multiple' },
+      { label: 'Current progress', value: 'infra complete · revenue: $0' },
+    ];
+
+    const financeAgents = [
+      { name: 'Revenue Tracker', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', lastRun: '8m ago', summary: 'synced Stripe, no change' },
+      { name: 'Cash Flow Monitor', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', lastRun: '1h ago', summary: '18mo runway at current burn' },
+      { name: 'Expense Categorizer', status: 'Queued', statusBg: '#e8963f22', statusColor: '#e8963f', lastRun: '6h ago', summary: 'awaiting new stack charges' },
+    ];
+
+    const pipelineStages = [
+      { stage: 'COLD', count: '240', potential: '$71K' },
+      { stage: 'CONTACTED', count: '58', potential: '$17K' },
+      { stage: 'DEMO', count: '12', potential: '$3.6K' },
+      { stage: 'TRIAL', count: '5', potential: '$1.5K' },
+      { stage: 'PAYING', count: '0', potential: '$0' },
+    ];
+
+    const contentCalendar = [
+      { day: 'MON', post: 'Cloud Decoded launch teaser', product: 'CD', platform: 'LinkedIn', status: 'Published', statusBg: '#6fce8f22', statusColor: '#6fce8f' },
+      { day: 'TUE', post: 'Behind the build: MSE swarm', product: 'MSE', platform: 'X', status: 'Approved', statusBg: '#5b8def22', statusColor: '#7ea6f5' },
+      { day: 'WED', post: '—', product: '—', platform: '—', status: 'Open', statusBg: '#2a2a2a', statusColor: '#9aa2ab' },
+      { day: 'THU', post: 'Hustle Decoded case study', product: 'HD', platform: 'YouTube', status: 'Draft', statusBg: '#332a18', statusColor: '#e8963f' },
+      { day: 'FRI', post: 'Exit gate progress update', product: 'CD', platform: 'LinkedIn', status: 'Draft', statusBg: '#332a18', statusColor: '#e8963f' },
+      { day: 'SAT', post: '—', product: '—', platform: '—', status: 'Open', statusBg: '#2a2a2a', statusColor: '#9aa2ab' },
+      { day: 'SUN', post: '—', product: '—', platform: '—', status: 'Open', statusBg: '#2a2a2a', statusColor: '#9aa2ab' },
+    ];
+
+    const marketingAgents = [
+      { name: 'LinkedIn Content', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', preview: 'Drafted 3 posts for this week, 1 pending approval' },
+      { name: 'Cold Email', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', preview: 'Sent 40 emails to Cloud Decoded ICP list' },
+      { name: 'Conversion Tracker', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', preview: 'No trial → paying conversions yet this week' },
+    ];
+
+    const outreachSequences = [
+      { sequence: 'CD — SMB Ops Managers', product: 'Cloud Decoded', sent: 320, openRate: '38%', meetings: 4 },
+      { sequence: 'MSE — Dev Agencies', product: 'Micro SaaS Engine', sent: 145, openRate: '29%', meetings: 1 },
+      { sequence: 'HD — Creator Economy', product: 'Hustle Decoded', sent: 90, openRate: '44%', meetings: 2 },
+    ];
+
+    const opportunities = [
+      { name: 'Automated invoice reconciliation for clinics', foundBy: 'Ledger', confidence: 88, verdict: 'Pass', verdictBg: '#6fce8f22', verdictColor: '#6fce8f', date: 'Jul 3' },
+      { name: 'Compliance doc generator for AZ LLCs', foundBy: 'Comply', confidence: 76, verdict: 'Pass', verdictBg: '#6fce8f22', verdictColor: '#6fce8f', date: 'Jul 2' },
+      { name: 'Micro-CRM for solo contractors', foundBy: 'Anchor', confidence: 61, verdict: 'Flag', verdictBg: '#e8963f22', verdictColor: '#e8963f', date: 'Jul 2' },
+      { name: 'Runway forecasting for indie devs', foundBy: 'Runway', confidence: 54, verdict: 'Flag', verdictBg: '#e8963f22', verdictColor: '#e8963f', date: 'Jul 1' },
+      { name: 'Social listening for niche subreddits', foundBy: 'Pulse', confidence: 39, verdict: 'Reject', verdictBg: '#e05d5d22', verdictColor: '#e05d5d', date: 'Jun 30' },
+    ];
+
+    const mseAgents = [
+      { name: 'Dispatch', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', focus: 'orchestrator · cadence scheduler', lastRun: '3h ago' },
+      { name: 'Verdict', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', focus: 'quality gate · 71% pass rate', lastRun: '3h ago' },
+      { name: 'Ledger', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', focus: 'fintech vertical', lastRun: '2m ago' },
+      { name: 'Anchor', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', focus: 'SMB tooling vertical', lastRun: '25m ago' },
+      { name: 'Comply', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', focus: 'compliance/legal vertical', lastRun: '1h ago' },
+      { name: 'Runway', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', focus: 'financial modeling vertical', lastRun: '1h ago' },
+      { name: 'Pulse', status: 'Active', statusBg: '#6fce8f22', statusColor: '#6fce8f', focus: 'social/community vertical', lastRun: '4h ago' },
+      { name: 'Scout', status: 'Queued', statusBg: '#e8963f22', statusColor: '#e8963f', focus: 'competitive scan vertical', lastRun: '6h ago' },
+    ];
+
+    const buildPipeline = [
+      { product: 'Cloud Decoded', day: 24, phase: 'launch prep', pct: 83, floorNote: '$4K MRR floor enforced before exit' },
+      { product: 'Micro SaaS Engine', day: 9, phase: 'factory build', pct: 31, floorNote: 'infra complete, agent build underway' },
+      { product: 'GTA 6 Hub', day: 1, phase: 'planning', pct: 3, floorNote: 'Nov 2026 release window target' },
+    ];
+
+    const teamRoster = [
+      { initials: 'KD', bg: '#1e2a3d', color: '#7ea6f5', name: 'Kelvin', role: 'Founder/CEO', access: 'All departments', permission: 'Full', permBg: '#5eead422', permColor: '#5eead4', lastActive: 'now' },
+      { initials: 'W', bg: '#16342a', color: '#6fce8f', name: 'Wife', role: 'Ops & Marketing', access: 'Marketing, Ops, HR', permission: 'Scoped', permBg: '#5b8def22', permColor: '#7ea6f5', lastActive: '3h ago' },
+      { initials: 'S', bg: '#332a18', color: '#e8963f', name: 'Son', role: 'Apprentice', access: 'R&D, Technology', permission: 'Read-only', permBg: '#2a2a2a', permColor: '#9aa2ab', lastActive: '1d ago' },
+    ];
+
+    const onboardingSteps = [
+      { n: 1, label: 'Send magic link invite' },
+      { n: 2, label: 'Select role' },
+      { n: 3, label: 'Assign department scoping' },
+      { n: 4, label: 'Apply RLS permissions' },
+      { n: 5, label: 'Confirm and activate account' },
+    ];
+
+    const routingRules = [
+      { action: 'Contract clause flags', routesTo: 'Kelvin' },
+      { action: 'Marketing content approval', routesTo: 'Wife' },
+      { action: 'Infra cost changes', routesTo: 'Kelvin' },
+      { action: 'R&D opportunity review', routesTo: 'Kelvin' },
+    ];
+
+    const infraHealth = [
+      { service: 'Supabase', statusColor: '#6fce8f', checked: '1m ago' },
+      { service: 'Vercel', statusColor: '#6fce8f', checked: '1m ago' },
+      { service: 'FastAPI', statusColor: '#6fce8f', checked: '2m ago' },
+      { service: 'n8n', statusColor: '#e8963f', checked: '4m ago' },
+      { service: 'GitHub', statusColor: '#6fce8f', checked: '5m ago' },
+    ];
+
+    const agentHealth = [
+      { name: 'Dispatch', product: 'MSE', lastRun: '3h ago', status: 'Healthy', statusBg: '#6fce8f22', statusColor: '#6fce8f', errors: 0 },
+      { name: 'Revenue Tracker', product: 'Finance', lastRun: '8m ago', status: 'Healthy', statusBg: '#6fce8f22', statusColor: '#6fce8f', errors: 0 },
+      { name: 'LinkedIn Content', product: 'Marketing', lastRun: '41m ago', status: 'Healthy', statusBg: '#6fce8f22', statusColor: '#6fce8f', errors: 0 },
+      { name: 'Contract Review', product: 'Legal', lastRun: '22m ago', status: 'Healthy', statusBg: '#6fce8f22', statusColor: '#6fce8f', errors: 0 },
+      { name: 'Cost Optimizer', product: 'Technology', lastRun: '1h ago', status: 'Flagged', statusBg: '#e8963f22', statusColor: '#e8963f', errors: 1 },
+      { name: 'Script Agent', product: 'Video', lastRun: '5h ago', status: 'Healthy', statusBg: '#6fce8f22', statusColor: '#6fce8f', errors: 0 },
+    ];
+
+    const buildQueue = [
+      { priority: 'P1', prioBg: '#e05d5d22', prioColor: '#e05d5d', item: 'Fix Stripe webhook retry logic', repo: 'cloud-decoded', owner: 'Kelvin' },
+      { priority: 'P1', prioBg: '#e05d5d22', prioColor: '#e05d5d', item: 'RLS policy audit on tenant tables', repo: 'mse-core', owner: 'Kelvin' },
+      { priority: 'P2', prioBg: '#e8963f22', prioColor: '#e8963f', item: 'HITL approval batch UI', repo: 'ceo-decoded', owner: 'Kelvin' },
+      { priority: 'P2', prioBg: '#e8963f22', prioColor: '#e8963f', item: 'Domain + scaffold for GTA 6 Hub', repo: 'gta6-hub', owner: 'Kelvin' },
+      { priority: 'P3', prioBg: '#2a2a2a', prioColor: '#9aa2ab', item: 'Refactor n8n agent cadence configs', repo: 'mse-core', owner: 'Kelvin' },
+      { priority: 'P3', prioBg: '#2a2a2a', prioColor: '#9aa2ab', item: 'Add DPA template to legal vault', repo: 'legal-docs', owner: 'Kelvin' },
+    ];
+
+    const costFlags = [
+      { service: 'Vercel Pro plan', flag: 'Underutilized — recommend downgrade, saves $12/mo' },
+      { service: 'ElevenLabs tier', flag: 'Approaching character limit — consider next tier before month end' },
+    ];
+
+    const legalDocs = [
+      { name: 'EULA', product: 'Cloud Decoded', version: 'v1.2', updated: 'Jun 28' },
+      { name: 'Privacy Policy', product: 'Cloud Decoded', version: 'v1.1', updated: 'Jun 28' },
+      { name: 'DPA Template', product: 'All products', version: 'v0.9', updated: 'Jul 1' },
+      { name: 'LLC Operating Agreement', product: 'THD Agentic Systems', version: 'v1.0', updated: 'Jan 15' },
+      { name: 'Contractor Agreement Template', product: 'All products', version: 'v1.0', updated: 'May 10' },
+    ];
+
+    const legalAgents = [
+      { name: 'Contract Review', desc: 'Flags non-standard clauses in uploaded docs' },
+      { name: 'Entity Advisor', desc: 'AZ/Maricopa LLC compliance guidance' },
+      { name: 'IP Flagging', desc: 'Flags IP conflicts in offers & partnership agreements' },
+    ];
+
+    const buildOrder = [
+      { item: 'MSE infra — all 12 GAPs closed', doneColor: '#6fce8f', doneBg: '#6fce8f', textColor: '#5b6673' },
+      { item: 'Agent cadence live across swarm', doneColor: '#6fce8f', doneBg: '#6fce8f', textColor: '#5b6673' },
+      { item: 'Cloud Decoded MVP built', doneColor: '#6fce8f', doneBg: '#6fce8f', textColor: '#5b6673' },
+      { item: 'Deploy blockers: Supabase, Stripe IDs, hosting, DNS, auth pages', doneColor: '#5b6673', doneBg: 'transparent', textColor: '#eef2f5' },
+      { item: 'Micro SaaS Engine factory build', doneColor: '#5b6673', doneBg: 'transparent', textColor: '#eef2f5' },
+      { item: 'CEO Decoded — internal agents first', doneColor: '#5b6673', doneBg: 'transparent', textColor: '#eef2f5' },
+      { item: 'GTA 6 Hub domain + scaffold', doneColor: '#5b6673', doneBg: 'transparent', textColor: '#eef2f5' },
+      { item: 'Hustle Decoded — LinkedIn + YouTube parallel track', doneColor: '#5b6673', doneBg: 'transparent', textColor: '#eef2f5' },
+    ];
+
+    const weeklyRhythm = [
+      { day: 'MON', session: 'Claude Code — MSE', note: '6 open items', bg: '#10151b', textColor: '#eef2f5' },
+      { day: 'TUE', session: 'Build night — Cloud Decoded', note: '2 open items', bg: '#10151b', textColor: '#eef2f5' },
+      { day: 'WED', session: 'Claude Design — CEO Decoded', note: '4 open items', bg: '#10151b', textColor: '#eef2f5' },
+      { day: 'THU', session: 'Planning — GTA 6 Hub', note: '1 open item', bg: '#10151b', textColor: '#eef2f5' },
+      { day: 'FRI', session: 'Agent build night', note: '3 open items', bg: '#10151b', textColor: '#eef2f5' },
+      { day: 'SAT', session: 'Son — Tuesday session catch-up', note: 'learning track', bg: '#10151b', textColor: '#eef2f5' },
+      { day: 'SUN', session: 'Locked — rest', note: 'not editable', bg: '#0d1015', textColor: '#5b6673' },
+    ];
+
+    const gaps = [
+      { name: 'Batch-review dashboard missing', statusBg: '#e8963f22', statusColor: '#e8963f', status: 'Open' },
+      { name: 'Ops/support hire not yet made', statusBg: '#e8963f22', statusColor: '#e8963f', status: 'Open' },
+      { name: 'Tiered autonomy rules undocumented', statusBg: '#6fce8f22', statusColor: '#6fce8f', status: 'Closed' },
+    ];
+
+    const sessionLog = [
+      { date: '2026-07-04', product: 'MSE', summary: 'Closed final infra GAP, agent cadence confirmed live. Next: first product deploy blockers.' },
+      { date: '2026-07-01', product: 'Cloud Decoded', summary: 'MVP feature-complete. Next: Supabase + Stripe IDs + hosting + DNS.' },
+      { date: '2026-06-27', product: 'CEO Decoded', summary: 'Scoped 9-department nav and component spec. Next: build Overview + Finance.' },
+      { date: '2026-06-20', product: 'Micro SaaS Engine', summary: 'Factory scaffolding complete. Next: first agent build cycle.' },
+    ];
+
+    const advisors = [
+      { name: 'CFO Advisor', color: '#5eead4', threadPreview: '"At 27 clients blended, projected MRR lands $19K–$24K — comfortably above the $15K exit gate."', memory: 'Tracking exit math, pricing tiers, runway at $142/mo burn.', context: 'Finance dept data, exit gate tracker' },
+      { name: 'CMO Advisor', color: '#7ea6f5', threadPreview: '"Trial-first CTA is converting cold traffic better than demo requests — keep it as the sole CTA on Cloud Decoded."', memory: 'Tracking funnel stages, content calendar, ICP for each product.', context: 'Marketing dept data, pipeline' },
+      { name: 'CTO Advisor', color: '#e8963f', threadPreview: '"Dedicated Stripe per MSE product keeps exit isolation clean — do not consolidate billing across products."', memory: 'Tracking architecture decisions, agent design, tech debt flags.', context: 'Technology dept data, build queue' },
+    ];
+
+    const scripts = [
+      { title: 'Cloud Decoded — 2min demo', product: 'Cloud Decoded', status: 'Approved', statusBg: '#6fce8f22', statusColor: '#6fce8f' },
+      { title: 'MSE swarm walkthrough', product: 'MSE', status: 'Draft', statusBg: '#332a18', statusColor: '#e8963f' },
+      { title: 'Hustle Decoded origin story', product: 'Hustle Decoded', status: 'Rendering', statusBg: '#5b8def22', statusColor: '#7ea6f5' },
+    ];
+
+    const renders = [
+      { title: 'Cloud Decoded demo v2', status: 'Complete', statusBg: '#6fce8f22', statusColor: '#6fce8f' },
+      { title: 'MSE swarm walkthrough', status: 'Rendering', statusBg: '#5b8def22', statusColor: '#7ea6f5' },
+      { title: 'Hustle Decoded teaser', status: 'Failed', statusBg: '#e05d5d22', statusColor: '#e05d5d' },
+    ];
+
+    const distribution = [
+      { title: 'Cloud Decoded demo v2', platform: 'YouTube Shorts', time: 'Jul 6, 9am', status: 'Approved', statusBg: '#6fce8f22', statusColor: '#6fce8f' },
+      { title: 'Fall product update', platform: 'Instagram Reels', time: 'Jul 7, 2pm', status: 'Pending', statusBg: '#e8963f22', statusColor: '#e8963f' },
+      { title: 'Behind the swarm', platform: 'TikTok', time: 'Jul 8, 11am', status: 'Pending', statusBg: '#e8963f22', statusColor: '#e8963f' },
+    ];
+
+    const videoAgents = [
+      { name: 'Script Agent', desc: 'Product brief → 2min script from reusable template' },
+      { name: 'HeyGen Render', desc: 'Submits to HeyGen API, polls status, returns render' },
+      { name: 'Distribution Agent', desc: 'Pushes to platforms via n8n, logs publish confirmation' },
+    ];
+
+    return {
+      navItems, activeDeptLabel, teamOps,
+      isOverview: dept === 'overview', isFinance: dept === 'finance', isMarketing: dept === 'marketing',
+      isRnd: dept === 'rnd', isHr: dept === 'hr', isTech: dept === 'tech', isLegal: dept === 'legal',
+      isOps: dept === 'ops', isAdvisory: dept === 'advisory', isVideo: dept === 'video',
+      overviewMetrics, allProducts, activityFeed, hitlQueue,
+      financeMetrics, mrrBreakdown, stackCosts, stackTotal, exitGateRows, financeAgents,
+      pipelineStages, contentCalendar, marketingAgents, outreachSequences,
+      opportunities, mseAgents, buildPipeline,
+      teamRoster, onboardingSteps, routingRules,
+      infraHealth, agentHealth, buildQueue, costFlags,
+      legalDocs, legalAgents,
+      buildOrder, weeklyRhythm, gaps, sessionLog,
+      advisors,
+      scripts, renders, distribution, videoAgents,
+    };
+  }
+}
+
+</script>
+</body>
+</html>

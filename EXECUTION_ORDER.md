@@ -206,75 +206,64 @@ Finance agents also start Week 3 — they have no design dependency, run Day 1.
 
 Claude Code sessions:
 - Session 11 (Day 1 AM): GitHub Actions visibility + WORKFLOWS.md
-  As noted above — all workflows documented, notifications configured
+  All workflows documented, notifications configured
 
 - Session 11 (Day 1 PM): Finance agent foundation
-  Build in this order:
   1. finance/ folder structure and all sub-files
   2. New Supabase tables: expenses, revenue_events, invoices,
-     tax_estimates, deductions, salary_records, investment_allocations
-  3. document_store.py — Google Drive or S3 organized folder structure,
-     create all year folders and category subfolders programmatically
-  4. stripe_revenue.py — Stripe API polling, writes to revenue_events
+     tax_estimates, deductions, salary_records, investment_allocations,
+     revenue_opportunities, team_members, tasks, task_comments,
+     onboarding_steps, slack_channels — add ALL now in one migration
+  3. document_store.py — organized folder structure
+  4. stripe_revenue.py — Stripe API polling
 
-- Session 12 (Day 2): Finance agents
-  1. accounting_agent.py — receipt OCR, expense categorization,
-     invoice tracking, monthly summary, Stripe sync
-  2. receipt_processor.py + expense_categorizer.py + invoice_tracker.py
-  3. Set up receipts@yourdomain.com email forwarding to processing endpoint
-  4. finance_assistant_agent.py — read-only retrieval, chat-routable
-  5. Wire finance_assistant to chat_router_agent for "where is X" queries
+- Session 12 (Day 2 AM): Finance agents
+  1. accounting_agent.py + all accounting sub-files
+  2. finance_assistant_agent.py — read-only retrieval
 
-- Session 13 (Day 3 AM): Tax, wealth, and revenue intelligence agents
-  1. tax_agent.py — deduction tracker, quarterly estimator, year-end packager
-  2. wealth_agent.py — cash flow surplus, salary benchmark, investment tracking
-  3. deduction_tracker.py, quarterly_estimator.py, year_end_packager.py
-  4. cash_flow_monitor.py, salary_advisor.py, investment_tracker.py
-  5. revenue_intelligence_agent.py — reads all existing tables, no new infra
-     needed except revenue_opportunities table (add to Supabase now)
-  Build revenue_intelligence last in this session — it depends on
-  portfolio_monitor, visitor_capture, and lead data all being wired first.
-  Run first scan manually after build: point at any test product data
-  to confirm opportunity cards surface correctly in dashboard.
-  Note: every output from tax and wealth agents carries the CPA/advisor
-  disclaimer label — build this into base output, not per-agent
+- Session 12 (Day 2 PM): Tax, wealth, revenue intelligence agents
+  1. tax_agent.py + sub-files
+  2. wealth_agent.py + sub-files
+  3. revenue_intelligence_agent.py — last, reads all other data
 
-- Session 13 (Day 3 PM): Finance dashboard panel
-  Finance Command Center panel in dashboard:
-  - Always-visible header metrics (YTD revenue, expenses, net, reserve, surplus)
-  - Recent transactions sub-panel
-  - Pending items sub-panel (uncategorized receipts, overdue invoices)
-  - Upcoming deadlines sub-panel (quarterly estimate due dates)
-  - Deduction tracker sub-panel
-  - Wealth targets sub-panel
-  - CPA handoff button
-  Wire to finance data hooks
+- Session 13 (Day 3): Team management system
+  Build in this exact order:
+  1. team.thdstack.com — new Next.js app in monorepo
+     Shares Supabase instance and design system only
+     Completely separate from app.thdstack.com
+  2. Onboarding flow — 5 pages:
+     Page 1: Welcome (name, role display)
+     Page 2: Set password (Supabase Auth updateUser)
+     Page 3: Personal information (name, phone)
+     Page 4: Read role document (ROLE.md inline + checkbox)
+     Page 5: Agreement + submit
+  3. Role-scoped team dashboard — two views:
+     CLAUDE_CODE_EMPLOYEE: tasks + current task detail
+     CLAUDE_DESIGN_EMPLOYEE: tasks + design brief view
+  4. Task submission + approval loop UI components
+  5. onboarding_agent.py — invite flow, folder generation,
+     offboarding sequence
+  6. leads/integrations/slack.py — Slack API wrapper
+  7. Wire Slack to onboarding and task events
+  8. Offboarding flow: account deletion + task reassignment
 
-- Session 14 (Day 4): Design system integration + DecisionCard + HITLQueue
-  Step 29 + Step component from queue
-  Copy Claude Design output into dashboard/internal/design/
-  Build design-system.css from the token output
-  Set up component file structure matching CLAUDE.md spec
+- Session 14 (Day 4): Design system + Owner dashboard components
+  Apply Claude Design output from dashboard/internal/design/
+  1. design-system.css from Claude Design Brief 1 output
+  2. useAgentStream.ts, useDecisionQueue.ts, usePortfolioData.ts
+  3. DecisionCard.tsx — test all states + keyboard shortcuts
+  4. HITLQueue.tsx — active queue + on-hold section
+  5. CommandHeader.tsx
 
-- Session 11 (Day 2): Core hooks
-  Steps 26–28: useAgentStream, useDecisionQueue, usePortfolioData
-  These power all components — build them before any component
-
-- Session 12 (Day 3): DecisionCard + HITLQueue
-  Step 29 + Step component from queue
-  This is your most important component. Test all card states.
-  Test keyboard shortcuts A/M/H/R. Test hold with timer. Test expiry.
-
-- Session 13 (Day 4): Analytics + PortfolioHealth
-  Steps 30, 34
-  Test product switcher — switching product updates all graphs in place
-  Test kill switch toggle with confirmation modal
-
-- Session 14 (Day 5): AgentRoster + AgentChat + CommandHeader + app.tsx
-  Steps 31–33, 35
-  Wire chat router to actual agents
-  Test command palette Cmd+K
-  Build PWA manifest for mobile access
+- Session 15 (Day 5): Remaining owner dashboard components
+  1. Analytics.tsx — product switcher, combined + per-product
+  2. AgentRoster.tsx — with tech debt badge + team member rows
+  3. AgentChat.tsx — agents only, Claude think tank labeled
+  4. PortfolioHealth.tsx — sparklines, kill switch, row expand
+  5. Finance Command Center panel
+  6. Revenue Opportunities panel
+  7. Team panel — member list, current tasks, status badges
+  8. app.tsx — root layout, keyboard shortcuts, PWA manifest
 
 End of Week 3 checkpoint:
 ✓ Dashboard running locally with mock data
@@ -393,29 +382,31 @@ CLAUDE CODE — paste CLAUDE.md first, then session prompt:
   Week 2 Day 5 AM: Session 10 AM — code_quality_agent + CI gate
   Week 2 Day 5 PM: Session 10 PM — lead capture + payments
   Week 3 Day 1-2:  Session 11 — finance agents + revenue intel
-  Week 3 Day 3-4:  Session 12 — dashboard hooks + DecisionCard
-  Week 3 Day 4-5:  Session 13 — remaining dashboard components
-  Week 4 Day 1-2:  Session 14 — product factory template + Terraform
-  Week 5 Day 1-2:  Session 15 — versioning + Obsidian + release docs
+  Week 3 Day 3:    Session 12 — team auth + onboarding system
+                   Read: design_handoff/TEAM_DASHBOARD_BRIEF.md
+  Week 3 Day 4:    Session 13 — owner dashboard (CEO Decoded handoff)
+                   Read: design_handoff/design_handoff_ceo_decoded/README.md
+  Week 3 Day 5:    Session 14 — team dashboard (5 color overrides only)
+                   Read: design_handoff/TEAM_DASHBOARD_BRIEF.md
+  Week 4 Day 1-2:  Session 15 — product factory template + Terraform
+  Week 5 Day 1-2:  Session 16 — versioning + Obsidian + release docs
   Week 4+:         Per product — clone template, wire lead capture
 
-CLAUDE DESIGN — paste brief directly, no CLAUDE.md needed:
-  Week 2 Day 1:    Brief 1 — Dashboard design system
-                   (start immediately, zero dependencies)
-  Week 2 Day 3:    Brief 2 — Dashboard layout
-                   (after Brief 1 complete)
-  Week 4 Day 1:    Brief 3 — Product landing page
-                   (after research_agent output approved)
-  Week 4 Day 1:    Brief 4 — Product interactive demo
-                   (parallel with Brief 3, same day)
-  Week 6+:         Brief 3 + Brief 4 repeat per new product
-                   Research agent auto-populates variables
+CLAUDE DESIGN — product landing pages and demos only:
+  Dashboards are already designed. No Claude Design needed for them.
+  Claude Code builds both from the CEO Decoded handoff files.
 
-NEVER WAIT ON ONE FOR THE OTHER:
-  Design system can start Week 2 Day 1 with no agents built yet.
-  Product landing page can design while Code builds the agent logic.
-  The only true dependency: landing page brief needs research_agent JSON output.
-  That takes 1 day. Run research_agent on Day 1, start Claude Design Day 2.
+  Week 4 Day 1:    Brief 1 — Product landing page
+                   (after research_agent output approved)
+  Week 4 Day 1:    Brief 2 — Product interactive demo
+                   (parallel with Brief 1, same day)
+  Week 6+:         Brief 1 + Brief 2 repeat per new product
+                   Research agent auto-populates all variables
+
+NO DEPENDENCY BETWEEN CODE AND DESIGN FOR DASHBOARDS:
+  Dashboard build is Claude Code only from Week 3 onward.
+  Claude Design starts Week 4 for the first product landing page.
+  Run research_agent Day 1 of Week 4. Claude Design starts Day 2.
 
 ---
 
@@ -448,8 +439,11 @@ NEVER WAIT ON ONE FOR THE OTHER:
 | Product N lead capture    | Claude Code   | Week 6+ (template)|
 | Product N email sequences | Claude Code   | Week 6+ (agent)   |
 | Product N landing page    | Claude Design | Week 6+           |
-| Finance/accounting agents | Claude Code   | Week 3 Day 1-2    |
-| Revenue intelligence agent| Claude Code   | Week 3 Day 3      |
-| Finance dashboard panel   | Claude Code   | Week 3 Day 3      |
+| Finance/accounting agents | Claude Code   | Week 3 Day 2      |
+| Revenue intelligence agent| Claude Code   | Week 3 Day 2      |
+| Team auth + onboarding    | Claude Code   | Week 3 Day 3      |
+| team.thdstack.com         | Claude Code   | Week 3 Day 3      |
+| Slack integration         | Claude Code   | Week 3 Day 3      |
+| Finance dashboard panel   | Claude Code   | Week 3 Day 4-5    |
 | Document store setup      | Claude Code   | Week 3 Day 2      |
 ```

@@ -24,6 +24,10 @@ venv/
 
 # Node
 node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+package-lock.json
 
 # OS
 .DS_Store

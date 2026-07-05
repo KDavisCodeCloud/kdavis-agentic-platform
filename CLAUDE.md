@@ -588,42 +588,228 @@ These run in parallel. See EXECUTION ORDER section below.
 
 ---
 
-## DASHBOARD DESIGN SYSTEM (for Claude Design brief)
+## DASHBOARD DESIGN SYSTEM
+
+### Source of truth
+
+The CEO Decoded design handoff (`design_handoff_ceo_decoded/CEO Decoded.dc.html`)
+is the canonical design reference for ALL internal dashboards:
+- app.thdstack.com (owner dashboard)
+- team.thdstack.com (team dashboard — slight variation)
+- CEO Decoded, MSE, and any future internal tools
+
+The HTML file is a design prototype only — do NOT copy its inline
+styles into production. Extract all values into a shared design token
+file and use the codebase's normal styling approach (CSS modules,
+Tailwind, or styled-components — confirm with Claude Code session).
+
+### Three surfaces, one system
+
+Same components, same typography, same status colors.
+Background shifts per context for instant visual distinction.
 
 ```
-Color system:
-  Background:      #0a0a0f  (near-black, not pure black)
-  Surface:         #12121a  (~8% lighter than background)
-  Surface raised:  #1a1a24  (cards, panels)
-  Text primary:    #e8e6e0  (off-white)
-  Text secondary:  #9997a0  (labels, descriptions)
-  Text mono:       #c8c6be  (numbers, metrics, logs)
+OWNER / CEO DECODED / MSE DASHBOARDS
+app.thdstack.com
+  --bg-base:          #0b0e13   main content area
+  --bg-sidebar:       #0e1218   icon rail + labeled sidebar
+  --bg-card:          #141a22   section cards
+  --bg-tile:          #10151b   nested tiles inside cards
+  --border:           #1c222b   all cards, dividers, borders
+  Accent (primary):   #5eead4   mint — brand accent
 
-Status colors (only saturated colors in the UI):
-  Active/healthy:  #00d4a8  (electric teal)
-  Needs attention: #f5a623  (amber)
-  Critical:        #ff4f4f  (coral red)
-  Completed:       #3fd17a  (muted green)
-  Archived/dead:   #555555  (gray)
-  Held:            #7a78ff  (soft violet — distinct from all others)
+TEAM DASHBOARD
+team.thdstack.com — same system, blue-shifted background
+  --bg-base:          #0d1117   slightly blue-cast near-black
+  --bg-sidebar:       #0f1520   blue-shifted sidebar
+  --bg-card:          #141c28   blue-shifted cards
+  --bg-tile:          #111825   blue-shifted tiles
+  --border:           #1c2535   blue-shifted borders
+  Accent (primary):   #5eead4   same mint — consistent brand
+  Feeling: calmer, collaborative. Instantly distinct from owner view.
 
-Typography:
-  Numbers/metrics/logs/timestamps: JetBrains Mono
-  Labels/navigation/descriptions:  Space Grotesk
-  Never mix in the same line.
-  Numbers always render larger than their labels.
-  Heading hierarchy by weight, not size alone.
-
-Spacing: 4px base unit. All spacing = multiples of 4.
-Borders: 1px, color = surface raised + 20% opacity. Subtle, not prominent.
-Radius: 6px default, 10px for cards, 3px for status pills.
-Motion: all transitions under 200ms. Tool, not showcase.
-  New HITL card: slide from right + amber pulse border
-  Approved: green flash (300ms) → collapse to one line
-  Rejected: red flash (300ms) → collapse with reason
-  MRR update: count-up animation, never jumps
-  Agent chat message: smooth append, no full re-render
+PRODUCT LANDING PAGES
+[product].thdstack.com — ICP-derived per research agent output
+  Colors, surface, accent: all from DESIGN_[product_id].md
+  Never generic. Always industry-native.
 ```
+
+### Exact design tokens (from CEO Decoded handoff)
+
+```
+BACKGROUNDS
+  App/base:               #0b0e13
+  Sidebar/rail:           #0e1218
+  Section card:           #141a22
+  Nested tile:            #10151b
+  Borders (all):          #1c222b
+  Exit-gate card:         radial-gradient(circle at 15% 15%,
+                            #6fce8f22, #10201a 70%)
+                          border: #1f3d2e
+  Legal disclaimer:       #241a10  border: #3d2e1f
+
+TEXT
+  Primary heading/value:  #eef2f5
+  Section label:          #c7cfd6
+  Secondary/body:         #aab4bd
+  Muted mono metadata:    #5b6673
+  Slightly brighter muted: #8b96a3
+
+ACCENT PALETTE (status, product color coding, metric card tints)
+  Mint (brand primary):   #5eead4
+  Blue (pending/queued):  #7ea6f5   badge bg: #5b8def22
+  Green (active/pass):    #6fce8f   badge bg: #6fce8f22
+  Amber (warning/flagged): #e8963f  badge bg: #e8963f22
+  Red (error/reject):     #e05d5d   badge bg: #e05d5d22
+  Neutral/backlog:        #9aa2ab   on bg: #2a2a2a
+
+TYPOGRAPHY
+  Body/headings:   Inter (400/500/600/700/800)
+  Data/mono:       JetBrains Mono (400/500/600/700)
+  Scale:
+    24px/800  metric values (MRR numbers, key figures)
+    19px/700  page title (department heading in top bar)
+    14-15px/600-700  card titles, names
+    13px/700  section labels (ALL CAPS in mockup — use sentence
+              case in production per design system rules)
+    12-12.5px/400-600  body, table text
+    10-11.5px  mono metadata, timestamps, badges
+
+RADIUS
+  Cards/sections:   14px
+  Nested tiles:     10-12px
+  Badges/pills:     5-6px (or 20px fully rounded)
+  Avatars:          50% (circle) or 10px (square-ish)
+
+SPACING
+  Section gap:      16-18px
+  Card padding:     20px (16-18px for metric cards)
+  Row padding:      8-13px
+  Row divider:      1px solid #1c222b top border between rows
+
+METRIC CARD (exact pattern from handoff)
+  Background: linear-gradient(150deg, [accent+24 alpha], #141a22 75%)
+  Border: 1px solid #1c222b
+  Radius: 14px, padding: 16px 18px
+  Label: 11px mono #8b96a3 uppercase letter-spacing 0.04em
+  Value: 24px/800 in accent color
+  Sub:   11px mono #5b6673
+
+SECTION CARD (exact pattern)
+  Background: #141a22
+  Border: 1px solid #1c222b
+  Radius: 14px, padding: 20px
+  Header label: 13px/700/#c7cfd6, margin-bottom 14px
+
+AGENT ROSTER CARD (exact pattern)
+  Name: 13px/700
+  Status badge: pill, 9.5-10px mono, tinted bg/text per status
+  Last-run: mono, muted
+  Output summary: 1-2 lines, mono, muted
+
+STATUS/VERDICT BADGE (exact pattern)
+  Shape: border-radius 5-6px or 20px fully rounded
+  Font: mono 9-10.5px
+  Background: accent at ~13% alpha
+  Text: full accent color
+  Standard mapping (match exactly):
+    Green  #6fce8f  bg #6fce8f22 = active/pass/healthy
+    Blue   #7ea6f5  bg #5b8def22 = building/pending/queued-ok
+    Amber  #e8963f  bg #e8963f22 = planning/flagged/caution
+    Red    #e05d5d  bg #e05d5d22 = error/reject/critical
+    Gray   #9aa2ab  bg #2a2a2a   = future/backlog/neutral
+
+HITL APPROVAL ROW (exact pattern)
+  Agent name + blast-radius badge (one line)
+  Plain-language action (below)
+  Confidence bar: 5px track #1c222b, fill #5eead4 + percentage
+  Approve button: mint outline
+  Reject button: gray outline
+
+ACTIVITY FEED ROW (exact pattern)
+  Colored dot (verdict color) + agent name (max ~100px, truncate)
+  + department (~70px, truncate) + action text (flex, truncate)
+  + verdict badge + timestamp
+  CRITICAL: action column must truncate with ellipsis — never
+  force horizontal overflow. Use min-width:0 on flex children.
+
+LAYOUT RULES (from handoff — preserve exactly)
+  Grid columns: repeat(auto-fit, minmax(Npx, 1fr))
+  Two-col splits: minmax(0, Nfr) — never bare Nfr
+  Flex children with truncating text: always min-width:0
+  Outer frame: no page scroll — only main content column scrolls
+  Three-part layout: icon rail (60px) + sidebar (196px) + main (flex)
+  Icon rail border: 1px solid #1c222b right
+  Sidebar border:   1px solid #1c222b right
+
+SIDEBAR NAV ITEM (exact pattern)
+  12×12px square outline icon + label
+  Font: 12.5px, padding: 9px 10px, radius: 8px
+  Active:   bg #5eead41a, text #5eead4, weight 600
+  Inactive: bg transparent, text #8b96a3, weight 400
+
+TOP BAR (exact pattern)
+  Dept title: 19px/700/#eef2f5 left
+  Right: sync timestamp (11px mono #5b6673) + 30px circular avatar
+  Avatar K: bg #5eead4, text #0b0e13, 12px/700
+  Border-bottom: 1px solid #1c222b
+  Padding: 20px 30px
+
+SCROLLBAR (exact pattern)
+  Width: 8px
+  Thumb: #1c222b, radius: 4px
+```
+
+### Team dashboard variation
+
+Same system. Apply these overrides only — nothing else changes:
+
+```css
+/* team.thdstack.com overrides only */
+--bg-base:     #0d1117;
+--bg-sidebar:  #0f1520;
+--bg-card:     #141c28;
+--bg-tile:     #111825;
+--border:      #1c2535;
+```
+
+All other tokens — accent, text, status colors, typography,
+spacing, radius, components — inherit from the main system unchanged.
+
+The blue-shifted background is the only distinction.
+It is enough. Instant recognition. No confusion.
+
+### Mobile requirements (all dashboards)
+
+The CEO Decoded handoff notes this is desktop-only currently.
+The team and owner dashboards for thdstack.com must be mobile-ready.
+Product landing pages must be mobile-first.
+
+Mobile rules for team and owner dashboards:
+  Touch targets: minimum 44px height
+  Bottom tab bar replaces sidebar on mobile (≤768px)
+  PWA manifest: add to home screen iOS + Android
+  Font size minimum 16px on inputs (prevents iOS auto-zoom)
+  Offline: show last-cached state, never blank screens
+  No hover-only interactions
+
+### Design files location in repo
+
+```
+design_handoff/
+├── ceo_decoded/
+│   ├── CEO Decoded.dc.html    # Source of truth prototype
+│   ├── README.md              # Full handoff spec
+│   └── screenshots/           # 10 department PNGs
+└── team_dashboard/
+    └── (Claude Design output goes here — Brief 2)
+```
+
+Claude Code reads CEO Decoded.dc.html and README.md as the
+authoritative design reference before building any dashboard
+component. README.md contains every exact pixel value needed.
+
+
 
 ---
 
@@ -1628,47 +1814,10 @@ New table: revenue_opportunities — add to Phase 1 Supabase schema.
 
 ---
 Next action: Scaffold folder structure (Phase 1, Step 1)
-Last session: 2026-07-02 — Read CLAUDE.md + EXECUTION_ORDER.md into repo, placed both at repo root
+Last session: —
 Last deploy: —
-Active products: 0 (Cloud Decoded built, pending infra deploy)
+Active products: 0
 Platform MRR: $0
-
-## WHAT'S BEEN BUILT (Cloud Decoded — product #1, pre-platform)
-
-Cloud Decoded was built before the platform foundation existed.
-It lives in this repo at the root level (api/, agents/, mcp/, frontend/).
-It is a working product. It needs hosting + Supabase provisioned to go live.
-
-COMPLETED — Cloud Decoded product:
-- FastAPI backend: incidents, agents, outreach, content, MCP, billing, health routes
-- 10 specialized DevOps agents (incident-response, cost-sentinel, deployment-guard, etc.)
-- Outreach pipeline: ICP scoring, lead qualification, connection note generation, pacing
-- Content pipeline: blog post, LinkedIn post, demo script generation
-- MCP server: FastMCP SSE transport, OAuth + API key auth, rate limiting, audit logging
-- MCP API key management routes (cd_mcp_ prefix, SHA-256 hash, 90-day max)
-- Stripe billing: checkout, subscription management, portal
-- Next.js 14 frontend: HITL Console, Ops Hub, Content, Outreach, Integrations tabs
-- Integrations tab: Claude Code flow, Embed (SDK/REST), Direct MCP flow, status polling
-- Supabase schema migrations 001-004 (Cloud Decoded specific tables)
-- Pushed to GitHub: https://github.com/KDavisCodeCloud/kdavis-agentic-platform
-
-BLOCKING Cloud Decoded deploy (must do before it goes live):
-- Supabase project provisioned + migrations 001-004 applied
-- Supabase JWT template configured for MCP OAuth audience
-- /signup and /signin auth pages built (Supabase Auth)
-- Stripe product/price IDs wired into stripe_billing.py
-- Environment variables set (ANTHROPIC_API_KEY, DATABASE_URL, SUPABASE_*, STRIPE_*, MCP_SERVICE_KEY, ENCRYPTION_KEY, NEXT_PUBLIC_*)
-- DNS: theclouddecoded.com, api.theclouddecoded.com, mcp.theclouddecoded.com
-- Hosting: Vercel (frontend) + Railway or Render (api/ + mcp/)
-
-NOT STARTED — Platform foundation (CLAUDE.md Phase 1+):
-- providers/, core/, security/, agents/internal/, queue/, obsidian/, leads/
-- Internal business OS dashboard (separate from Cloud Decoded customer dashboard)
-- Finance/accounting/wealth/tax/revenue intelligence agents
-- Research, content, SOP, gap detector, portfolio monitor agents
-- CI/CD: deploy.yml Fargate, gitea-mirror, prompt-version-check, weekly-sweep
-- Product factory template (agents/products/_template/)
-- Infra: Terraform Fargate modules, wildcard SSL
 
 ---
 
@@ -1706,8 +1855,24 @@ No connection to personal brand or Cloud Decoded.
 Cleaner if selling the portfolio as a standalone asset later.
 More marketing surface area to build from scratch.
 
-DECISION: [OWNER TO DECIDE — record here before Week 4]
-Record chosen domain in platform.yaml under root_domain.
+DECISION: thdstack.com — decided 2026-07-04
+Record in platform.yaml under root_domain: thdstack.com
+
+Subdomain structure:
+  app.thdstack.com                  # Internal dashboard (private)
+  [product-name].thdstack.com       # Per product landing + trial
+  thdstack.com/blog                 # AEO content hub
+
+Example product URLs:
+  freightaudit.thdstack.com
+  leadsequencer.thdstack.com
+  rfpdrafter.thdstack.com
+
+Canonical URL format for Claude Design Brief 3:
+  https://[product-name].thdstack.com
+
+Wildcard SSL cert covers: *.thdstack.com
+One cert. Every subdomain. Never provisioned manually.
 
 ### What prevents the slop look across all products
 
@@ -2119,39 +2284,107 @@ Claude Design. No CLAUDE.md needed — the brief is self-contained.
 
 ---
 
-CLAUDE DESIGN BRIEF 1 — Dashboard design system
+CLAUDE DESIGN BRIEF 1 — Team dashboard (variation of CEO Decoded)
 Run: Week 2 Day 1 (no dependencies, start immediately)
+NOTE: The owner dashboard (app.thdstack.com) is implemented directly
+from the CEO Decoded handoff file by Claude Code — no Claude Design
+brief needed for it. Claude Design Brief 1 produces only the TEAM
+dashboard variation. Claude Code reads README.md + the HTML prototype
+and recreates it pixel-for-pixel in React/Next.js for the owner view.
 
 ```
 You are a senior product designer at a world-class design studio
-in 2026. Design a complete design system for an internal business
-command center dashboard. This is a cockpit, not a marketing page.
-Every decision reduces decision time.
+in 2026. Design the team dashboard for team.thdstack.com.
 
-COLOR TOKENS (use exactly):
---color-bg:           #0a0a0f
---color-surface:      #12121a
---color-surface-raised: #1a1a24
---color-text-primary: #e8e6e0
---color-text-secondary: #9997a0
---color-text-mono:    #c8c6be
---color-active:       #00d4a8
---color-attention:    #f5a623
---color-critical:     #ff4f4f
---color-complete:     #3fd17a
---color-archived:     #555555
---color-held:         #7a78ff
+This is a variation of the CEO Decoded dashboard design. The
+CEO Decoded design is the source of truth — it uses these tokens:
 
-TYPOGRAPHY:
-Numbers, metrics, logs, timestamps: JetBrains Mono
-Labels, navigation, descriptions: Space Grotesk
-Never mix in the same line.
-Numbers always larger than their labels.
-Hierarchy through weight, not size alone.
+BASE SYSTEM (from CEO Decoded handoff — inherit all of these):
+  Body font: Inter (400/500/600/700/800)
+  Mono font: JetBrains Mono (400/500/600/700)
+  Border color: #1c222b
+  Card bg: #141a22, tile bg: #10151b
+  Text primary: #eef2f5, section label: #c7cfd6
+  Text secondary: #aab4bd, muted mono: #5b6673
+  Brand accent (mint): #5eead4
+  Status green: #6fce8f, blue: #7ea6f5, amber: #e8963f
+  Red: #e05d5d, neutral: #9aa2ab
+  Card radius: 14px, tile radius: 10-12px, badge radius: 5-6px
+  Section gap: 16-18px, card padding: 20px
+  Scrollbar: 8px wide, thumb #1c222b radius 4px
+  Metric card: 24px/800 value in accent, 11px mono label/sub
+  Section card: #141a22 bg, 13px/700/#c7cfd6 header
+  Status badge: mono 9-10.5px, accent at 13% alpha bg
 
-SPACING: 4px base unit. All spacing = multiples of 4.
-BORDERS: 1px, surface-raised + 20% opacity.
-RADIUS: 6px default, 10px cards, 3px pills.
+TEAM DASHBOARD VARIATION (only these values change):
+  --bg-base:    #0d1117   (blue-shifted, not pure near-black)
+  --bg-sidebar: #0f1520   (blue-shifted sidebar)
+  --bg-card:    #141c28   (blue-shifted cards)
+  --bg-tile:    #111825   (blue-shifted tiles)
+  --border:     #1c2535   (blue-shifted borders)
+  Everything else: identical to CEO Decoded system above.
+
+WHY: The blue-shifted background creates instant visual distinction.
+Anyone using both dashboards knows immediately which context they
+are in. No labels needed. The color does the work.
+
+LAYOUT (same three-part structure as CEO Decoded):
+  Icon rail: 60px fixed, --bg-sidebar, right border
+  Labeled sidebar: 196px fixed, --bg-sidebar, right border
+    Shows: THD STACK (wordmark) + team member name + role
+    Nav items: My Tasks, Current Task, Resources
+    (not 10 departments — stripped to what team members need)
+  Main content: flex, --bg-base, scrollable
+
+TEAM MEMBER HEADER (replaces CEO Decoded top bar):
+  Left: current task name (19px/700/#eef2f5)
+  Right: task status badge + team member avatar (initials)
+
+MAIN CONTENT — two views, switch via sidebar:
+
+MY TASKS VIEW:
+  Task list: one row per assigned task
+    Row: product name | task type badge | status badge |
+    priority badge | due date (mono) | Submit button
+    Active task row: left border 3px #5eead4
+    Completed: dimmed, no submit button
+  Empty state: "No tasks assigned yet" (mint text, centered)
+
+CURRENT TASK VIEW:
+  Task header card: product name + task type + assigned date
+  Step list: numbered steps from task file
+    Each step: checkbox (tap to mark complete) + step title
+    + brief description + status pill
+    Completed step: checkbox checked, text dimmed
+    Current step: highlighted, left border mint
+  File checklist: files required before submission
+    Each file: filename + checkbox + location path (mono, muted)
+  Submit section (bottom, always visible on mobile):
+    Notes textarea (placeholder: "Anything unusual to note?")
+    Submit for review button (full width, mint, 48px height)
+    Disabled until all checklist items checked
+
+MOBILE LAYOUT (390px — mobile first for team members):
+  Bottom tab bar: My Tasks | Current Task | Help
+  48px tab height, mint active indicator
+  Each tab: full screen, single context
+  Current Task: step checkboxes must be easy to tap (48px min)
+  Submit button: sticky at bottom of screen, always reachable
+
+COMPONENTS TO PRODUCE:
+  1. Task list row (all states: active/pending/submitted/approved
+     /revision-needed/completed)
+  2. Step item (states: upcoming/current/complete)
+  3. File checklist item (checked/unchecked)
+  4. Submit panel (locked/unlocked states)
+  5. Status badge (all variants matching CEO Decoded system)
+  6. Empty state
+
+OUTPUT: Complete React component set with CSS using the token
+values above. Dark mode only. Show all states with mock data.
+Mock data: 2 assigned tasks, one in progress (step 3 of 6),
+one pending review. Task is for a product named "FreightAudit".
+```
 
 MOTION (all under 200ms, information not decoration):
 New HITL card: slide from right + 2s amber pulse border
@@ -2218,81 +2451,25 @@ Include a mock dashboard screenshot showing all components together.
 
 ---
 
-CLAUDE DESIGN BRIEF 2 — Dashboard layout
-Run: Week 2 Day 3 (after Brief 1 is complete)
+DASHBOARD DESIGN — NO CLAUDE DESIGN BRIEF NEEDED
+Owner dashboard and all internal dashboards (CEO Decoded, MSE):
+Already built. Design is locked. Do not redesign.
 
-```
-Using the design system from Brief 1, design the complete layout
-for the internal command center dashboard.
+OWNER DASHBOARD (app.thdstack.com):
+Claude Code builds this directly from the CEO Decoded handoff.
+Read these files before any session touching dashboard components:
+  design_handoff/design_handoff_ceo_decoded/README.md
+  design_handoff/design_handoff_ceo_decoded/CEO Decoded.dc.html
+  design_handoff/design_handoff_ceo_decoded/screenshots/ (01-10)
+Recreate pixel-for-pixel in React/Next.js.
+Extract inline styles into CSS tokens. Do not copy them as-is.
 
-Single-page app. Dark mode only. Desktop primary, mobile secondary.
-
-DESKTOP LAYOUT (1440px reference):
-
-Top bar — CommandHeader (full width, 64px height):
-  Left: Portfolio MRR (large mono) + delta badge
-  Center: active products | signups today | agent runs today
-  Right: alert badge (amber, shows count) | Cmd+K search
-
-Main grid (three columns, below header):
-  Left column (28%):
-    - HITL approval queue header with pending count
-    - Active decision cards (stacked, most urgent first)
-    - Divider: ON HOLD section (collapsed, shows count badge)
-    - Held cards below divider
-
-  Center column (44%):
-    - Agent chat interface (60% of center height)
-      Persistent, collapsible to icon strip
-      Input bar at bottom with router hint text
-    - Research pipeline kanban (40% of center height)
-      Three columns: Researching / Deciding / Approved
-
-  Right column (28%):
-    - Portfolio health list (scrollable)
-    - Revenue opportunities panel below
-    - Agent roster list below that
-
-  Bottom drawer (full width, collapsed by default):
-    Handle bar with "Analytics" label + arrow
-    Expands upward to show analytics panel
-    Product switcher pills + graphs when open
-
-MOBILE LAYOUT (390px):
-  Bottom tab bar (5 tabs):
-    Approvals | Portfolio | Research | Chat | More
-  Each tab: full screen, single context
-  Approvals tab: full-screen decision cards
-    Swipe right = approve, left = reject, up = hold
-    Options visible before swipe confirms
-
-EMPTY STATES (design all of these):
-  No pending approvals: calm illustration, "All caught up"
-  No products yet: onboarding prompt
-  No revenue data: placeholder with setup steps
-
-LOADING STATES:
-  Skeleton screens for all data areas
-  Never show blank white areas
-
-MOCK DATA to use in the design:
-  Portfolio MRR: $13,240 (+$1,820 this month)
-  Active products: 4
-  Trial signups today: 3
-  Agent runs today: 47
-  Pending approvals: 3 (1 ACTION REQUIRED, 2 RECOMMENDATION)
-  On hold: 1
-  Products: Cloud Decoded ($6,200), Product B ($3,840),
-    Product C ($2,100), Product D ($1,100)
-  Revenue opportunities: 4 open, est. $2,800 MRR available
-  Active agents: 9, Recommended: 2
-
-OUTPUT: Full layout as a single HTML file with embedded CSS and JS.
-Show desktop and mobile in the same file with a viewport toggle.
-All interactive elements: hover states, active states, transitions.
-Decision cards: clicking them expands in place.
-Hold timer: show a held card with countdown.
-```
+TEAM DASHBOARD (team.thdstack.com):
+Claude Code builds this from the team dashboard brief.
+Read before any team dashboard session:
+  design_handoff/TEAM_DASHBOARD_BRIEF.md
+Same CEO Decoded design. Five background color overrides only.
+No Claude Design needed — the handoff is the design.
 
 ---
 
@@ -2396,7 +2573,7 @@ TECHNICAL OUTPUT:
 Single HTML file, embedded CSS and JS.
 FAQPage JSON-LD schema in <head>.
 og:image meta: 1200x630.
-Canonical URL: https://[PRODUCT_SUBDOMAIN].[ROOT_DOMAIN].com
+Canonical URL: https://[PRODUCT_SUBDOMAIN].thdstack.com
 data-section attribute on every section.
 All sections: semantic HTML5 elements.
 Mobile first. Above fold works at 390px without scrolling.
@@ -2475,12 +2652,487 @@ Key decisions recorded here:
 - Queue: AWS SQS (managed, scales to zero). Not RabbitMQ.
 - Compute: AWS Fargate (serverless containers). Not EC2.
 - Dashboard: Next.js 14 + custom design system from Claude Design.
+  Source of truth: design_handoff/ceo_decoded/CEO Decoded.dc.html
+  Claude Code recreates owner dashboard pixel-for-pixel from README.md.
+  Claude Design Brief 1 produces only team dashboard variation.
+  Team variation: blue-shifted bg only (#0d1117 base vs #0b0e13).
   NOT standard Tailwind UI components.
 - Dual repo: GitHub (public portfolio) + Gitea (private IP).
 - Obsidian sync: Local REST API plugin or direct file mount.
 - Prompt versioning: semver in filename, CHANGELOG.md alongside.
 - No hard-coded model names anywhere in business logic.
+- Root domain: thdstack.com (decided 2026-07-04)
+  Subdomain per product: [product-name].thdstack.com
+  Dashboard: app.thdstack.com
+  Wildcard SSL: *.thdstack.com
+  Brand: THD Stack — connects to THD Agentic Systems LLC
 ```
+
+---
+
+## TEAM MANAGEMENT SYSTEM
+
+### Communication stack (final decision)
+
+Agent chat (AgentChat.tsx): agents only.
+You talk to agents. Agents talk to each other.
+No human-to-human chat built here.
+
+Slack: human team communication.
+You, your son, your daughter, any future employee.
+Slack invite sent automatically on onboarding approval.
+Slack channel per role: #code-team, #design-team, #general.
+Owner (#general + all channels).
+
+This separation is intentional and clean.
+Never conflate the two.
+
+---
+
+### Team dashboard subdomain
+
+team.thdstack.com — separate from app.thdstack.com
+Owner dashboard: app.thdstack.com (full access)
+Team member dashboard: team.thdstack.com (role-scoped)
+Both use the same Supabase Auth instance.
+Same design system. Different permission layers.
+
+---
+
+### Roles and permissions
+
+```
+OWNER (you)
+  app.thdstack.com
+  All panels: command center, HITL queue, agent chat,
+  portfolio health, analytics, research pipeline,
+  revenue intelligence, finance, banking, wealth,
+  team management, agent roster, SOP feed
+  Can: invite, approve, reject, offboard team members
+  Can: assign tasks, approve submissions, deploy products
+
+CLAUDE_CODE_EMPLOYEE (your son, future devs)
+  team.thdstack.com
+  Panels: assigned tasks, product build queue,
+  QA checklist, changes feed, practice sandbox
+  Cannot see: finance, revenue, banking, wealth,
+  agent internals, owner command center
+  Can: view assigned tasks, submit work for review,
+  comment on tasks, view task history
+
+CLAUDE_DESIGN_EMPLOYEE (your daughter, future designers)
+  team.thdstack.com
+  Panels: assigned tasks, design brief queue,
+  design feedback, changes feed, asset library
+  Cannot see: finance, revenue, banking, wealth,
+  agent internals, owner command center
+  Can: view assigned tasks, submit designs for review,
+  comment on tasks, view design history
+```
+
+---
+
+### New Supabase tables
+
+```sql
+team_members (
+  id uuid primary key default gen_random_uuid(),
+  supabase_user_id uuid references auth.users(id),
+  name varchar not null,
+  email varchar not null unique,
+  role varchar not null,
+  status varchar default 'invited',
+  phone varchar,
+  slack_user_id varchar,
+  github_username varchar,
+  personal_folder_path varchar,
+  invited_by uuid,
+  invited_at timestamp,
+  onboarded_at timestamp,
+  approved_at timestamp,
+  deactivated_at timestamp,
+  created_at timestamp default now()
+)
+
+tasks (
+  id uuid primary key default gen_random_uuid(),
+  product_id varchar references products(id),
+  assigned_to uuid references team_members(id),
+  task_type varchar,
+  title varchar not null,
+  description text,
+  brief_file_path varchar,
+  status varchar default 'assigned',
+  priority varchar default 'normal',
+  due_date date,
+  submitted_at timestamp,
+  submission_notes text,
+  approved_at timestamp,
+  rejected_at timestamp,
+  rejection_reason text,
+  created_by uuid,
+  created_at timestamp default now()
+)
+
+task_comments (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid references tasks(id),
+  author_id uuid,
+  author_type varchar,
+  content text not null,
+  created_at timestamp default now()
+)
+
+onboarding_steps (
+  id uuid primary key default gen_random_uuid(),
+  team_member_id uuid references team_members(id),
+  step_name varchar,
+  status varchar default 'pending',
+  completed_at timestamp
+)
+
+slack_channels (
+  id uuid primary key default gen_random_uuid(),
+  channel_name varchar,
+  role varchar,
+  slack_channel_id varchar,
+  created_at timestamp default now()
+)
+```
+
+RLS policies:
+- team_members: owner sees all, members see only own row
+- tasks: owner sees all, assigned member sees own tasks only
+- task_comments: visible to task owner + assigned member + owner
+
+---
+
+### Auth flow (Supabase Auth)
+
+#### Invitation (triggered by owner)
+
+Owner types in dashboard agent chat:
+"Invite [NAME] as [ROLE] — email [EMAIL]"
+
+System does automatically:
+1. Creates team_members record: status = 'invited'
+2. Creates personal folder: team/[name]/
+   Generates: ONBOARDING.md, ROLE.md,
+   HOW_TO_USE_[TOOL].md, PRACTICE_TASK.md
+3. Calls Supabase Admin API: inviteUserByEmail()
+   Custom redirect: team.thdstack.com/onboarding
+   Invite link expires: 48 hours
+4. Owner gets confirmation card in dashboard:
+   "Invite sent to [EMAIL]. Expires in 48 hours."
+
+#### Onboarding gate (team.thdstack.com/onboarding)
+
+They click the invite link. Before dashboard access:
+
+Page 1 — Welcome
+  Their name, their role, what they'll be doing.
+  Plain English. No jargon.
+  "Before you get access, complete these steps."
+
+Page 2 — Set password
+  Password field (minimum 12 characters)
+  Confirm password field
+  Supabase Auth updateUser() sets password.
+  This replaces the magic link — they now have
+  email + password login going forward.
+
+Page 3 — Your information
+  Legal name (pre-filled from invite, editable)
+  Phone number (for Slack and notifications)
+  All fields required before continuing.
+
+Page 4 — Read your role document
+  Renders their ROLE.md inline.
+  Checkbox: "I have read and understand my role."
+  Required before continuing.
+
+Page 5 — Agreement
+  One paragraph: company expectations, data handling,
+  confidentiality, what happens if they leave.
+  Checkbox: "I agree to the team member terms."
+  Submit button: "Complete onboarding"
+
+On submit:
+  - team_members record updated: status = 'onboarding_complete'
+  - All onboarding_steps marked complete
+  - Owner gets HITL decision card:
+    "[NAME] completed onboarding. Approve dashboard access?"
+    Options: Approve / Reject / Review first
+
+#### Owner approval
+
+Approve:
+  - team_members status → 'active'
+  - Supabase user role set via custom claims
+  - Slack invite sent automatically via Slack API
+  - Practice task created and assigned
+  - Welcome email sent: "You're in. Here's how to start."
+  - Owner gets confirmation: "[NAME] is now active."
+
+Reject:
+  - team_members status → 'rejected'
+  - Supabase account disabled immediately
+  - Notification email: "Access not approved at this time."
+  - No reason required in the email (owner's discretion)
+
+#### Daily login (after onboarding)
+
+URL: team.thdstack.com
+Fields: email + password
+Supabase Auth handles session.
+Wrong role trying to access owner dashboard:
+  Redirected to team.thdstack.com automatically.
+Expired session: redirected to login, no data exposed.
+
+#### Offboarding (when someone leaves)
+
+Owner types in dashboard chat:
+"Remove team member [NAME]"
+
+System does automatically:
+1. Confirmation card in HITL queue:
+   "Remove [NAME] ([ROLE])? This cannot be undone."
+   Options: Confirm removal / Cancel
+2. On confirm:
+   - Supabase Auth: deleteUser() — account gone
+   - team_members status → 'deactivated',
+     deactivated_at timestamp recorded
+   - All assigned incomplete tasks: status → 'unassigned'
+   - Owner gets task list: "These tasks need reassignment"
+   - Slack API: kick user from all channels
+   - GitHub: remove from repo collaborators if applicable
+   - Personal folder in repo: archived, not deleted
+     (task history preserved for reference)
+3. Owner gets confirmation with summary:
+   "[NAME] removed. [X] tasks need reassignment."
+   Task reassignment cards appear in HITL queue.
+
+Data retention: their task history, submissions, and
+comments stay in the database for audit purposes.
+Only their auth account and active access are deleted.
+
+---
+
+### Team folder structure
+
+```
+team/
+├── _template/                    # Copy for every new hire
+│   ├── ONBOARDING.md             # Welcome + first steps
+│   ├── ROLE.md                   # What this role does
+│   ├── HOW_TO_USE_TOOL.md        # Tool-specific guide
+│   └── PRACTICE_TASK.md          # First task on dummy product
+├── [son-name]/
+│   ├── ONBOARDING.md             # Generated on invite
+│   ├── ROLE.md                   # Claude Code Employee role
+│   ├── HOW_TO_USE_CLAUDE_CODE.md # Plain-English Claude Code guide
+│   ├── PRACTICE_TASK.md          # Practice build task
+│   └── tasks/                    # Auto-generated per product
+│       └── TASK_[product_id].md  # Their specific task file
+├── [daughter-name]/
+│   ├── ONBOARDING.md
+│   ├── ROLE.md                   # Claude Design Employee role
+│   ├── HOW_TO_USE_CLAUDE_DESIGN.md
+│   ├── PRACTICE_TASK.md
+│   └── tasks/
+│       └── TASK_[product_id].md
+└── [future-employee]/
+    └── (same structure, generated on invite)
+```
+
+---
+
+### Team dashboard — what they see
+
+team.thdstack.com — role-scoped, same design system as
+owner dashboard but stripped to their lane only.
+
+CLAUDE_CODE_EMPLOYEE view:
+```
+Header: [NAME] | Role: Builder | [X] tasks active
+
+Main panels:
+  Left (40%):
+    My Tasks (assigned to me, sorted by priority)
+    Each task: product name | step I'm on | status |
+    due date | Submit for review button
+
+  Right (60%):
+    Current task detail:
+      Product brief summary
+      Step-by-step task file rendered inline
+      Mark step complete buttons
+      File checklist (what to commit before submitting)
+      Comments thread with owner
+
+Footer bar:
+  Practice sandbox link | How-to guide | Slack link
+```
+
+CLAUDE_DESIGN_EMPLOYEE view:
+```
+Header: [NAME] | Role: Designer | [X] tasks active
+
+Main panels:
+  Left (40%):
+    My Tasks (assigned to me, sorted by priority)
+    Each task: product name | which brief | status |
+    due date | Submit for review button
+
+  Right (60%):
+    Current task detail:
+      Design brief rendered inline (from DESIGN_[id].md)
+      Output checklist (files to save before submitting)
+      Design feedback from owner (if revision needed)
+      Comments thread with owner
+
+Footer bar:
+  Asset library | How-to guide | Slack link
+```
+
+---
+
+### Task submission and approval loop
+
+#### They submit work
+
+When they finish a task:
+1. They click "Submit for review" in their dashboard
+2. Submission form appears:
+   - Notes field: "What did you do? Anything unusual?"
+   - File checklist: confirm all required files saved
+   - Submit button
+3. Task status → 'submitted'
+4. Owner gets HITL decision card:
+   "[NAME] submitted [PRODUCT_NAME] [task_type] work.
+    Notes: [their notes]
+    Files: [checklist of what they submitted]"
+   Options: Approve / Request revision / Reject
+
+#### Owner approves
+
+Task status → 'approved'
+Next step activates:
+  Code approved → triggers design file wait (if needed)
+    or deploy step if design already done
+  Design approved → notifies Employee 1 to implement
+System posts in Slack: "@[name] your [task] was approved."
+
+#### Owner requests revision
+
+Task status → 'revision_needed'
+Owner must provide specific feedback:
+  "The landing page headline uses the word 'AI-powered'.
+   Remove that and use the pain language from the brief.
+   Specifically: use '[EXACT_PHRASE]'."
+Feedback appears in their task dashboard with red border.
+System posts in Slack: "@[name] revision needed on [task].
+  Check your dashboard for feedback."
+They revise and resubmit. Loop repeats.
+
+#### Owner rejects entirely
+
+Task status → 'rejected'
+Owner provides reason.
+Task reassigned or rebuilt from scratch.
+Owner decides whether to reassign to same person or not.
+
+---
+
+### Onboarding agent spec
+
+#### `agents/internal/onboarding_agent.py`
+
+Triggers:
+- "Invite [NAME] as [ROLE] — email [EMAIL]" in dashboard chat
+- New team_members record created with status = 'invited'
+
+Process:
+1. Generate personal folder from _template:
+   - Populate ONBOARDING.md with name, role, start date
+   - Populate ROLE.md with role-specific content
+   - Generate HOW_TO_USE_[TOOL].md from role type
+   - Generate PRACTICE_TASK.md for a dummy product
+   - Commit to repo under team/[name]/
+2. Call Supabase Admin API to send invite email
+3. Create onboarding_steps records for tracking
+4. Post confirmation card to owner dashboard
+5. Set 48-hour expiry reminder — if not completed,
+   owner gets alert: "Invite to [NAME] expires in 4 hours"
+
+On onboarding completion:
+1. Create HITL approval card for owner
+2. Prepare Slack invite (fire on owner approval)
+3. Prepare practice task record (fire on owner approval)
+4. Prepare welcome email (fire on owner approval)
+
+On offboarding trigger:
+1. Create confirmation HITL card
+2. On owner confirm: execute full offboarding sequence
+3. Generate task reassignment cards for all open tasks
+4. Archive personal folder: team/[name]/archived/
+5. Post summary to owner dashboard
+
+---
+
+### Slack integration
+
+`leads/integrations/slack.py` (new file):
+- invite_user(email, channels) → Slack API
+- remove_user(slack_user_id) → Slack API
+- post_message(channel, text) → Slack API
+- create_channel(name) → Slack API if not exists
+
+Channels created on first team member onboarding:
+  #general — everyone
+  #code-team — Claude Code Employees + Owner
+  #design-team — Claude Design Employees + Owner
+  #product-launches — all, for product go-live announcements
+
+Automated Slack messages (never manual):
+  "@[name] you've been assigned [PRODUCT] [task_type]"
+  "@[name] your [task] was approved. Next step: [X]"
+  "@[name] revision needed on [task]. Check dashboard."
+  "#product-launches [PRODUCT_NAME] is live at [URL]"
+
+Human messages: everything else. You handle in Slack.
+
+---
+
+### Build placement
+
+Week 3, Session 12 — after dashboard hooks, before components:
+1. Add team Supabase tables to 001_initial_schema.sql
+2. Build team.thdstack.com Next.js app (separate from app.thdstack.com)
+3. Build onboarding flow pages (5 pages, Supabase Auth)
+4. Build role-scoped team dashboard (two views: Code + Design)
+5. Build task submission and approval loop
+6. Build onboarding_agent.py
+7. Wire Slack integration
+8. Build offboarding flow
+
+Architectural note:
+team.thdstack.com is a separate Next.js app in the monorepo.
+It shares the Supabase instance and design system.
+It does NOT share the owner dashboard components.
+Keep them completely separate — different layouts,
+different data access, different session handling.
+A bug in team.thdstack.com must never expose
+app.thdstack.com data.
+
+---
+
+Phase: NOT STARTED
+Next action: Scaffold folder structure (Phase 1, Step 1)
+Last session: —
+Last deploy: —
+Active products: 0
+Platform MRR: $0
 
 ## CURRENT STATUS
 
@@ -2490,3 +3142,4 @@ Last session: —
 Last deploy: —
 Active products: 0
 Platform MRR: $0
+Team members: 0
