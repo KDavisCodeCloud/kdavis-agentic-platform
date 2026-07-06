@@ -14,10 +14,13 @@ export default async function DashboardLayout({
 
   if (!user) redirect("/login");
 
-  const role = (user.user_metadata?.role ?? "rnd") as Role;
-  const initials = user.user_metadata?.name
-    ? user.user_metadata.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()
-    : user.email?.[0]?.toUpperCase() ?? "K";
+  const OWNER_EMAIL = "kdav2k5@gmail.com";
+  const role = (user.email === OWNER_EMAIL ? "admin" : (user.user_metadata?.role ?? "rnd")) as Role;
+  const initials = user.email === OWNER_EMAIL
+    ? "KD"
+    : user.user_metadata?.name
+      ? user.user_metadata.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()
+      : user.email?.[0]?.toUpperCase() ?? "?";
 
   return (
     <div className="flex h-screen overflow-hidden bg-base">
