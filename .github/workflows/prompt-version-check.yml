@@ -1,0 +1,78 @@
+name: Prompt Version Check
+
+# Blocks a PR if a changed prompt file has no version bump and no
+# matching CHANGELOG.md entry.
+# Trigger: PR to main touching prompts/**.
+# CLAUDE.md Phase 1, step 17. Rules: prompts/VERSIONING.md.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "prompts/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-version-bump:
+    name: Verify version bump + CHANGELOG.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List changed prompt files
+        id: changed
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD -- 'prompts/**')
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Verify each changed agent has a new version file + CHANGELOG entry
+        env:
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: |
+          set -e
+          FAILED=0
+          AGENT_DIRS=$(echo "$CHANGED_FILES" | grep -oE '^prompts/[^/]+/[^/]+' | sed -E 's#(prompts/[^/]+)/.*#\1#' | sort -u)
+
+          for dir in $AGENT_DIRS; do
+            [ -z "$dir" ] && continue
+
+            NEW_VERSION_FILE=$(echo "$CHANGED_FILES" | grep -E "^${dir}/v[0-9]+\.[0-9]+\.[0-9]+\.md$" || true)
+            if [ -z "$NEW_VERSION_FILE" ]; then
+              echo "BLOCKING: $dir changed but no new versioned prompt file (vX.Y.Z.md) was added."
+              FAILED=1
+              continue
+            fi
+
+            CHANGELOG_CHANGED=$(echo "$CHANGED_FILES" | grep -E "^${dir}/CHANGELOG\.md$" || true)
+            if [ -z "$CHANGELOG_CHANGED" ]; then
+              echo "BLOCKING: $dir has a new version file but CHANGELOG.md was not updated."
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "One or more prompt directories failed the version/changelog check."
+            exit 1
+          fi
+
+          echo "All changed prompt directories have a version bump and CHANGELOG.md update."
+
+      - name: Comment on PR if blocked
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "🚫 **Prompt version check failed.** Every changed file under `prompts/**` must add a new `vX.Y.Z.md` file and update that agent's `CHANGELOG.md` in the same PR. See `prompts/VERSIONING.md`."
+            })

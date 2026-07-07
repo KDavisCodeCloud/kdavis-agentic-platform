@@ -1,0 +1,77 @@
+name: Weekly Sweep
+
+# Monday morning review: full code quality sweep, gap detection,
+# and portfolio digest. All three create dashboard cards for review.
+# Trigger: cron every Monday.
+#
+# NOTE: GitHub Actions cron runs in UTC. 11:00 UTC is 6:00am Central
+# Standard Time (UTC-5). Adjust if the operating timezone changes or
+# during daylight saving time (UTC-5 CDT would need 10:00 UTC / "0 10 * * 1").
+
+on:
+  schedule:
+    - cron: "0 11 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  weekly-sweep:
+    name: Quality + gap detection + portfolio digest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Full codebase sweep — code_quality_agent
+        id: quality
+        continue-on-error: true
+        run: |
+          python -m agents.internal.code_quality_agent \
+            --full-sweep \
+            --report-out weekly_quality_report.json
+
+      - name: Coverage gap scan — gap_detector_agent
+        id: gaps
+        continue-on-error: true
+        run: |
+          python -m agents.internal.gap_detector_agent \
+            --report-out weekly_gap_report.json
+
+      - name: Portfolio digest — portfolio_monitor
+        id: portfolio
+        continue-on-error: true
+        run: |
+          python -m agents.internal.portfolio_monitor \
+            --digest \
+            --report-out weekly_portfolio_report.json
+
+      - name: Notify dashboard — weekly digest ready
+        run: |
+          curl -sf -X POST "${{ secrets.DASHBOARD_WEBHOOK_URL }}/events" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DASHBOARD_WEBHOOK_TOKEN }}" \
+            -d '{
+              "event": "weekly_sweep_complete",
+              "quality_status": "${{ steps.quality.outcome }}",
+              "gap_status": "${{ steps.gaps.outcome }}",
+              "portfolio_status": "${{ steps.portfolio.outcome }}",
+              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' || true
+
+      - name: Fail run if any sweep step errored
+        if: steps.quality.outcome == 'failure' || steps.gaps.outcome == 'failure' || steps.portfolio.outcome == 'failure'
+        run: |
+          echo "One or more weekly sweep steps failed. Check the dashboard cards and job logs."
+          exit 1

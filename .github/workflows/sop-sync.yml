@@ -1,0 +1,74 @@
+name: SOP Sync
+
+# Pushes a newly written SOP to the Obsidian vault.
+# Trigger: repository_dispatch fired by a Supabase database webhook
+# on INSERT to the sops table (configure in Supabase Dashboard ->
+# Database -> Webhooks -> sops -> INSERT -> HTTP request to
+# https://api.github.com/repos/<owner>/<repo>/dispatches with
+# event_type "sop_created" and client_payload { "sop_id": <id> }).
+# workflow_dispatch is kept as a manual fallback for re-syncing a
+# specific SOP by id.
+
+on:
+  repository_dispatch:
+    types: [sop_created]
+  workflow_dispatch:
+    inputs:
+      sop_id:
+        description: "sops.id to sync to Obsidian"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sync-sop:
+    name: Sync SOP to Obsidian vault
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve SOP id
+        id: sop
+        run: |
+          SOP_ID="${{ github.event.client_payload.sop_id }}"
+          if [ -z "$SOP_ID" ]; then
+            SOP_ID="${{ inputs.sop_id }}"
+          fi
+          if [ -z "$SOP_ID" ]; then
+            echo "No sop_id provided by dispatch payload or manual input."
+            exit 1
+          fi
+          echo "sop_id=$SOP_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Push SOP to Obsidian vault
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OBSIDIAN_VAULT_PATH: ${{ secrets.OBSIDIAN_VAULT_PATH }}
+          OBSIDIAN_REST_API_KEY: ${{ secrets.OBSIDIAN_REST_API_KEY }}
+        run: |
+          python -m obsidian.vault_sync --sop-id "${{ steps.sop.outputs.sop_id }}"
+
+      - name: Notify dashboard on failure
+        if: failure()
+        run: |
+          curl -sf -X POST "${{ secrets.DASHBOARD_WEBHOOK_URL }}/events" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DASHBOARD_WEBHOOK_TOKEN }}" \
+            -d "{
+              \"event\": \"sop_sync_failed\",
+              \"sop_id\": \"${{ steps.sop.outputs.sop_id }}\"
+            }"

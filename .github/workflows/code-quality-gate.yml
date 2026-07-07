@@ -1,0 +1,96 @@
+name: Code Quality Gate
+
+# Runs code_quality_agent against changed files on every PR.
+# BLOCKING issues fail the PR and create a HITL dashboard card.
+# NON-BLOCKING issues pass the PR and are logged to the tech_debt table.
+# Trigger: any PR opened or updated targeting main.
+# CLAUDE.md Phase 2, step 26.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  quality-review:
+    name: code_quality_agent review (changed files)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: List changed files
+        id: changed
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD -- '*.py' '*.ts' '*.tsx')
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Run code_quality_agent against changed files only
+        id: review
+        if: steps.changed.outputs.files != ''
+        env:
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PRODUCT_ID: platform
+        run: |
+          echo "$CHANGED_FILES" > changed_files.txt
+          python -m agents.internal.code_quality_agent \
+            --files-list changed_files.txt \
+            --pr-number "$PR_NUMBER" \
+            --product-id "$PRODUCT_ID" \
+            --report-out quality_report.json
+
+      - name: Post report comment on PR
+        if: steps.review.outcome == 'success' || steps.review.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = "CODE QUALITY REPORT — no report generated.";
+            if (fs.existsSync('quality_report.json')) {
+              const report = JSON.parse(fs.readFileSync('quality_report.json', 'utf8'));
+              body = report.markdown_summary || JSON.stringify(report, null, 2);
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Notify dashboard — create HITL decision card
+        if: always() && steps.changed.outputs.files != ''
+        run: |
+          curl -sf -X POST "${{ secrets.DASHBOARD_WEBHOOK_URL }}/events" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DASHBOARD_WEBHOOK_TOKEN }}" \
+            -d "{
+              \"event\": \"code_quality_report\",
+              \"pr_number\": ${{ github.event.pull_request.number }},
+              \"pr_url\": \"${{ github.event.pull_request.html_url }}\",
+              \"status\": \"${{ steps.review.outcome }}\"
+            }" || true
+
+      - name: Fail job if BLOCKING issues were found
+        if: steps.review.outcome == 'failure'
+        run: |
+          echo "code_quality_agent found BLOCKING issues. Fix them or request an override via the dashboard HITL queue with a documented reason."
+          exit 1

@@ -1,0 +1,48 @@
+name: Gitea Mirror
+
+# Mirrors every push to the internal Gitea server.
+# Trigger: push to any branch.
+# CLAUDE.md Phase 1, step 16.
+
+on:
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Push identical ref to Gitea
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up SSH for Gitea
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.GITEA_SSH_PRIVATE_KEY }}
+
+      - name: Add Gitea host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.GITEA_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Push mirror
+        run: |
+          git remote add gitea "${{ secrets.GITEA_REMOTE_URL }}"
+          git push gitea "HEAD:${{ github.ref_name }}" --force-with-lease
+
+      - name: Notify dashboard on failure
+        if: failure()
+        run: |
+          curl -sf -X POST "${{ secrets.DASHBOARD_WEBHOOK_URL }}/events" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.DASHBOARD_WEBHOOK_TOKEN }}" \
+            -d '{
+              "event": "gitea_mirror_failed",
+              "ref": "${{ github.ref_name }}",
+              "sha": "${{ github.sha }}"
+            }'
