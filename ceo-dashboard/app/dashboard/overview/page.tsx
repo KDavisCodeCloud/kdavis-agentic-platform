@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { HitlApprovalRow } from "@/components/ui/HitlApprovalRow";
 import { ActivityFeedRow } from "@/components/ui/ActivityFeedRow";
 import { ProgressBar } from "@/components/ui/ProgressBar";
+import { FireButton } from "@/components/ui/FireButton";
 import type { AgentEvent, HitlItem } from "@/lib/types";
 
 const PRODUCTS = [
@@ -19,6 +20,14 @@ const PRODUCTS = [
   { name: "Hustle Decoded",     status: "planning",  mrr: "$0",   agents: 0, queue: 0 },
   // TODO: link each tile to that product's dedicated dashboard
 ];
+
+// Fire button wiring — Session 6. Only products with a live agent to trigger
+// get one; the rest (GTA 6 Hub, Hustle Decoded) stay as-is until their agents exist.
+const PRODUCT_FIRE_BUTTONS: Record<string, { agentId: string; label: string }> = {
+  "Cloud Decoded":     { agentId: "research_agent",     label: "Run Research" },
+  "Micro SaaS Engine": { agentId: "portfolio_monitor",  label: "Run Monitor" },
+  "CEO Decoded":       { agentId: "sop_gap_detector",   label: "Run Gap Scan" },
+};
 
 const TEAM = [
   { name: "Kelvin",  role: "CEO",    access: "Full Access",         pending: 1 },
@@ -98,27 +107,37 @@ export default function OverviewPage() {
               className="grid gap-3"
               style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}
             >
-              {PRODUCTS.map((p) => (
-                <div
-                  key={p.name}
-                  className="rounded-[10px] p-3.5"
-                  style={{ backgroundColor: "#10151b", border: "1px solid #1c222b" }}
-                >
-                  <div className="flex items-start justify-between gap-1 mb-2 min-w-0">
-                    <p className="text-[12.5px] font-semibold truncate-text min-w-0" style={{ color: "#eef2f5" }}>
-                      {p.name}
+              {PRODUCTS.map((p) => {
+                const fireButton = PRODUCT_FIRE_BUTTONS[p.name];
+                return (
+                  <div
+                    key={p.name}
+                    className="rounded-[10px] p-3.5"
+                    style={{ backgroundColor: "#10151b", border: "1px solid #1c222b" }}
+                  >
+                    <div className="flex items-start justify-between gap-1 mb-2 min-w-0">
+                      <p className="text-[12.5px] font-semibold truncate-text min-w-0" style={{ color: "#eef2f5" }}>
+                        {p.name}
+                      </p>
+                      <StatusBadge status={p.status} />
+                    </div>
+                    <p className="text-[20px] font-extrabold mb-1" style={{ color: "#5eead4" }}>
+                      {p.mrr}
                     </p>
-                    <StatusBadge status={p.status} />
+                    <div className="flex gap-3 text-[11px] font-mono mb-3" style={{ color: "#5b6673" }}>
+                      <span>{p.agents} agents</span>
+                      <span>{p.queue} queue</span>
+                    </div>
+                    {fireButton && (
+                      <FireButton
+                        agentId={fireButton.agentId}
+                        label={fireButton.label}
+                        payload={{}}
+                      />
+                    )}
                   </div>
-                  <p className="text-[20px] font-extrabold mb-1" style={{ color: "#5eead4" }}>
-                    {p.mrr}
-                  </p>
-                  <div className="flex gap-3 text-[11px] font-mono" style={{ color: "#5b6673" }}>
-                    <span>{p.agents} agents</span>
-                    <span>{p.queue} queue</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </SectionCard>
 
