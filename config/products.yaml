@@ -1,0 +1,42 @@
+# Product registry — CLAUDE.md Phase 1, step 3/12.
+#
+# `products` is a LIST (not a dict keyed by id) — this matches
+# infra/stripe/setup.py, which reads and writes this file to store Stripe
+# product/price IDs back into each entry's `stripe:` block, and appends a
+# `pricing:` list (tier/monthly_usd) as tiers are priced out.
+#
+# `status` must be one of the products table's CHECK values:
+# planning | building | live | paused | archived (infra/supabase/migrations/001_initial_schema.sql).
+#
+# custom_pii_patterns (optional, per product) is read by security/sanitizer.py.
+
+products:
+  - id: cloud_decoded
+    name: Cloud Decoded
+    subdomain: clouddecoded
+    status: building
+    pricing_tier: enterprise
+
+  - id: mse
+    name: Micro SaaS Engine
+    subdomain: mse
+    status: building
+    pricing_tier: growth
+
+  - id: decoded_six
+    name: DecodedSix
+    subdomain: decodedsix
+    status: building
+    pricing_tier: starter
+
+  - id: ceo_decoded
+    name: CEO Decoded
+    subdomain: ceo
+    status: building
+    pricing_tier:
+
+  - id: hustle_decoded
+    name: Hustle Decoded
+    subdomain: hustledecoded
+    status: planning
+    pricing_tier: starter

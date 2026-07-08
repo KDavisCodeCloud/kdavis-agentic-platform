@@ -1,0 +1,7 @@
+# Global platform settings and feature flags — CLAUDE.md Phase 1, step 3.
+# Read by core/engine.py and downstream agents for domain and environment context.
+
+root_domain: thdstack.com
+internal_domain: thdecodedempire.com
+supabase_url: ${NEXT_PUBLIC_SUPABASE_URL}
+environment: production

@@ -82,7 +82,11 @@ def _load_custom_patterns(product_id: Optional[str]) -> list[tuple[str, re.Patte
         log.warning(f"[SANITIZER] Could not load {CONFIG_PATH}: {exc}")
         return []
 
-    product_cfg = (config.get("products") or {}).get(product_id) or {}
+    # products.yaml stores `products` as a LIST of {id, name, ...} records
+    # (see config/products.yaml — infra/stripe/setup.py round-trips this same
+    # file and needs list semantics to append pricing/stripe blocks per entry).
+    products = config.get("products") or []
+    product_cfg = next((p for p in products if p.get("id") == product_id), None) or {}
     entries = product_cfg.get("custom_pii_patterns") or []
 
     patterns = []
