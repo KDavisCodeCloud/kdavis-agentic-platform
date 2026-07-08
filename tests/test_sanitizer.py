@@ -145,7 +145,7 @@ class TestCustomPatterns:
     def test_custom_pattern_applied_when_config_present(self, s):
         fake_yaml = """
 products:
-  cloud_decoded:
+  - id: cloud_decoded
     custom_pii_patterns:
       - name: employee_id
         pattern: 'EMP-\\d{6}'
@@ -172,7 +172,7 @@ products:
     def test_malformed_pattern_is_skipped_not_raised(self, s):
         fake_yaml = """
 products:
-  cloud_decoded:
+  - id: cloud_decoded
     custom_pii_patterns:
       - name: broken
         pattern: '('
