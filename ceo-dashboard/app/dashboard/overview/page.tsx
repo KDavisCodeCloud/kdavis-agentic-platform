@@ -6,11 +6,11 @@ import { TopBar } from "@/components/shell/TopBar";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { HitlApprovalRow } from "@/components/ui/HitlApprovalRow";
+import { HITLQueuePanel } from "@/components/ui/HITLQueuePanel";
 import { ActivityFeedRow } from "@/components/ui/ActivityFeedRow";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { FireButton } from "@/components/ui/FireButton";
-import type { AgentEvent, HitlItem } from "@/lib/types";
+import type { AgentEvent } from "@/lib/types";
 
 const PRODUCTS = [
   { name: "Cloud Decoded",      status: "building",  mrr: "$0",   agents: 4, queue: 2 },
@@ -38,29 +38,21 @@ const TEAM = [
 export default function OverviewPage() {
   const supabase = createClient();
   const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [hitlItems, setHitlItems] = useState<HitlItem[]>([]);
+  const [hitlCount, setHitlCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = useCallback(async () => {
-    const [evtRes, hitlRes] = await Promise.all([
-      supabase
-        .from("agent_events")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(20),
-      supabase
-        .from("hitl_queue")
-        .select("*")
-        .eq("status", "pending")
-        .order("created_at", { ascending: false }),
-    ]);
-    if (evtRes.data) setEvents(evtRes.data as AgentEvent[]);
-    if (hitlRes.data) setHitlItems(hitlRes.data as HitlItem[]);
+  const fetchEvents = useCallback(async () => {
+    const { data } = await supabase
+      .from("agent_events")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (data) setEvents(data as AgentEvent[]);
     setLoading(false);
   }, [supabase]);
 
   useEffect(() => {
-    fetchData();
+    fetchEvents();
 
     // Realtime: agent_events
     const evtChannel = supabase
@@ -70,19 +62,12 @@ export default function OverviewPage() {
       )
       .subscribe();
 
-    // Realtime: hitl_queue
-    const hitlChannel = supabase
-      .channel("hitl_queue_overview")
-      .on("postgres_changes", { event: "*", schema: "public", table: "hitl_queue" },
-        () => fetchData()
-      )
-      .subscribe();
+    // hitl_queue fetch + realtime now owned by HITLQueuePanel below.
 
     return () => {
       supabase.removeChannel(evtChannel);
-      supabase.removeChannel(hitlChannel);
     };
-  }, [fetchData, supabase]);
+  }, [fetchEvents, supabase]);
 
   return (
     <div className="flex flex-col h-full min-w-0">
@@ -97,7 +82,7 @@ export default function OverviewPage() {
           >
             <MetricCard label="Portfolio MRR"  value="$0"    subtext="5 products tracked"  accent="#5eead4" />
             <MetricCard label="Products Live"  value="0"     subtext="of 5 in portfolio"   accent="#6fce8f" />
-            <MetricCard label="Open HITL Items" value={String(hitlItems.length)} subtext="pending approval" accent="#e8963f" />
+            <MetricCard label="Open HITL Items" value={String(hitlCount)} subtext="pending approval" accent="#e8963f" />
             <MetricCard label="Stack Burn / mo" value="~$225" subtext="infra cost estimate" accent="#e05d5d" />
           </div>
 
@@ -163,19 +148,7 @@ export default function OverviewPage() {
 
             {/* HITL Approval Queue */}
             <SectionCard title="HITL Approval Queue">
-              {loading ? (
-                <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
-                  Loading queue…
-                </p>
-              ) : hitlItems.length === 0 ? (
-                <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
-                  Queue is clear. No pending approvals.
-                </p>
-              ) : (
-                hitlItems.map((item) => (
-                  <HitlApprovalRow key={item.id} item={item} onResolved={fetchData} />
-                ))
-              )}
+              <HITLQueuePanel onCountChange={setHitlCount} />
               {/* TODO: batch-approve UX for 3+ similar items */}
             </SectionCard>
           </div>
