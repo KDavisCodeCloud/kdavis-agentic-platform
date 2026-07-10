@@ -120,17 +120,25 @@ def run_n1_newsletter(
             "list_segment": list_segment,
         }
 
-        insert_queue_row(
+        # newsletter_queue stores each field as its own column, not nested
+        # JSON — see db/migrations/007_marketing_queues.sql.
+        inserted = insert_queue_row(
             TABLE_NAME,
             {
                 "agent_id": AGENT_ID,
                 "product_id": variant,
                 "variant": variant,
                 "status": "draft",
-                "content_json": newsletter,
+                "subject_lines": newsletter["subject_lines"],
+                "hook_paragraph": newsletter["hook_paragraph"],
+                "story_summaries": newsletter["story_summaries"],
+                "builders_note": newsletter["builders_note"],
+                "cta": newsletter["cta"],
+                "list_segment": newsletter["list_segment"],
             },
             supabase_client,
         )
+        newsletter["id"] = inserted.get("id")
 
         write_audit_log(AGENT_ID, "newsletter_drafted", resource=variant, outcome="success")
         emit_event(AGENT_ID, "newsletter_drafted", {"variant": variant, "list_segment": list_segment})

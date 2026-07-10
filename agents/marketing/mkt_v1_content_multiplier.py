@@ -132,16 +132,29 @@ def run_v1_content_multiplier(
 
         compliance = _mkt10_compliance_scan(drafts)
 
-        insert_queue_row(
-            TABLE_NAME,
-            {
-                "agent_id": AGENT_ID,
-                "status": "pending_review",
-                "content": drafts,
-                "compliance_notes": compliance["notes"],
-            },
-            supabase_client,
-        )
+        # content_queue is one row per platform (platform TEXT NOT NULL) —
+        # see db/migrations/007_marketing_queues.sql.
+        platform_content = {
+            "linkedin": drafts.get("linkedin_post"),
+            "reddit": drafts.get("reddit_post"),
+            "x": drafts.get("x_thread"),
+            "video": drafts.get("video_script"),
+        }
+        for platform, content in platform_content.items():
+            if not content:
+                continue
+            insert_queue_row(
+                TABLE_NAME,
+                {
+                    "agent_id": AGENT_ID,
+                    "platform": platform,
+                    "content_json": content,
+                    "status": "pending_review",
+                    "mkt10_passed": compliance["passed"],
+                    "mkt10_notes": compliance["notes"],
+                },
+                supabase_client,
+            )
 
         write_audit_log(AGENT_ID, "content_multiplied", resource=str(target_platforms), outcome="success")
         emit_event(AGENT_ID, "content_multiplied", {"platforms": target_platforms})

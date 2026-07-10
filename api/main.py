@@ -39,6 +39,8 @@ from api.routes import stripe_billing
 from api.routes import content
 from api.routes import outreach
 from api.routes import mcp_keys
+from api.routes import gta_hub
+from api.routes import marketing
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +137,8 @@ app.include_router(stripe_billing.router,  prefix="/api/v1")
 app.include_router(content.router,         prefix="/api/v1")
 app.include_router(outreach.router,        prefix="/api/v1")
 app.include_router(mcp_keys.router,        prefix="/api/v1")
+app.include_router(gta_hub.router)
+app.include_router(marketing.router,       prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────

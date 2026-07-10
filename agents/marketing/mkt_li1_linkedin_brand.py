@@ -203,9 +203,9 @@ def run_li1_brand_agent(
                 "carousel_slides": draft.get("carousel_slides"),
                 "carousel_pdf_brief": draft.get("carousel_pdf_brief"),
             }
+            inserted = insert_queue_row(TABLE_NAME, {**post, "agent_id": AGENT_ID, "status": "pending_review"}, supabase_client)
+            post["id"] = inserted.get("id")
             posts.append(post)
-
-            insert_queue_row(TABLE_NAME, {**post, "agent_id": AGENT_ID, "status": "pending_review"}, supabase_client)
 
         write_audit_log(AGENT_ID, "weekly_calendar_generated", resource=f"{len(posts)} posts", outcome="success")
         emit_event(AGENT_ID, "weekly_calendar_generated", {"post_count": len(posts)})
