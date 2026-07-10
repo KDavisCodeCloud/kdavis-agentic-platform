@@ -1,6 +1,6 @@
 """
 PROPRIETARY AND CONFIDENTIAL
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 """
 
 """
@@ -31,6 +31,16 @@ def _workspace_key(request: Request) -> str:
 
 
 limiter = Limiter(key_func=_workspace_key)
+
+
+def _tier_limit(request: Request) -> str:
+    """
+    Callable for @limiter.limit() — returns the rate limit string for the
+    workspace's tier. Reads from request.state.workspace_tier set by
+    WorkspaceTierMiddleware. Defaults to starter limits if not present.
+    """
+    tier = getattr(request.state, "workspace_tier", "starter")
+    return get_rate_limit_for_tier(tier)
 
 
 def get_rate_limit_for_tier(tier: str) -> str:
