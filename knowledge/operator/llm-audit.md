@@ -994,3 +994,792 @@
 | 2026-06-28 00:16:07 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:5ae6b4e8-f962-46c3-97d8-14a3a36cbad2 | 0 |
 | 2026-06-28 00:16:07 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:1b073c2d-88ae-4750-ab56-64e74274c534 | 0 |
 | 2026-06-28 00:16:07 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:363d3166-e99a-4023-a2eb-76f75c7821fe | 0 |
+| 2026-07-07 05:15:41 | test_agent | a1b2c3d4... | test_action | ok | 100 |
+| 2026-07-07 05:15:41 | test_agent | a1b2c3d4... | ingest | ok | incident:abc-def-123 | 42 |
+| 2026-07-07 05:15:41 | test_agent | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:41 | test_agent | a1b2c3d4... | execute:opt_1 | executing | incident:0f425e79-88f1-4f64-9d81-9693d7b502d2 | 0 |
+| 2026-07-07 05:15:41 | test_agent | a1b2c3d4... | complete | done | 0 |
+| 2026-07-07 05:15:41 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 389 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:484c89f0-99fa-41fe-962b-a2c588f1b3b6 | 1200 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:484c89f0-99fa-41fe-962b-a2c588f1b3b6 | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:89e1c357-e613-479f-8761-959b180b4850 | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:89e1c357-e613-479f-8761-959b180b4850 | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:43b6e9d6-403f-4564-9bd1-1fec2094d5ff | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:43b6e9d6-403f-4564-9bd1-1fec2094d5ff | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | 4c78ad4e-2101-4c30-a155-1d86f6ae1233 | created | incident:be2dc4b7-89a6-469a-94f0-c9b1f59281a9 | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | 4e54dc90-29ab-4eb1-a44a-aa1736c5d26d | created | incident:58737c4f-9a41-4af9-9655-202f71aa3d22 | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | e3ed52e3-2d5f-4e19-b3de-9b670f0dca94 | created | incident:93f9693f-9298-4e1c-b2ac-ec7ad36f566c | 0 |
+| 2026-07-07 05:15:42 | hitl_gate | unknown | approved:opt_1 | incident:e26d4ea8-23db-4f61-acdb-f028fcaebd5c | 0 |
+| 2026-07-07 05:15:42 | hitl_gate | unknown | held | incident:db269cb7-f9cb-4265-a170-769885141e14 | 0 |
+| 2026-07-07 05:15:42 | hitl_gate | unknown | executed | incident:8edb6283-1d0e-437b-86c1-90acd69d1f90 | 500 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 395 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 368 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 382 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:faea620a-04b9-4861-81da-742d1d6cb8f3 | 1800 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:faea620a-04b9-4861-81da-742d1d6cb8f3 | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | executing | incident:1f387769-88c5-490b-97f5-3e5fb9bae2c8 | 0 |
+| 2026-07-07 05:15:42 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | triggered | incident:1f387769-88c5-490b-97f5-3e5fb9bae2c8 | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 451 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:d2adbf24-e939-476d-a65b-2853045960e9 | 900 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:d2adbf24-e939-476d-a65b-2853045960e9 | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:eb4302e4-eee1-4ec4-8d3b-4afc5a3eb761 | 0 |
+| 2026-07-07 05:15:43 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:eb4302e4-eee1-4ec4-8d3b-4afc5a3eb761 | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 432 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:03e18f23-6ccb-44a2-a405-a2faf8c0ae48 | 2400 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:03e18f23-6ccb-44a2-a405-a2faf8c0ae48 | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:f66eee22-d77f-4add-beac-eb050e9951d5 | 0 |
+| 2026-07-07 05:15:41 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:f66eee22-d77f-4add-beac-eb050e9951d5 | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:f34451b6-2f43-47ae-8eee-2598f3e1359c | 0 |
+| 2026-07-07 05:15:41 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:ffaf2d97-24f6-4211-a9b2-57d5fbb50ebb | 0 |
+| 2026-07-07 05:15:42 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:896f6e5e-d540-4497-8fc5-f78af4975508 | 0 |
+| 2026-07-07 05:15:42 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:6c7e7d75-52e5-480a-92a6-472d143d6cac | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:8a8c229e-f167-4f9f-91a4-a1cd4dcb9353 | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:2a6bacb8-c9af-465c-bac3-0425589b9938 | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:5494c587-d5a5-4439-81fe-55023f32d629 | 0 |
+| 2026-07-07 05:15:42 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:1df1339f-ff3f-4c28-b2fc-9f321ada4cf7 | 0 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:42 | agent_06_finops | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:43 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:43 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:43 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:89ae03ae-70f2-45be-b715-a1b9988fae2d | 0 |
+| 2026-07-07 05:15:43 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:0e07879d-f545-4715-85aa-fd4b47a91a41 | 0 |
+| 2026-07-07 05:15:43 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:0d71a53d-84eb-45e1-b097-2a42c5f72759 | 0 |
+| 2026-07-07 05:15:43 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:456fe348-efd4-49e7-84d4-a205f69a458d | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:e713005a-7194-4327-8504-b18124ecb251 | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:6e12c228-0f18-4cea-82f1-315945f9d26d | 0 |
+| 2026-07-07 05:15:44 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:c67d9ce0-e89e-43c6-a501-3907b75821c9 | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:e63e9e54-6337-40a2-b496-180c22e2849b | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:2de467be-a451-41f0-9e25-1a83ff001fda | 0 |
+| 2026-07-07 05:15:44 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:f03bff8d-3cfe-47a6-a24b-8b50c2b4951f | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:2e9da80c-1a13-4da4-82bf-bb0c0827bd0d | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:3cf20e8c-41b4-4270-a8cb-61b1fe57c4e7 | 0 |
+| 2026-07-07 05:15:45 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:5a98717d-c03f-48d5-a625-065e9d8bc925 | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:144612c1-b773-4ab0-aed8-d0e8cecc0ac1 | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:b6f22a4e-5f18-43c6-af5b-c6533a1ea2a6 | 0 |
+| 2026-07-07 05:15:45 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:c8dad01a-e42f-4a5b-941d-c874ce59d60b | 0 |
+| 2026-07-08 02:03:45 | test_agent | a1b2c3d4... | test_action | ok | 100 |
+| 2026-07-08 02:03:45 | test_agent | a1b2c3d4... | ingest | ok | incident:abc-def-123 | 42 |
+| 2026-07-08 02:03:45 | test_agent | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:45 | test_agent | a1b2c3d4... | execute:opt_1 | executing | incident:227f4ec5-ea63-4eeb-bf43-3a8d3f25b2cc | 0 |
+| 2026-07-08 02:03:45 | test_agent | a1b2c3d4... | complete | done | 0 |
+| 2026-07-08 02:03:45 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 389 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:23692831-0d2c-45bc-958d-75489734d327 | 1200 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:23692831-0d2c-45bc-958d-75489734d327 | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:c9b071ee-0e1b-4a98-a1de-3ad48d69bcec | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:c9b071ee-0e1b-4a98-a1de-3ad48d69bcec | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:c58f45fa-f6d0-48b0-b75e-f544a4c2f939 | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:c58f45fa-f6d0-48b0-b75e-f544a4c2f939 | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | 0bdcc76f-4b7a-4b1c-b606-1ea7bdd63799 | created | incident:7f79c7a3-214b-4847-9591-6d2395eaf5f6 | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | 2ba76af5-343c-4239-9501-f8f25feca7cb | created | incident:0c8b5053-405a-4c5d-a769-16379810873c | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | 1297164f-eb5e-416a-bd01-ad72de5e4605 | created | incident:660b547a-36c6-4b7d-b040-5f71d47294e1 | 0 |
+| 2026-07-08 02:03:46 | hitl_gate | unknown | approved:opt_1 | incident:f64afb28-2a62-4790-aa1f-f35b1f2900f4 | 0 |
+| 2026-07-08 02:03:46 | hitl_gate | unknown | held | incident:e674603c-2234-4782-8304-06d5b6ae7ca3 | 0 |
+| 2026-07-08 02:03:46 | hitl_gate | unknown | executed | incident:a1ad233c-d2ac-49f8-bda2-c00d890cc691 | 500 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 395 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 368 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 382 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:b337e822-4fad-4deb-b894-264af29af419 | 1800 |
+| 2026-07-08 02:03:46 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:b337e822-4fad-4deb-b894-264af29af419 | 0 |
+| 2026-07-08 02:03:47 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | executing | incident:2894bca2-0218-4f19-86d0-7b1b79ef5b53 | 0 |
+| 2026-07-08 02:03:47 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | triggered | incident:2894bca2-0218-4f19-86d0-7b1b79ef5b53 | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 451 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:188612ac-1926-4433-8c5d-4701bddd1eed | 900 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:188612ac-1926-4433-8c5d-4701bddd1eed | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:1b3ec140-e978-41a1-9150-819c57a51b8a | 0 |
+| 2026-07-08 02:03:47 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:1b3ec140-e978-41a1-9150-819c57a51b8a | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 432 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:88e3d85b-b2fd-425e-a1e5-d01a71504ba8 | 2400 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:88e3d85b-b2fd-425e-a1e5-d01a71504ba8 | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:f6862a18-5fba-4fb9-9f06-f06543461ffa | 0 |
+| 2026-07-08 02:03:47 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:f6862a18-5fba-4fb9-9f06-f06543461ffa | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:76ae0e1c-f674-43f2-b409-e1c99ce8558d | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:c75a3dee-1586-4523-b098-b624dce6823c | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:a75c0297-536e-4c0d-8225-e3acb4c51aaa | 0 |
+| 2026-07-08 02:03:48 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:3ef5e279-32aa-4905-b1d3-40ddfa0b56cf | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:e8b269b9-305c-4796-9a44-9993033a1d1f | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:d1fa3819-8c6f-4478-a6c1-c977448a0d09 | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:98e69b5c-845e-4493-9aa6-d9d804858344 | 0 |
+| 2026-07-08 02:03:48 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:9fac67f1-50c4-4536-9473-e7e288e8aa46 | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:611d012b-b555-4c42-8168-f0455c9ed15a | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:8654ba4b-39be-48ce-a663-91a7d025ef03 | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:467f23f3-6099-4c7a-848b-67a11989b1e6 | 0 |
+| 2026-07-08 02:03:49 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:e781890b-55eb-490e-b4de-050e67c0c6cf | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:41734a31-ed90-4b96-bac3-5eda56e32b25 | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:70a49c2b-faf6-4ece-ad05-c2f8d059849f | 0 |
+| 2026-07-08 02:03:50 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:83f95d5c-2cc6-47e0-86e2-2af243ee04ed | 0 |
+| 2026-07-08 02:03:50 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:e78a7d9e-1f36-4407-b8ae-f0b2f9293da3 | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:07ffd7c4-7527-413c-ab5a-e5bc2745e37f | 0 |
+| 2026-07-08 02:03:51 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:ce28f74e-abb5-491e-8f5e-bffcf1ade3f4 | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:b85798ff-4913-4aca-a3c3-586831919af4 | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:afccef83-faca-4ea6-b5e1-b938eb60c414 | 0 |
+| 2026-07-08 02:03:51 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:28c8d7ed-f9f5-43d5-8217-ee575e1d9c04 | 0 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:51 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:52 | agent_10_dependency_patch | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:03:52 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:03:52 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:f38f7b02-fdeb-43cb-a95f-75ce876e1f01 | 0 |
+| 2026-07-08 02:03:52 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:a617f3fd-7df2-4575-b6cd-461873d717ac | 0 |
+| 2026-07-08 02:03:52 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:9efb75e6-12e3-4bea-bfba-f7af444b602d | 0 |
+| 2026-07-08 02:04:57 | test_agent | a1b2c3d4... | test_action | ok | 100 |
+| 2026-07-08 02:04:57 | test_agent | a1b2c3d4... | ingest | ok | incident:abc-def-123 | 42 |
+| 2026-07-08 02:04:57 | test_agent | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:04:57 | test_agent | a1b2c3d4... | execute:opt_1 | executing | incident:023f95ed-94a0-4af8-baff-f834c1b063bc | 0 |
+| 2026-07-08 02:04:57 | test_agent | a1b2c3d4... | complete | done | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 389 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:99d048ae-9d48-4532-a4a2-49268840b594 | 1200 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:99d048ae-9d48-4532-a4a2-49268840b594 | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:fe04a60a-83de-4055-a466-593a87fb9414 | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:fe04a60a-83de-4055-a466-593a87fb9414 | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:f644be91-4bfe-4048-a60b-5e857f9c3712 | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:f644be91-4bfe-4048-a60b-5e857f9c3712 | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | 767def5f-378c-4508-a09d-dc0ab9f1d1a8 | created | incident:b8198f96-52f3-43c3-a809-8c8b9a481fd9 | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | fb2fcc53-5eb3-4d68-87c3-f83a2acd7a0b | created | incident:e4262257-1e83-48f6-8420-4fbd16cb5ea7 | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | c4d565bf-95aa-4db8-a31b-f7737f602069 | created | incident:6f4f2573-8db0-4ab4-a1ad-c5a0f2ddc539 | 0 |
+| 2026-07-08 02:04:57 | hitl_gate | unknown | approved:opt_1 | incident:160c9223-5dcd-48d1-ad37-855a6dda5cc8 | 0 |
+| 2026-07-08 02:04:57 | hitl_gate | unknown | held | incident:6b786252-5633-4298-836a-2f00f148d5fd | 0 |
+| 2026-07-08 02:04:57 | hitl_gate | unknown | executed | incident:d8f6d08c-342d-4ffb-9c3c-1f4a541db808 | 500 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:57 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 395 |
+| 2026-07-08 02:04:58 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 368 |
+| 2026-07-08 02:04:58 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 382 |
+| 2026-07-08 02:04:58 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:81c933b5-03f1-4d3e-90be-d60b4f07af61 | 1800 |
+| 2026-07-08 02:04:58 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:81c933b5-03f1-4d3e-90be-d60b4f07af61 | 0 |
+| 2026-07-08 02:04:58 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | executing | incident:f4fe7765-2b0b-4b87-8d0a-b0a7441e1d0d | 0 |
+| 2026-07-08 02:04:58 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | triggered | incident:f4fe7765-2b0b-4b87-8d0a-b0a7441e1d0d | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 451 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:2398a6a8-90fe-4a32-aeef-5eedb9afa8d5 | 900 |
+| 2026-07-08 02:04:58 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:2398a6a8-90fe-4a32-aeef-5eedb9afa8d5 | 0 |
+| 2026-07-08 02:04:59 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:279a2853-0440-4429-a2ae-0b281b59fa95 | 0 |
+| 2026-07-08 02:04:59 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:279a2853-0440-4429-a2ae-0b281b59fa95 | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 432 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:c210c52d-689a-4c3d-a0ef-baf44fb96486 | 2400 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:c210c52d-689a-4c3d-a0ef-baf44fb96486 | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:b34aee08-b6e0-435d-a0f2-f746df89b97b | 0 |
+| 2026-07-08 02:04:59 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:b34aee08-b6e0-435d-a0f2-f746df89b97b | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:9220dfed-4fd9-4d69-ad69-6de41b11f3e8 | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:532f7c9d-5a80-417a-9c07-14e906ce936e | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:c3112b8f-1b02-4575-a024-a71c38416618 | 0 |
+| 2026-07-08 02:04:59 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:7c1e03ed-b487-48f8-a8dc-ddc1f708750c | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:56b73247-5524-496c-a20b-50202c302425 | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:cd6708f4-c831-48c0-9810-10ffe5baba2a | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:b72905a8-657a-4b66-9fe9-d007fbc01b3f | 0 |
+| 2026-07-08 02:05:00 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:fab43eea-ea45-4d34-bfea-6770f78758ea | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:9037036c-c573-4d61-b341-44783dfcd90c | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:ecd66f51-0cb3-4cf9-b365-72751b76d70a | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:d010cdc8-54a4-4a84-9a57-49dc2463d8e0 | 0 |
+| 2026-07-08 02:05:00 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:66b5f657-0b9d-40c2-bcdc-a47238bfe883 | 0 |
+| 2026-07-08 02:05:01 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:01 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:70e70581-36c2-46f6-9c75-c3c3834f98e6 | 0 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:10cd1796-7f22-4494-b9d0-c860c7d4e0ef | 0 |
+| 2026-07-08 02:05:02 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:4352a7da-52eb-47e6-87d9-96fc19d22bdb | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:b4a3d8c6-8028-4bbe-95ec-614be2352051 | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:519fe3d3-e5db-41ba-b90b-3f908c88dad9 | 0 |
+| 2026-07-08 02:05:02 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:475d0332-7b3a-4f57-8819-184efd81834a | 0 |
+| 2026-07-08 02:05:02 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:02 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:30183f53-3a43-47e1-ac40-f0ede7c6a192 | 0 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:aca285f9-c534-4a0e-8f08-95ec3659544f | 0 |
+| 2026-07-08 02:05:03 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:8fafb9a6-55f9-4228-826b-c6ffd737de1a | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:4b6815de-df86-4e40-bd18-94c7fa0b7a0b | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:7217c803-2bcb-46a4-8f8f-93c81e209418 | 0 |
+| 2026-07-08 02:05:03 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:6d625f56-8138-4e9c-913f-dec8b3f24bdd | 0 |
+| 2026-07-08 02:12:54 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:b3dab880-9c74-4d7a-bd20-139f5cb899dd | 10 |
+| 2026-07-08 02:12:54 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:32cd7ebf-fcf7-43bd-9255-bb53c3df1010 | 5 |
+| 2026-07-08 02:12:54 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:91b960b1-f673-49b1-84ff-5485359a1c25 | 10 |
+| 2026-07-08 02:12:54 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:4c27d80c-9ae5-4264-a308-b2ccbe94fb43 | 0 |
+| 2026-07-08 02:13:31 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:4f4c0833-af63-4644-913b-0c0936a1912e | 10 |
+| 2026-07-08 02:13:31 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:8ad9a0f2-0af8-4482-bbe5-f5f7d4912240 | 5 |
+| 2026-07-08 02:13:31 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:34f0e05b-28a3-46fd-ade2-96e6ebb5b902 | 10 |
+| 2026-07-08 02:13:33 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:2bec4a31-76ec-4859-a1cf-bbad3bdf6adf | 0 |
+| 2026-07-08 02:13:54 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:6d6d8870-a95f-45ed-ac46-23f8cf327412 | 10 |
+| 2026-07-08 02:16:27 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:44a152f4-b79b-4204-b3d0-45bf42ab14e8 | 10 |
+| 2026-07-08 02:16:27 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:bda39180-857e-483a-8612-c37e6167fb75 | 5 |
+| 2026-07-08 02:16:28 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:92ebc9b7-e921-44b6-a267-84f877905241 | 10 |
+| 2026-07-08 02:16:28 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:8d85a5c8-a476-4b65-8140-8a2acfca55d8 | 0 |
+| 2026-07-08 02:18:11 | test_agent | ws-1 | created | incident:d38b51d9-0a76-47f6-a8e5-4a6d3f01b790 | 10 |
+| 2026-07-08 02:18:11 | test_agent | ws-1 | created | incident:d38b51d9-0a76-47f6-a8e5-4a6d3f01b790 | 10 |
+| 2026-07-08 02:19:53 | test_agent | ws-1 | created | incident:8267b623-f36d-4015-98b8-414106ed1601 | 10 |
+| 2026-07-08 02:19:53 | test_agent | ws-1 | created | incident:8267b623-f36d-4015-98b8-414106ed1601 | 10 |
+| 2026-07-08 02:20:14 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:586ae155-c9df-4aed-a01f-e0f9fe6567ea | 10 |
+| 2026-07-08 02:20:14 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:163d60d9-e9b9-4571-ae15-2a0608c3dd1e | 5 |
+| 2026-07-08 02:20:14 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:e173a967-3162-4ebb-8383-6c7a9a859456 | 10 |
+| 2026-07-08 02:20:14 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:e173a967-3162-4ebb-8383-6c7a9a859456 | 10 |
+| 2026-07-08 02:20:14 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:5f9dc616-a11f-4f1f-92c9-1b8c90f321cd | 0 |
+| 2026-07-08 02:20:39 | test_agent | a1b2c3d4... | test_action | ok | 100 |
+| 2026-07-08 02:20:39 | test_agent | a1b2c3d4... | ingest | ok | incident:abc-def-123 | 42 |
+| 2026-07-08 02:20:39 | test_agent | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:39 | test_agent | a1b2c3d4... | execute:opt_1 | executing | incident:9ccd6364-b10f-4853-9760-5a4f0a3436ab | 0 |
+| 2026-07-08 02:20:39 | test_agent | a1b2c3d4... | complete | done | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 384 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 389 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:fc26404d-7718-4823-ae59-10c10461abb3 | 1200 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:fc26404d-7718-4823-ae59-10c10461abb3 | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:3f266978-9b8c-4e5b-bd72-97029bd616b0 | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:3f266978-9b8c-4e5b-bd72-97029bd616b0 | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:deb25a00-378a-4854-ae80-c48bdbf56141 | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:deb25a00-378a-4854-ae80-c48bdbf56141 | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | 3dfb11dd-ffe8-4e51-a169-c8d7d15d3bed | created | incident:2838151a-8da6-433e-9b48-43ffa8f18a76 | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | 6b8325b6-df2e-4846-a71a-426f49325dce | created | incident:a5a4800a-e41a-4d44-a78f-c8dcf08bae8e | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | fa0d1d42-6116-4565-8672-8c34ac8de09c | created | incident:a91b63c7-5a6b-4994-b12b-d8b776fb6ada | 0 |
+| 2026-07-08 02:20:39 | hitl_gate | unknown | approved:opt_1 | incident:873d6901-9346-4c4d-90ac-fc49edc37146 | 0 |
+| 2026-07-08 02:20:39 | hitl_gate | unknown | held | incident:775d2433-c888-4f0c-8e82-3dd172d98230 | 0 |
+| 2026-07-08 02:20:39 | hitl_gate | unknown | executed | incident:6bd94ed8-bd61-4368-96f8-a8eb64f7218e | 500 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:39 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 395 |
+| 2026-07-08 02:20:40 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 368 |
+| 2026-07-08 02:20:40 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 382 |
+| 2026-07-08 02:20:40 | agent_01_cicd_triage | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:7c5ecd4f-88c6-4552-88e1-88587246d606 | 1800 |
+| 2026-07-08 02:20:40 | agent_01_cicd_triage | a1b2c3d4... | hitl_gate | pending_approval | incident:7c5ecd4f-88c6-4552-88e1-88587246d606 | 0 |
+| 2026-07-08 02:20:40 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | executing | incident:0f827f58-f58a-45e3-9c49-7309bd201dd4 | 0 |
+| 2026-07-08 02:20:40 | agent_01_cicd_triage | a1b2c3d4... | execute:opt_1 | triggered | incident:0f827f58-f58a-45e3-9c49-7309bd201dd4 | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 449 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | diagnose | ok | 451 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:808fe626-a96a-470d-9af7-ec99ce1a3802 | 900 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:808fe626-a96a-470d-9af7-ec99ce1a3802 | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:bdb4c123-0724-45af-9980-fddb47805246 | 0 |
+| 2026-07-08 02:20:40 | agent_02_k8s_alert | a1b2c3d4... | hitl_gate | pending_approval | incident:bdb4c123-0724-45af-9980-fddb47805246 | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 447 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | diagnose | ok | 432 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:1be21adb-5aaf-42b5-8ddd-bfa81d69d671 | 2400 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:1be21adb-5aaf-42b5-8ddd-bfa81d69d671 | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:9891adb9-3c57-48e4-9bba-abf36ef2a996 | 0 |
+| 2026-07-08 02:20:40 | agent_03_pr_review | a1b2c3d4... | hitl_gate | pending_approval | incident:9891adb9-3c57-48e4-9bba-abf36ef2a996 | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:4fd6d939-65f3-49c0-af08-799a4345c181 | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:69e7b4e8-f8f0-4055-b635-37e26d3a7f9c | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:c7f946fa-cac0-4f8b-8956-03c3466c6ec8 | 0 |
+| 2026-07-08 02:20:41 | agent_04_migration | a1b2c3d4... | hitl_gate | pending_approval | incident:9789bbd6-3351-45c3-a478-278131901a6f | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | diagnose | ok | 1800 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:1f5d8573-5bc5-4942-b704-535421a65580 | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:32b7618c-c9c9-4845-bb15-15361cbe1256 | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:c96ae674-6a0c-45c6-a91e-159fd19e2ef2 | 0 |
+| 2026-07-08 02:20:41 | agent_05_iam_minimizer | a1b2c3d4... | hitl_gate | pending_approval | incident:7431ede2-605d-40bb-965a-c5e5217235ec | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:c12935d4-6cb7-4ecb-b07d-a1c9e60dec7c | 0 |
+| 2026-07-08 02:20:41 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:fb2f873b-737a-4811-993a-d2cca68825a6 | 0 |
+| 2026-07-08 02:20:42 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:a045c72c-ca5f-4bc4-8299-12dc39e92c65 | 0 |
+| 2026-07-08 02:20:42 | agent_06_finops | a1b2c3d4... | hitl_gate | pending_approval | incident:8d0b8b75-ffb8-4672-8998-6fd3ed66ffde | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | diagnose | ok | 900 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:7565809d-1278-4a44-8553-c32e317aa54c | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:4f3f8c3e-c18c-4d4f-b7fe-ecef3edee582 | 0 |
+| 2026-07-08 02:20:43 | agent_07_runbook | a1b2c3d4... | hitl_gate | pending_approval | incident:85119bab-3a65-4134-a7d9-3dfd32f3cb1c | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | diagnose | ok | 1000 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:ec26b950-4f29-443d-997b-cbe9fa414db0 | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:d10ce4aa-13aa-4dd3-9e69-6a96d72a21be | 0 |
+| 2026-07-08 02:20:43 | agent_08_drift_detection | a1b2c3d4... | hitl_gate | pending_approval | incident:f2cfcb1d-cf06-41c0-8d2b-52a9a22d08fb | 0 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | diagnose | ok | 1500 |
+| 2026-07-08 02:20:43 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:d23824ba-7114-4481-a9cc-f333b9eb3129 | 0 |
+| 2026-07-08 02:20:44 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:9f164b9c-788c-4325-aeb3-c5a14f933b28 | 0 |
+| 2026-07-08 02:20:44 | agent_09_onboarding_buddy | a1b2c3d4... | hitl_gate | pending_approval | incident:04bd364f-9480-437f-a512-88bafd36b10f | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | ingest | ok | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | diagnose | parse_error | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | diagnose | ok | 2000 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:4f598f43-5b9c-425a-a6a1-20d92ec9d7bd | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:c1b4d8aa-d98f-4a4b-b4e7-e704b32edbb1 | 0 |
+| 2026-07-08 02:20:44 | agent_10_dependency_patch | a1b2c3d4... | hitl_gate | pending_approval | incident:84cc3fb9-18cb-4ae3-8442-3713e341951c | 0 |
+| 2026-07-08 02:20:44 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:47da1be0-1a64-4d53-b34d-fb06e60bf2cf | 10 |
+| 2026-07-08 02:20:44 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:1ca4c757-2ccf-472f-bd88-83e58cb0ca52 | 5 |
+| 2026-07-08 02:20:44 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:c9d47784-d2e0-4a26-b4d0-bd8fd0879d08 | 10 |
+| 2026-07-08 02:20:44 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:c9d47784-d2e0-4a26-b4d0-bd8fd0879d08 | 10 |
+| 2026-07-08 02:20:44 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:248f3e1f-26eb-475a-b9cd-253b64096ed6 | 0 |
+| 2026-07-08 02:20:59 | agent_01_cicd_triage | a1b2c3d4... | diagnose | ok | 395 |
+| 2026-07-08 02:22:56 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:09869b0f-55dd-4b42-b9d8-06445346f2e4 | 10 |
+| 2026-07-08 02:22:56 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:17abd020-bf9f-47dd-9ef3-702a462991d5 | 5 |
+| 2026-07-08 02:22:56 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:e1a3c924-326d-4f7f-afa2-fd9d936a143c | 10 |
+| 2026-07-08 02:22:56 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:e1a3c924-326d-4f7f-afa2-fd9d936a143c | 10 |
+| 2026-07-08 02:22:56 | test_agent | a1b2c3d4-e5f6-7890-abcd-ef1234567890 | created | incident:a7555425-0ecb-403e-b4ce-2880e94d2ee0 | 0 |

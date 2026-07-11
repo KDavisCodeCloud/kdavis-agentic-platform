@@ -2,7 +2,18 @@ import { createClient } from "@/lib/supabase/server";
 import { TopBar } from "@/components/shell/TopBar";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { FireButton } from "@/components/ui/FireButton";
 import type { SessionLogEntry, GapItem } from "@/lib/types";
+
+// Known issue: api/routes/agents.py only recognizes agent_01-10 prefixes
+// (e.g. "agent_01_cicd_triage"). These short IDs will 400 against today's
+// backend — built to spec anyway, per Session 15 instructions.
+const OPS_AGENTS = [
+  { agentId: "cicd_triage",     label: "CI/CD Triage" },
+  { agentId: "k8s_alert",       label: "K8s Alert Scan" },
+  { agentId: "pr_review",       label: "PR Review" },
+  { agentId: "drift_detection", label: "Drift Detection" },
+];
 
 const BUILD_ORDER_ITEMS = [
   { label: "GAP 1 — API foundation + events router", done: true },
@@ -57,6 +68,15 @@ export default async function OpsPage() {
 
       <div className="flex-1 overflow-y-auto p-6 min-w-0">
         <div className="space-y-5">
+          {/* Agent Triggers */}
+          <SectionCard title="Agent Triggers">
+            <div className="flex flex-wrap gap-2">
+              {OPS_AGENTS.map((a) => (
+                <FireButton key={a.agentId} agentId={a.agentId} label={a.label} payload={{}} />
+              ))}
+            </div>
+          </SectionCard>
+
           {/* Build Order tracker */}
           <SectionCard title="Build Order">
             <div className="space-y-0">

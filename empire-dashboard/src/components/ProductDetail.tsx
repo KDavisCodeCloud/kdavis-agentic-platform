@@ -20,7 +20,7 @@ function fmtFull(ts: string) {
 }
 
 export function ProductDetail({ productId, onBack }: { productId: string; onBack: () => void }) {
-  const { products, tasks, logs, pct, addTask, toggleTask, deleteTask, deleteLog, updateProduct } = useDashboard()
+  const { products, tasks, logs, pct, addTask, toggleTask, deleteTask, addLog, deleteLog, updateProduct } = useDashboard()
   const pr = products.find(p => p.id === productId)
 
   const [text, setText] = useState('')
@@ -29,6 +29,8 @@ export function ProductDetail({ productId, onBack }: { productId: string; onBack
   const [editPhase, setEditPhase] = useState(false)
   const [phaseText, setPhaseText] = useState(pr?.phase_note ?? '')
   const [editStatus, setEditStatus] = useState(false)
+  const [logText, setLogText] = useState('')
+  const [logSaving, setLogSaving] = useState(false)
 
   if (!pr) return null
 
@@ -59,6 +61,15 @@ export function ProductDetail({ productId, onBack }: { productId: string; onBack
 
   async function saveProgress(val: number) {
     await updateProduct(productId, { base_progress: val })
+  }
+
+  async function handleAddLog() {
+    const t = logText.trim()
+    if (!t) return
+    setLogSaving(true)
+    await addLog(productId, t)
+    setLogText('')
+    setLogSaving(false)
   }
 
   function TaskRow({ task }: { task: Task }) {
@@ -204,6 +215,19 @@ export function ProductDetail({ productId, onBack }: { productId: string; onBack
       )}
 
       <div className="section-lbl" style={{ marginTop: 18 }}>Session notes</div>
+      <div className="task-area">
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <textarea
+            value={logText}
+            onChange={e => setLogText(e.target.value)}
+            placeholder="What got done? What's blocked? What's next?"
+            rows={2}
+            style={{ flex: 1, minWidth: 200 }}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleAddLog() }}
+          />
+          <button className="btn" onClick={handleAddLog} disabled={logSaving}>Log it</button>
+        </div>
+      </div>
       {prodLogs.length ? (
         prodLogs.map(l => (
           <div key={l.id} className="log-card">

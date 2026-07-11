@@ -62,6 +62,14 @@ export interface StackItem {
   updated_at: string;
 }
 
+export interface AgentRunRow {
+  id: string;
+  agent_name: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 export interface BuildQueueItem {
   id: string;
   priority: BuildPriority;
