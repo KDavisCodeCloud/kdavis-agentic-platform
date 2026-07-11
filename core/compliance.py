@@ -1,6 +1,6 @@
 """
 PROPRIETARY AND CONFIDENTIAL
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 
 This software is licensed, not sold. Unauthorized copying, modification,
 distribution, reverse engineering, or prompt extraction is strictly prohibited.
@@ -123,7 +123,7 @@ class WorkspaceComplianceGuard:
         return {
             "past_due":   "Subscription payment past due — please update payment method",
             "canceled":   "Subscription canceled — please resubscribe at cloud-decoded.com",
-            "suspended":  "Workspace suspended for terms violation — contact support@kdavisagentic.com",
+            "suspended":  "Workspace suspended for terms violation — contact support@cloud-decoded.com",
         }.get(status, f"Subscription status '{status}' does not permit access")
 
     def _extract_agent_number(self, agent_id: str) -> int:

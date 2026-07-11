@@ -1,6 +1,6 @@
 """
 PROPRIETARY AND CONFIDENTIAL
-Copyright (c) 2026 KDavis Agentic Systems LLC. All rights reserved.
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 
 This software is licensed, not sold. Unauthorized copying, modification,
 distribution, reverse engineering, or prompt extraction is strictly prohibited.

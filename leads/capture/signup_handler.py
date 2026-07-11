@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from leads.integrations import slack
 from leads.integrations.systeme_io import SystemeIOClient
 
 log = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 VALID_SIGNUP_TYPES = ("trial", "email_only")
 
 _supabase_client: Optional[Any] = None
+_service_role_client: Optional[Any] = None
 
 
 def _get_supabase_client() -> Any:
@@ -51,6 +53,77 @@ def _get_supabase_client() -> Any:
 
         _supabase_client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     return _supabase_client
+
+
+def _get_service_role_client() -> Any:
+    """Service-role Supabase client for handle_signup() — the leads-funnel
+    completion entry point. Kept distinct from _get_supabase_client() above
+    (which reads SUPABASE_KEY and backs process_signup()/trial_handler.py)
+    since Session 7 explicitly requires SUPABASE_SERVICE_ROLE_KEY here."""
+    global _service_role_client
+    if _service_role_client is None:
+        from supabase import create_client
+
+        _service_role_client = create_client(
+            os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+        )
+    return _service_role_client
+
+
+def _write_lead_captured_audit_log(client: Any, product_id: str, email: str) -> None:
+    """Direct insert rather than security.audit_log.AuditLog: that class
+    requires a non-null tenant_id, which a freshly-captured lead doesn't
+    have yet (leads.tenant_id is nullable — see db/migrations/005_leads.sql).
+    No try/except here — a failed write must raise, per the no-silent-
+    failures rule, same as everything else in handle_signup()."""
+    client.table("audit_log").insert({
+        "agent_id": "leads_funnel",
+        "action": "lead_captured",
+        "product_id": product_id,
+        "resource": email,
+    }).execute()
+
+
+def handle_signup(data: dict, *, supabase_client: Optional[Any] = None) -> dict:
+    """
+    Leads-funnel completion entry point (Session 7): validates email,
+    inserts into the minimal `leads` schema (product_id, email, name,
+    source), fires a lead Slack notification, writes an audit_log entry,
+    and returns {"success": True, "lead_id": ...}.
+
+    Distinct from process_signup() above — that function serves the
+    richer CLAUDE.md lead-capture flow (company/role/UTM/signup_type) that
+    trial_handler.py builds on and is left unchanged here.
+    """
+    email = (data.get("email") or "").strip().lower()
+    name = data.get("name")
+    product_id = (data.get("product_id") or "").strip()
+    source = data.get("source") or "organic"
+
+    if not email or not _EMAIL_RE.match(email):
+        raise ValueError(f"Invalid or missing email: {data.get('email')!r}")
+    if not product_id:
+        raise ValueError("product_id is required")
+
+    client = supabase_client if supabase_client is not None else _get_service_role_client()
+
+    response = client.table(LEADS_TABLE).insert({
+        "product_id": product_id,
+        "email": email,
+        "name": name,
+        "source": source,
+    }).execute()
+
+    rows = getattr(response, "data", None)
+    if not rows:
+        raise RuntimeError(f"Failed to insert lead for {email}: no row returned from Supabase")
+    lead_id = rows[0]["id"]
+
+    slack.send_lead_notification(name, email, product_id, source)
+
+    _write_lead_captured_audit_log(client, product_id, email)
+
+    return {"success": True, "lead_id": str(lead_id)}
 
 
 @dataclass(frozen=True)
