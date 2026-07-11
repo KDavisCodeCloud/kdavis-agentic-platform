@@ -31,10 +31,14 @@ Content mix (40/30/20/10, maps to the macro 70/20/10 growth/authority/
 conversion ratio): 40% educational, 30% journey/build-in-public, 20%
 repurposed concept graphics, 10% soft product/milestone — product posts
 only fire when build_updates actually contains a real milestone; never
-fabricated. Every post lands in linkedin_content_queue with
-status='pending_review' — Kelvin approves his own posts (Tier 3). This
-agent never posts (core/publishers/linkedin.py is the actual publisher,
-called downstream only after HITL approval).
+fabricated. Every post runs through MKT-10 (run_compliance_guard) before
+MKT-09 (queue_for_review) writes it to linkedin_content_queue with
+status='pending_review' — Kelvin approves his own posts (Tier 3). Unlike
+MKT-V1's structured content_json, post_copy is a flat string, so a
+compliance revision can safely replace it directly rather than only
+being surfaced via notes. This agent never posts
+(core/publishers/linkedin.py is the actual publisher, called downstream
+only after HITL approval).
 """
 
 import json
@@ -42,19 +46,20 @@ import logging
 from typing import Any, Optional
 
 from agents.marketing._shared import (
+    MARKETING_PRODUCT_ID,
     apportion,
     emit_event,
     get_anthropic_client,
-    insert_queue_row,
     sanitize,
     write_audit_log,
 )
+from agents.marketing.mkt_09_hitl_queue_manager import queue_for_review
+from agents.marketing.mkt_10_compliance_guard import run_compliance_guard
 
 log = logging.getLogger(__name__)
 
 AGENT_ID = "mkt-li1"
 MODEL = "claude-sonnet-4-6"
-TABLE_NAME = "linkedin_content_queue"
 
 CONTENT_MIX_RATIO = {"educational": 0.4, "journey": 0.3, "repurposed": 0.2, "product": 0.1}
 POSTS_PER_WEEK = 4
@@ -203,8 +208,17 @@ def run_li1_brand_agent(
                 "carousel_slides": draft.get("carousel_slides"),
                 "carousel_pdf_brief": draft.get("carousel_pdf_brief"),
             }
-            inserted = insert_queue_row(TABLE_NAME, {**post, "agent_id": AGENT_ID, "status": "pending_review"}, supabase_client)
-            post["id"] = inserted.get("id")
+
+            compliance = run_compliance_guard(post["post_copy"], platform="linkedin", product_id=MARKETING_PRODUCT_ID)
+            if compliance["revised_content"]:
+                post["post_copy"] = compliance["revised_content"]
+
+            content_item = {**post, "agent_id": AGENT_ID}
+            if compliance["flags"]:
+                content_item["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+
+            queued = queue_for_review(content_item, tier=3, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
+            post["id"] = queued.get("id")
             posts.append(post)
 
         write_audit_log(AGENT_ID, "weekly_calendar_generated", resource=f"{len(posts)} posts", outcome="success")

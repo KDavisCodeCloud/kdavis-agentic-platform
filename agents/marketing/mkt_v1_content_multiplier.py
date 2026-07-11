@@ -21,22 +21,34 @@ CRITICAL RULE, never relax: community posts (Reddit) are DRAFT ONLY.
 `reddit_post["draft_only"]` is always True — this agent never posts to
 Reddit, a human does. Ban risk + reputation risk.
 
-MKT-10 (compliance guard) doesn't exist in this repo yet — every output
-runs through a stub scan that logs "MKT-10 pending" rather than silently
-skipping the step the spec calls for.
+Each platform's draft runs through MKT-10 (run_compliance_guard) before
+MKT-09 (queue_for_review) writes it to content_queue — tier 2 (wife
+reviews product marketing). content_json stays the original structured
+draft even when MKT-10 flags something: revised_content is a redacted
+copy of the flat string MKT-10 was fed (json.dumps of the draft), and
+re-parsing that back into structured JSON on every phrase-redaction is a
+real risk of corrupting the draft the human is about to review — flags
+go in mkt10_notes instead, so nothing is silently auto-edited.
 """
 
 import json
 import logging
 from typing import Any, Optional
 
-from agents.marketing._shared import emit_event, get_anthropic_client, insert_queue_row, sanitize, write_audit_log
+from agents.marketing._shared import (
+    MARKETING_PRODUCT_ID,
+    emit_event,
+    get_anthropic_client,
+    sanitize,
+    write_audit_log,
+)
+from agents.marketing.mkt_09_hitl_queue_manager import queue_for_review
+from agents.marketing.mkt_10_compliance_guard import run_compliance_guard
 
 log = logging.getLogger(__name__)
 
 AGENT_ID = "mkt-v1"
 MODEL = "claude-sonnet-4-6"
-TABLE_NAME = "content_queue"
 
 MULTIPLIER_SYSTEM_PROMPT = """You adapt one research report into platform-specific
 marketing drafts for the same underlying story, in brand voice, one per
@@ -68,13 +80,6 @@ Respond with ONLY a JSON object matching this exact shape:
   "x_thread": [str, ...],
   "video_script": {"hook": str, "body": str, "cta": str}
 }"""
-
-
-def _mkt10_compliance_scan(content: dict) -> dict:
-    """Stub — MKT-10 (Compliance Guard) is not built in this repo yet.
-    Logs the gap rather than silently skipping the step the spec calls for."""
-    log.warning("MKT-10 pending — compliance scan skipped for this content_queue insert")
-    return {"passed": True, "notes": "MKT-10 not yet built — scan skipped"}
 
 
 def _draft_multiplied_content(client: Any, research_report: dict, brand_voice_profile: dict, high_performers: list, target_platforms: list) -> dict:
@@ -130,8 +135,6 @@ def run_v1_content_multiplier(
         reddit_post["draft_only"] = True
         drafts["reddit_post"] = reddit_post
 
-        compliance = _mkt10_compliance_scan(drafts)
-
         # content_queue is one row per platform (platform TEXT NOT NULL) —
         # see db/migrations/007_marketing_queues.sql.
         platform_content = {
@@ -143,17 +146,22 @@ def run_v1_content_multiplier(
         for platform, content in platform_content.items():
             if not content:
                 continue
-            insert_queue_row(
-                TABLE_NAME,
+
+            compliance = run_compliance_guard(
+                json.dumps(content, default=str), platform=platform, product_id=MARKETING_PRODUCT_ID,
+            )
+
+            queue_for_review(
                 {
                     "agent_id": AGENT_ID,
                     "platform": platform,
                     "content_json": content,
-                    "status": "pending_review",
                     "mkt10_passed": compliance["passed"],
-                    "mkt10_notes": compliance["notes"],
+                    "mkt10_notes": "; ".join(compliance["flags"]) if compliance["flags"] else None,
                 },
-                supabase_client,
+                tier=2,
+                product_id=MARKETING_PRODUCT_ID,
+                supabase_client=supabase_client,
             )
 
         write_audit_log(AGENT_ID, "content_multiplied", resource=str(target_platforms), outcome="success")
