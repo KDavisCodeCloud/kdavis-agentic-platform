@@ -126,6 +126,7 @@ _WIRABLE_AGENTS = {
     "content_agent",
     "email_sequence_agent",
     "sop_agent",
+    "gap_detector_agent",
 }
 
 _NOT_WIRED_REASONS = {
@@ -137,17 +138,6 @@ _NOT_WIRED_REASONS = {
         "products table into the snapshot shape this method actually needs "
         "(new_subscriptions, trial_to_paid_conversions, agent_run_count, "
         "etc. aren't derivable from stripe_revenue.py's RevenueEvent alone)."
-    ),
-    "gap_detector_agent": (
-        "weekly_scan() needs four separate structured inputs (agent runs, "
-        "HITL corrections, chat queries, agent roster). Only one has a "
-        "matching live table shape at all — infra/supabase/migrations's "
-        "product-scoped agent_runs table lines up with AgentRunRecord's "
-        "fields — but that table belongs to the customer-facing commercial "
-        "agent_01-10 path, not these internal business-OS runs; mapping "
-        "internal_agent_runs rows onto AgentRunRecord would mean fabricating "
-        "a product_id and confidence_score that table doesn't have. "
-        "hitl_corrections/chat_queries/roster have no backing table at all."
     ),
     "revenue_intelligence_agent": (
         "scan() needs Lead/VisitorSession/Product/RevenueEvent lists. "
@@ -259,6 +249,89 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
             hypothesis = payload.get("hypothesis")
             result = ResearchAgent().run(niche=niche, hypothesis=hypothesis)
 
+        elif agent_id == "gap_detector_agent":
+            from agents.internal.gap_detector_agent import (
+                AgentRosterEntry,
+                AgentRunRecord,
+                ChatQuery,
+                GapDetectorAgent,
+                HITLCorrection,
+            )
+
+            days_back = int(payload.get("days_back", 30))
+            if days_back < 1 or days_back > 365:
+                raise ValueError("payload.days_back must be between 1 and 365")
+
+            # AgentRunRecord — real internal_agent_runs rows (migration 009
+            # added product_id/confidence_score to the table specifically
+            # for this). status vocab differs from AgentRunRecord's own
+            # ("completed"/"failed"/"paused"/"running" vs this table's
+            # "executing"/"executed"/"failed") — mapped, not passed through
+            # raw, so detect_low_confidence_pattern's status=="failed" check
+            # actually lines up.
+            _STATUS_MAP = {"executed": "completed", "executing": "running", "failed": "failed"}
+            async with db.acquire() as conn:
+                run_rows = await conn.fetch(
+                    "SELECT agent_id, product_id, status, confidence_score, created_at "
+                    "FROM internal_agent_runs WHERE created_at > now() - ($1 || ' days')::interval",
+                    str(days_back),
+                )
+                correction_rows = await conn.fetch(
+                    "SELECT agent_name, original_option, corrected_option, occurred_at "
+                    "FROM hitl_corrections WHERE occurred_at > now() - ($1 || ' days')::interval",
+                    str(days_back),
+                )
+                query_rows = await conn.fetch(
+                    "SELECT query_text, routed_to_claude, occurred_at "
+                    "FROM chat_queries WHERE occurred_at > now() - ($1 || ' days')::interval",
+                    str(days_back),
+                )
+
+            runs = [
+                AgentRunRecord(
+                    agent_name=r["agent_id"],
+                    product_id=r["product_id"] or "internal",
+                    status=_STATUS_MAP.get(r["status"], r["status"]),
+                    confidence_score=float(r["confidence_score"]) if r["confidence_score"] is not None else None,
+                    started_at=r["created_at"].date(),
+                )
+                for r in run_rows
+            ]
+            corrections = [
+                HITLCorrection(
+                    agent_name=r["agent_name"], original_option=r["original_option"],
+                    corrected_option=r["corrected_option"], occurred_at=r["occurred_at"].date(),
+                )
+                for r in correction_rows
+            ]
+            chat_queries = [
+                ChatQuery(text=r["query_text"], routed_to_claude=r["routed_to_claude"], occurred_at=r["occurred_at"].date())
+                for r in query_rows
+            ]
+            # AgentRosterEntry — deliberately NOT a DB table (see migration
+            # 009's own comment): derived live from this module's own
+            # _KNOWN_INTERNAL_AGENTS/_WIRABLE_AGENTS, which can never drift
+            # out of sync with what's actually wired the way a separate
+            # roster table could.
+            roster = [
+                AgentRosterEntry(
+                    agent_name=name,
+                    status="active" if name in _WIRABLE_AGENTS else "recommended",
+                )
+                for name in _KNOWN_INTERNAL_AGENTS
+            ]
+
+            recommendations = GapDetectorAgent().weekly_scan(
+                runs=runs, corrections=corrections, chat_queries=chat_queries, roster=roster
+            )
+            result = {
+                "days_back": days_back,
+                "runs_analyzed": len(runs),
+                "corrections_analyzed": len(corrections),
+                "chat_queries_analyzed": len(chat_queries),
+                "recommendations": [rec.to_row() for rec in recommendations],
+            }
+
         elif agent_id in ("content_agent", "email_sequence_agent"):
             # Both chain off a completed research_agent run rather than
             # taking a raw research payload directly — research is
@@ -360,6 +433,17 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
             # same deferred pattern as their own direct dispatch above.
             router_agent = ChatRouterAgent(handlers=handlers, claude_fn=_claude_fn)
             result = router_agent.handle(query)
+
+            # Real writer for gap_detector_agent's ChatQuery signal (see
+            # migration 009) — every chat turn logged here, not just the
+            # ones that fell through, so detect_claude_fallback_gap can
+            # eventually be extended to consider handled-vs-fallback ratio,
+            # not just raw fallback count.
+            async with db.acquire() as conn:
+                await conn.execute(
+                    "INSERT INTO chat_queries (query_text, routed_to_claude) VALUES ($1, $2)",
+                    query, result.get("routed_to") == "claude_think_tank",
+                )
 
         elif agent_id == "code_quality_agent":
             from agents.internal.code_quality_agent import CodeQualityAgent

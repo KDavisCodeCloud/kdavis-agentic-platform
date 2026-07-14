@@ -220,7 +220,9 @@ class TestChatRouterAgentDispatch:
         await internal_agents._execute_internal_agent(
             app, str(uuid4()), "chat_router_agent", {"query": "what's our MRR this month"}
         )
-        assert conn.execute.await_count == 1
+        # 2 calls now: the chat_queries INSERT (added alongside
+        # gap_detector_agent's ChatQuery signal) + the status=executed UPDATE.
+        assert conn.execute.await_count == 2
         sql, *params = conn.execute.await_args.args
         assert "status = 'executed'" in sql
         result = json.loads(params[0])
@@ -364,13 +366,107 @@ class TestUpdatedWirableSet:
             assert agent_id in internal_agents._WIRABLE_AGENTS
             assert agent_id not in internal_agents._NOT_WIRED_REASONS
 
+    def test_gap_detector_agent_is_wirable(self):
+        # migration 009: internal_agent_runs got product_id/confidence_score
+        # columns, plus new hitl_corrections/chat_queries tables. Roster is
+        # derived from _KNOWN_INTERNAL_AGENTS/_WIRABLE_AGENTS directly, not
+        # a table.
+        assert "gap_detector_agent" in internal_agents._WIRABLE_AGENTS
+        assert "gap_detector_agent" not in internal_agents._NOT_WIRED_REASONS
+
     def test_still_deferred_agents_have_specific_reasons(self):
-        for agent_id in ("portfolio_monitor", "gap_detector_agent",
+        for agent_id in ("portfolio_monitor",
                           "revenue_intelligence_agent", "accounting_agent",
                           "finance_assistant_agent", "tax_agent", "wealth_agent"):
             assert agent_id not in internal_agents._WIRABLE_AGENTS
             assert agent_id in internal_agents._NOT_WIRED_REASONS
             assert len(internal_agents._NOT_WIRED_REASONS[agent_id]) > 20
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# gap_detector_agent — reads real internal_agent_runs/hitl_corrections/
+# chat_queries rows (mocked here via conn.fetch), derives AgentRosterEntry
+# live from _KNOWN_INTERNAL_AGENTS/_WIRABLE_AGENTS (no roster table).
+# Verified separately against the real live DB during development: inserted
+# a real internal_agent_runs row, fired gap_detector_agent for real, got
+# back genuine roster-coverage-gap recommendations for portfolio_monitor
+# and revenue_intelligence_agent (both still actually unwired at the time)
+# — not fabricated output.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_app_for_gap_detector(run_rows=None, correction_rows=None, query_rows=None):
+    app, conn = _make_app_with_db()
+    conn.fetch = AsyncMock(side_effect=[run_rows or [], correction_rows or [], query_rows or []])
+    return app, conn
+
+
+class TestGapDetectorAgentDispatch:
+    async def test_success_with_no_signal_writes_executed(self):
+        app, conn = _make_app_for_gap_detector()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "gap_detector_agent", {}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["runs_analyzed"] == 0
+        # portfolio_monitor/revenue_intelligence_agent etc. aren't in
+        # _WIRABLE_AGENTS yet in this test's own module state, so the
+        # roster-coverage detector should surface them as real gaps.
+        names = {r["suggested_agent_name"] for r in result["recommendations"]}
+        assert "portfolio_monitor" in names
+
+    async def test_uses_real_run_rows(self):
+        import datetime
+        run_rows = [
+            {"agent_id": "research_agent", "product_id": None, "status": "failed",
+             "confidence_score": None, "created_at": datetime.datetime.now(datetime.timezone.utc)}
+            for _ in range(3)
+        ]
+        app, conn = _make_app_for_gap_detector(run_rows=run_rows)
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "gap_detector_agent", {"days_back": 7}
+        )
+        sql, *params = conn.execute.await_args.args
+        result = json.loads(params[0])
+        assert result["runs_analyzed"] == 3
+        names = {r["suggested_agent_name"] for r in result["recommendations"]}
+        assert "research_agent_review" in names  # detect_low_confidence_pattern's naming convention
+
+    async def test_invalid_days_back_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "gap_detector_agent", {"days_back": 9999}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "days_back" in params[0]
+
+
+class TestChatRouterAgentLogsQueries:
+    async def test_logs_keyword_matched_query(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "chat_router_agent", {"query": "what's our MRR this month"}
+        )
+        assert conn.execute.await_count == 2
+        insert_sql, *insert_params = conn.execute.await_args_list[0].args
+        assert "INSERT INTO chat_queries" in insert_sql
+        assert insert_params[0] == "what's our MRR this month"
+        assert insert_params[1] is False  # keyword-matched, not routed to Claude
+
+    async def test_logs_claude_fallback_query(self):
+        app, conn = _make_app_with_db()
+        fake_completion = SimpleNamespace(text="analysis")
+        with patch("providers.router.complete", new=AsyncMock(return_value=fake_completion)):
+            await internal_agents._execute_internal_agent(
+                app, str(uuid4()), "chat_router_agent",
+                {"query": "what do you think about our positioning"},
+            )
+        assert conn.execute.await_count == 2
+        insert_sql, *insert_params = conn.execute.await_args_list[0].args
+        assert "INSERT INTO chat_queries" in insert_sql
+        assert insert_params[1] is True  # fell through to Claude
 
 
 # ──────────────────────────────────────────────────────────────────────────────
