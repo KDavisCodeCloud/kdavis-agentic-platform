@@ -69,6 +69,18 @@ def _run_coro_sync(coro):
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(lambda: asyncio.run(coro)).result()
 
+
+def _llm_call_sync(prompt: str) -> str:
+    """Sync single-prompt LLM callback for agents whose llm_call contract is
+    Callable[[str], str] (content_agent, email_sequence_agent) — distinct
+    from ChatRouterAgent's claude_fn(query, context) shape, so not shared
+    with that closure. Same providers.router bridge as chat_router_agent's
+    branch below."""
+    import providers.router as llm_router
+
+    completion = _run_coro_sync(llm_router.complete(prompt, task_type="content_draft"))
+    return completion.text
+
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/agents", tags=["internal-agents"])
 
@@ -100,17 +112,10 @@ _KNOWN_INTERNAL_AGENTS = {
 # Agents with a real dispatch branch below. See module docstring for why
 # the rest aren't here yet.
 #
-# IMPORTANT CAVEAT (found while wiring this batch): api/main.py requires a
-# real DATABASE_URL to build app.state.db_pool — the .env value on this
-# machine is still the literal placeholder
-# "postgresql+asyncpg://user:***@host:5432/dbname", not a real connection
-# string. That means NONE of these — including research_agent, wired in an
-# earlier pass — can actually run end-to-end yet; the INSERT that creates
-# the internal_agent_runs row in run_internal_agent() happens before any
-# agent code even runs. This is a live-infra gap (no Postgres provisioned
-# for this backend at all), not a per-agent code gap — every agent below is
-# tested against a mocked db_pool, same as research_agent, and is real,
-# correct, ready-to-run code. It just has nothing to run against yet.
+# DATABASE_URL is now a real, live connection (microsaas-prod, pooler mode)
+# — every agent below actually executes end-to-end against Postgres, not
+# just against a mocked db_pool. Verified directly: GET / returns 200, pool
+# connects, LangGraph checkpointer initializes.
 _WIRABLE_AGENTS = {
     "research_agent",
     "chat_router_agent",
@@ -118,6 +123,9 @@ _WIRABLE_AGENTS = {
     "release_notes_agent",
     "visitor_capture_agent",
     "onboarding_agent",
+    "content_agent",
+    "email_sequence_agent",
+    "sop_agent",
 }
 
 _NOT_WIRED_REASONS = {
@@ -140,19 +148,6 @@ _NOT_WIRED_REASONS = {
         "internal_agent_runs rows onto AgentRunRecord would mean fabricating "
         "a product_id and confidence_score that table doesn't have. "
         "hitl_corrections/chat_queries/roster have no backing table at all."
-    ),
-    "content_agent": (
-        "build_package() takes a completed research_agent output as input — "
-        "chain it after a research_agent run once approved, it's not "
-        "fireable standalone."
-    ),
-    "email_sequence_agent": (
-        "draft_all_sequences() takes a completed research_agent output as "
-        "input, same as content_agent — not fireable standalone."
-    ),
-    "sop_agent": (
-        "run() takes an existing agent_run record as input, not something a "
-        "bare fire-button payload has on hand."
     ),
     "revenue_intelligence_agent": (
         "scan() needs Lead/VisitorSession/Product/RevenueEvent lists. "
@@ -263,6 +258,82 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
                 raise ValueError("payload.niche is required to run research_agent")
             hypothesis = payload.get("hypothesis")
             result = ResearchAgent().run(niche=niche, hypothesis=hypothesis)
+
+        elif agent_id in ("content_agent", "email_sequence_agent"):
+            # Both chain off a completed research_agent run rather than
+            # taking a raw research payload directly — research is
+            # expensive (scraping + LLM synthesis) and HITL-gated, so
+            # re-running it implicitly on every content/email fire would be
+            # wrong. payload.research_run_id must point at an
+            # internal_agent_runs row with agent_id='research_agent' and
+            # status='executed'; its result is {"research": {...}, "hitl_card":
+            # {...}} (ResearchAgent.run()'s own return shape) — unwrap
+            # ["research"], not the row itself.
+            research_run_id = payload.get("research_run_id")
+            product_id = payload.get("product_id")
+            if not research_run_id:
+                raise ValueError(
+                    "payload.research_run_id (a completed research_agent run id) "
+                    f"is required to run {agent_id}"
+                )
+            if not product_id or not str(product_id).strip():
+                raise ValueError(f"payload.product_id is required to run {agent_id}")
+
+            async with db.acquire() as conn:
+                research_row = await conn.fetchrow(
+                    "SELECT status, result FROM internal_agent_runs "
+                    "WHERE id = $1 AND agent_id = 'research_agent'",
+                    UUID(str(research_run_id)),
+                )
+            if not research_row:
+                raise ValueError(f"research_run_id '{research_run_id}' not found")
+            if research_row["status"] != "executed":
+                raise ValueError(
+                    f"research_run_id '{research_run_id}' has status "
+                    f"'{research_row['status']}', not 'executed' — {agent_id} "
+                    "needs a completed research_agent run to chain from"
+                )
+            research_result = research_row["result"]
+            if isinstance(research_result, str):
+                research_result = json.loads(research_result)
+            research = research_result.get("research")
+            if not research:
+                raise ValueError(
+                    f"research_run_id '{research_run_id}''s result has no "
+                    "'research' key — not a genuine research_agent output"
+                )
+
+            if agent_id == "content_agent":
+                from agents.internal.content_agent import ContentAgent
+
+                result = ContentAgent(llm_call=_llm_call_sync).build_package(
+                    research=research, product_id=product_id
+                )
+            else:
+                from agents.internal.email_sequence_agent import EmailSequenceAgent
+
+                result = EmailSequenceAgent(llm_call=_llm_call_sync).draft_all_sequences(
+                    research=research, product_id=product_id
+                )
+
+        elif agent_id == "sop_agent":
+            from agents.internal.sop_agent import SOPAgent
+
+            required = ["agent_name", "task_summary"]
+            missing = [k for k in required if not payload.get(k)]
+            if missing:
+                raise ValueError(
+                    f"payload missing required fields for sop_agent: {missing}"
+                )
+            # SOPAgent.run() takes a free-form agent_run dict (agent_name +
+            # task_summary required, everything else optional with .get()
+            # defaults per sop_agent.py itself) — genuinely fireable from a
+            # bare payload, not tied to any DB table shape. The old "not
+            # something a bare fire-button payload has on hand" reasoning
+            # was overcautious; correcting it here rather than leaving it
+            # unwired.
+            file_path = SOPAgent().run(agent_run=payload)
+            result = {"file_path": file_path}
 
         elif agent_id == "chat_router_agent":
             from agents.internal.chat_router_agent import ChatRouterAgent

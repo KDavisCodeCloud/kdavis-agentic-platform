@@ -355,10 +355,165 @@ class TestUpdatedWirableSet:
                           "visitor_capture_agent", "onboarding_agent"):
             assert agent_id in internal_agents._WIRABLE_AGENTS
 
+    def test_content_email_sop_agents_are_wirable(self):
+        # Wired in the pass that closed out DATABASE_URL — content_agent and
+        # email_sequence_agent chain off a completed research_agent run,
+        # sop_agent is fireable from a bare payload (agent_name +
+        # task_summary), same as visitor_capture_agent/onboarding_agent.
+        for agent_id in ("content_agent", "email_sequence_agent", "sop_agent"):
+            assert agent_id in internal_agents._WIRABLE_AGENTS
+            assert agent_id not in internal_agents._NOT_WIRED_REASONS
+
     def test_still_deferred_agents_have_specific_reasons(self):
-        for agent_id in ("portfolio_monitor", "gap_detector_agent", "content_agent",
-                          "email_sequence_agent", "sop_agent", "revenue_intelligence_agent",
-                          "accounting_agent", "finance_assistant_agent", "tax_agent", "wealth_agent"):
+        for agent_id in ("portfolio_monitor", "gap_detector_agent",
+                          "revenue_intelligence_agent", "accounting_agent",
+                          "finance_assistant_agent", "tax_agent", "wealth_agent"):
             assert agent_id not in internal_agents._WIRABLE_AGENTS
             assert agent_id in internal_agents._NOT_WIRED_REASONS
             assert len(internal_agents._NOT_WIRED_REASONS[agent_id]) > 20
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# content_agent / email_sequence_agent — chain off a completed research_agent
+# run via internal_agent_runs.result->'research'. sop_agent — fireable from a
+# bare payload, no chaining. All three additionally verified against the real
+# live DB during development (insert a fake executed research_agent row,
+# fire content_agent/email_sequence_agent for real, confirm result written +
+# a real SOP file lands on disk) — that live check isn't repeatable in CI
+# without a DB, so it isn't encoded here; these tests cover the same logic
+# paths with a mocked pool.
+# ──────────────────────────────────────────────────────────────────────────────
+
+_FAKE_RESEARCH = {
+    "niche": "freight invoice reconciliation",
+    "icp": {"job_title": "AP Manager", "company_size": "50-200", "tools_daily": ["QuickBooks"],
+            "visual_environment": "spreadsheet-heavy", "emotional_register": "OPERATIONAL",
+            "trust_blockers": ["data security"], "proof_format": "METRICS"},
+    "pain_language": ["I spend 6 hours a week matching invoices by hand"],
+    "top_llm_queries": ["best freight invoice reconciliation tool"],
+    "competitor_gaps": ["no real-time discrepancy alerts"],
+    "estimated_build_days": 14,
+    "estimated_mrr_range": {"low": 2000, "high": 8000},
+    "viability_score": 0.7,
+    "design_brief_vars": {
+        "pain_headline_options": ["Stop matching freight invoices by hand"],
+        "roi_number": "Save 6 hours/week", "proof_stat_1": "6 hrs saved",
+        "proof_stat_2": "99% match accuracy", "proof_stat_3": "3 min setup",
+        "faq_questions": ["How does it work?"],
+    },
+}
+
+
+def _make_app_with_research_row(status="executed", result=None):
+    """Like _make_app_with_db but also configures conn.fetchrow for the
+    research_run_id lookup content_agent/email_sequence_agent's dispatch
+    branch does before the final status-update conn.execute call."""
+    app, conn = _make_app_with_db()
+    conn.fetchrow = AsyncMock(return_value={
+        "status": status,
+        "result": json.dumps(result if result is not None else {"research": _FAKE_RESEARCH, "hitl_card": {}}),
+    })
+    return app, conn
+
+
+class TestContentAgentDispatch:
+    async def test_success_writes_executed(self):
+        app, conn = _make_app_with_research_row()
+        with patch.object(internal_agents, "_llm_call_sync", return_value="stub"):
+            await internal_agents._execute_internal_agent(
+                app, str(uuid4()), "content_agent",
+                {"research_run_id": str(uuid4()), "product_id": "freight-audit"},
+            )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["product_id"] == "freight-audit"
+        assert "landing_headlines" in result
+
+    async def test_missing_research_run_id_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "content_agent", {"product_id": "freight-audit"}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "research_run_id" in params[0]
+
+    async def test_research_run_not_executed_writes_failed(self):
+        app, conn = _make_app_with_research_row(status="executing")
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "content_agent",
+            {"research_run_id": str(uuid4()), "product_id": "freight-audit"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "not 'executed'" in params[0]
+
+    async def test_research_row_not_found_writes_failed(self):
+        app, conn = _make_app_with_db()
+        conn.fetchrow = AsyncMock(return_value=None)
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "content_agent",
+            {"research_run_id": str(uuid4()), "product_id": "freight-audit"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "not found" in params[0]
+
+
+class TestEmailSequenceAgentDispatch:
+    async def test_success_writes_executed(self):
+        app, conn = _make_app_with_research_row()
+        with patch.object(internal_agents, "_llm_call_sync", return_value="stub"):
+            await internal_agents._execute_internal_agent(
+                app, str(uuid4()), "email_sequence_agent",
+                {"research_run_id": str(uuid4()), "product_id": "freight-audit"},
+            )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert "sequences" in result
+
+    async def test_missing_product_id_writes_failed(self):
+        app, conn = _make_app_with_research_row()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "email_sequence_agent", {"research_run_id": str(uuid4())}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "product_id" in params[0]
+
+
+class TestSopAgentDispatch:
+    async def test_success_writes_executed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "sop_agent",
+            {"agent_name": "test_agent", "task_summary": "unit test SOP write"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["file_path"].endswith(".md")
+        assert (tmp_path / "KDavis Platform" / "SOPs" / "test_agent").exists()
+
+    async def test_missing_task_summary_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "sop_agent", {"agent_name": "test_agent"}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "missing required fields" in params[0]
+
+    async def test_no_vault_path_writes_failed(self, monkeypatch):
+        monkeypatch.delenv("OBSIDIAN_VAULT_PATH", raising=False)
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "sop_agent",
+            {"agent_name": "test_agent", "task_summary": "should fail, no vault"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "OBSIDIAN_VAULT_PATH" in params[0]

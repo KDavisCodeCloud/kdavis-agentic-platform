@@ -74,11 +74,22 @@ async def lifespan(app: FastAPI):
     asyncpg_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
 
     # asyncpg pool — used by core/hitl.py, compliance.py, token_budget.py, routes
+    #
+    # statement_cache_size=0 is not optional: DATABASE_URL points at Supabase's
+    # transaction-mode pooler (port 6543), which does not pin a client to one
+    # server-side connection across statements. asyncpg's default prepared-
+    # statement cache assumes a stable connection and will intermittently raise
+    # DuplicatePreparedStatementError the moment two differently-shaped queries
+    # land on a connection the pooler has silently recycled — e.g. the INSERT
+    # in run_internal_agent() followed by the UPDATE in _execute_internal_agent()
+    # a moment later. Found by exercising that exact pattern directly against
+    # the live DB; every route using this pool was exposed, not just new ones.
     app.state.db_pool = await asyncpg.create_pool(
         asyncpg_url,
         min_size=2,
         max_size=10,
         command_timeout=60,
+        statement_cache_size=0,
     )
     log.info("[API] Database pool created")
 
