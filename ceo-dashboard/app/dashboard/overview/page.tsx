@@ -26,7 +26,9 @@ const PRODUCTS = [
 const PRODUCT_FIRE_BUTTONS: Record<string, { agentId: string; label: string }> = {
   "Cloud Decoded":     { agentId: "research_agent",     label: "Run Research" },
   "Micro SaaS Engine": { agentId: "portfolio_monitor",  label: "Run Monitor" },
-  "CEO Decoded":       { agentId: "sop_gap_detector",   label: "Run Gap Scan" },
+  // Was "sop_gap_detector" — no such file exists in agents/internal/; the
+  // real gap-scan agent is gap_detector_agent.py.
+  "CEO Decoded":       { agentId: "gap_detector_agent", label: "Run Gap Scan" },
 };
 
 const TEAM = [

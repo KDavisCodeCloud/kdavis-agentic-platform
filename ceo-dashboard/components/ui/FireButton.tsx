@@ -77,21 +77,28 @@ export function FireButton({ agentId, label, payload }: FireButtonProps) {
       }
 
       const result = await triggerAgent(agentId, payload, authToken);
-      const currentIncidentId = result.incident_id;
+      const currentIncidentId = result.runId;
       if (!mounted.current) return;
       setIncidentId(currentIncidentId);
 
       pollTimer.current = setInterval(async () => {
         try {
-          const poll = await pollIncident(currentIncidentId, authToken);
-          if (poll.status === "completed") {
+          const poll = await pollIncident(agentId, currentIncidentId, authToken);
+          // Real vocabulary (core/hitl.py's execution_status, shared by the
+          // commercial and internal-agent paths alike): pending_approval,
+          // executing, executed, held, failed, budget_exceeded — there is no
+          // "completed" value. Polling for that literal string never
+          // matched, so a fire button looked stuck "Running…" forever even
+          // on a successful run.
+          if (poll.status === "executed") {
             clearPoll();
             if (!mounted.current) return;
             setStatus("done");
             scheduleReset();
-          } else if (poll.status === "failed") {
-            fail("Agent run failed");
+          } else if (poll.status === "failed" || poll.status === "budget_exceeded") {
+            fail(poll.error ?? "Agent run failed");
           }
+          // pending_approval / executing / held: still running, keep polling.
         } catch (err) {
           fail(err instanceof Error ? err.message : "Poll failed");
         }
