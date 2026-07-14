@@ -21,6 +21,7 @@ What this file validates:
 Runs with pytest-asyncio + unittest.mock — no live Supabase/DB needed.
 """
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -135,7 +136,7 @@ class TestRunInternalAgentGuards:
                 user={"id": "u1", "email": "k@thd.io", "role": "admin"},
             )
         assert exc.value.status_code == 501
-        assert "product-metrics snapshot" in exc.value.detail
+        assert "ProductMetricsSnapshot" in exc.value.detail
 
     async def test_wirable_agent_creates_real_row_not_placeholder(self):
         fake_row = {"id": uuid4()}
@@ -202,3 +203,162 @@ class TestExecuteInternalAgent:
         sql, *params = conn.execute.await_args.args
         assert "status = 'failed'" in sql
         assert "niche is required" in params[0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Newly-wired agents (this pass): chat_router_agent, code_quality_agent,
+# release_notes_agent, visitor_capture_agent, onboarding_agent.
+# Same standard as research_agent above — mocked db_pool, real logic path
+# exercised, not just import checks. None of these run against a live DB
+# yet (DATABASE_URL is still a placeholder in this environment) — that's
+# a separate infra gap, not something these tests paper over.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestChatRouterAgentDispatch:
+    async def test_keyword_match_success_no_claude_needed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "chat_router_agent", {"query": "what's our MRR this month"}
+        )
+        assert conn.execute.await_count == 1
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["routed_to"] == "portfolio_monitor"
+        assert result["status"] == "handler_not_available"  # not wired as a chat handler yet
+
+    async def test_claude_fallback_uses_router(self):
+        app, conn = _make_app_with_db()
+        fake_completion = SimpleNamespace(text="Here's my analysis...")
+        with patch("providers.router.complete", new=AsyncMock(return_value=fake_completion)):
+            await internal_agents._execute_internal_agent(
+                app, str(uuid4()), "chat_router_agent", {"query": "what do you think about our positioning"}
+            )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["routed_to"] == "claude_think_tank"
+        assert result["response"] == "Here's my analysis..."
+
+    async def test_missing_query_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "chat_router_agent", {}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "query is required" in params[0]
+
+
+class TestCodeQualityAgentDispatch:
+    async def test_missing_paths_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "code_quality_agent", {}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "paths" in params[0]
+
+    async def test_path_escaping_repo_root_rejected(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "code_quality_agent", {"paths": ["../../../etc/passwd"]}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "escapes the repo root" in params[0]
+
+    async def test_real_file_reviewed_successfully(self):
+        app, conn = _make_app_with_db()
+        # Review this very test file — real filesystem read, real AST parse.
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "code_quality_agent", {"paths": ["tests/test_internal_agents.py"]}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["files_reviewed"] == 1
+
+
+class TestReleaseNotesAgentDispatch:
+    async def test_builds_from_real_git_log(self):
+        app, conn = _make_app_with_db()
+        # Real git log against this actual repo — no mocking of subprocess,
+        # exercises the real integration.
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "release_notes_agent", {"commit_count": 3}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert len(result["what_changed"]) == 3
+        assert result["version"]
+
+    async def test_invalid_commit_count_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "release_notes_agent", {"commit_count": 9999}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+
+
+class TestVisitorCaptureAgentDispatch:
+    async def test_success_scores_and_returns_lead(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "visitor_capture_agent",
+            {"product_id": "mse", "email": "test@example.com", "signup_type": "trial", "utm_source": "direct"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["email"] == "test@example.com"
+
+    async def test_missing_required_fields_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "visitor_capture_agent", {"email": "test@example.com"}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "missing required fields" in params[0]
+
+
+class TestOnboardingAgentDispatch:
+    async def test_prepare_invite_success(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "onboarding_agent",
+            {"email": "son@example.com", "name": "Son", "role": "team_member"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["email"] == "son@example.com"
+        assert "execute_invite is still genuinely blocked" in result["note"]
+
+    async def test_invalid_role_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "onboarding_agent",
+            {"email": "x@example.com", "name": "X", "role": "not_a_real_role"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+
+
+class TestUpdatedWirableSet:
+    def test_five_new_agents_are_wirable(self):
+        for agent_id in ("chat_router_agent", "code_quality_agent", "release_notes_agent",
+                          "visitor_capture_agent", "onboarding_agent"):
+            assert agent_id in internal_agents._WIRABLE_AGENTS
+
+    def test_still_deferred_agents_have_specific_reasons(self):
+        for agent_id in ("portfolio_monitor", "gap_detector_agent", "content_agent",
+                          "email_sequence_agent", "sop_agent", "revenue_intelligence_agent",
+                          "accounting_agent", "finance_assistant_agent", "tax_agent", "wealth_agent"):
+            assert agent_id not in internal_agents._WIRABLE_AGENTS
+            assert agent_id in internal_agents._NOT_WIRED_REASONS
+            assert len(internal_agents._NOT_WIRED_REASONS[agent_id]) > 20
