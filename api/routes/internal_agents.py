@@ -132,12 +132,18 @@ _WIRABLE_AGENTS = {
 _NOT_WIRED_REASONS = {
     "portfolio_monitor": (
         "daily_digest() takes pre-built ProductMetricsSnapshot objects as "
-        "input. finance/integrations/stripe_revenue.py exists but "
-        "STRIPE_API_KEY is unset in this environment, and there's no "
-        "aggregation layer anywhere that turns raw Stripe charges + the "
-        "products table into the snapshot shape this method actually needs "
-        "(new_subscriptions, trial_to_paid_conversions, agent_run_count, "
-        "etc. aren't derivable from stripe_revenue.py's RevenueEvent alone)."
+        "input. The Stripe key gap is fixed (finance/integrations/"
+        "stripe_revenue.py was reading a STRIPE_API_KEY env var that never "
+        "existed — the real key is STRIPE_SECRET_KEY, same one "
+        "stripe_billing.py already uses; corrected) and a live Stripe "
+        "connection confirmed working, but Stripe currently has zero "
+        "subscriptions/customers (pre-revenue, confirmed live) and "
+        "config/products.yaml has no launched_at field and no populated "
+        "stripe: product/price ID block (infra/stripe/setup.py was never "
+        "run) — there's no real mapping from a Stripe product to an "
+        "internal product_id yet, and no launch-date source to compute "
+        "days-live for the kill-switch check. Building that mapping now "
+        "would mean guessing product-name matches, not reading real data."
     ),
     "revenue_intelligence_agent": (
         "scan() needs Lead/VisitorSession/Product/RevenueEvent lists. "
@@ -208,16 +214,22 @@ async def run_internal_agent(
             detail=f"'{agent_id}' isn't wired for on-demand firing yet — {reason}",
         )
 
+    # Captured for gap_detector_agent's AgentRunRecord signal (migration 009)
+    # whenever a caller's payload names a product — most don't (these are
+    # mostly product-agnostic internal tools), so NULL/'internal' is the
+    # honest default, not every row needing one.
+    product_id = body.payload.get("product_id")
+
     db = request.app.state.db_pool
     async with db.acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO internal_agent_runs
-                (agent_id, requested_by, requested_by_email, payload, status)
-            VALUES ($1, $2, $3, $4::jsonb, 'executing')
+                (agent_id, requested_by, requested_by_email, payload, status, product_id)
+            VALUES ($1, $2, $3, $4::jsonb, 'executing', $5)
             RETURNING id
             """,
-            agent_id, user["id"], user["email"], json.dumps(body.payload),
+            agent_id, user["id"], user["email"], json.dumps(body.payload), product_id,
         )
     run_id = row["id"]
 

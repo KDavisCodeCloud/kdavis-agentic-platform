@@ -162,6 +162,32 @@ class TestRunInternalAgentGuards:
         assert result.run_id != "pending"
         assert result.status == "executing"
 
+    async def test_product_id_captured_from_payload(self):
+        # migration 009's product_id column, feeding gap_detector_agent's
+        # AgentRunRecord — only populated when the caller's payload names one.
+        fake_row = {"id": uuid4()}
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=fake_row)
+        pool_ctx = AsyncMock()
+        pool_ctx.__aenter__ = AsyncMock(return_value=conn)
+        pool_ctx.__aexit__ = AsyncMock(return_value=False)
+        pool = MagicMock()
+        pool.acquire = MagicMock(return_value=pool_ctx)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
+
+        await internal_agents.run_internal_agent(
+            agent_id="visitor_capture_agent",
+            body=internal_agents.InternalAgentRunRequest(
+                payload={"product_id": "freight-audit", "email": "x@example.com",
+                         "signup_type": "trial", "utm_source": "organic"}
+            ),
+            request=request,
+            background_tasks=BackgroundTasks(),
+            user={"id": "u1", "email": "k@thd.io", "role": "admin"},
+        )
+        sql, *params = conn.fetchrow.await_args.args
+        assert params[-1] == "freight-audit"  # product_id is the last bound param
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # _execute_internal_agent — background task

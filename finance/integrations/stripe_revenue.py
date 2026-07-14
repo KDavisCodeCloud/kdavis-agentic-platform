@@ -26,7 +26,12 @@ from typing import Optional
 
 from finance.accounting.revenue_ledger import RevenueEvent, RevenueLedger
 
-STRIPE_API_KEY_ENV_VAR = "STRIPE_API_KEY"
+# The real, working Stripe secret key in .env is named STRIPE_SECRET_KEY
+# (same one api/routes/stripe_billing.py already uses for the commercial
+# billing surface) — STRIPE_API_KEY was never a real variable anywhere in
+# this repo, just this module's own invented name for it. Fixed rather than
+# asking for a second key that would just duplicate the same credential.
+STRIPE_API_KEY_ENV_VAR = "STRIPE_SECRET_KEY"
 
 
 def _stripe_client():
