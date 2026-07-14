@@ -23,6 +23,14 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+
+# python-dotenv was a declared dependency with no load_dotenv() call anywhere
+# in the codebase — every os.environ/os.getenv() read below silently only
+# ever saw real process env vars, never .env's contents. Must run before any
+# other import in this file touches env-derived config.
+load_dotenv()
+
 import asyncpg
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
