@@ -400,10 +400,22 @@ class TestUpdatedWirableSet:
         assert "gap_detector_agent" in internal_agents._WIRABLE_AGENTS
         assert "gap_detector_agent" not in internal_agents._NOT_WIRED_REASONS
 
+    def test_finance_agents_are_wirable(self):
+        # Partial functionality, not full: expenses persistence (migration
+        # 010) unlocks accounting_agent (process_receipt/monthly_summary)
+        # and tax_agent's track_deductions; the rest of each agent's methods
+        # are pure math on payload inputs (quarterly_estimate_card,
+        # monthly_cash_flow, surplus_opportunity_card, salary_recommendation,
+        # tax_reserve_status). Invoices/revenue_events/investment_allocations
+        # persistence still doesn't exist - those specific methods 400 with
+        # a clear reason inside the dispatch branch itself, not via
+        # _NOT_WIRED_REASONS (the agent as a whole is genuinely wirable now).
+        for agent_id in ("accounting_agent", "tax_agent", "wealth_agent", "finance_assistant_agent"):
+            assert agent_id in internal_agents._WIRABLE_AGENTS
+            assert agent_id not in internal_agents._NOT_WIRED_REASONS
+
     def test_still_deferred_agents_have_specific_reasons(self):
-        for agent_id in ("portfolio_monitor",
-                          "revenue_intelligence_agent", "accounting_agent",
-                          "finance_assistant_agent", "tax_agent", "wealth_agent"):
+        for agent_id in ("portfolio_monitor", "revenue_intelligence_agent"):
             assert agent_id not in internal_agents._WIRABLE_AGENTS
             assert agent_id in internal_agents._NOT_WIRED_REASONS
             assert len(internal_agents._NOT_WIRED_REASONS[agent_id]) > 20
@@ -639,3 +651,159 @@ class TestSopAgentDispatch:
         sql, *params = conn.execute.await_args.args
         assert "status = 'failed'" in sql
         assert "OBSIDIAN_VAULT_PATH" in params[0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Finance agents — partial wiring (migration 010's expenses table +
+# each agent's genuinely pure, no-persistence-needed methods). Verified
+# separately against the real live DB during development: fired
+# accounting_agent process_receipt for real, confirmed a real row landed in
+# expenses AND a real file landed on disk under the correct IRS folder
+# structure, then fired monthly_summary and confirmed it read that same
+# real row back correctly (not fabricated) before cleaning up. The other
+# 6 (quarterly_estimate_card/monthly_cash_flow/surplus_opportunity_card/
+# salary_recommendation/tax_reserve_status/track_deductions) all fired for
+# real with correct results too.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestAccountingAgentDispatch:
+    async def test_process_receipt_success(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FINANCE_DOCUMENT_STORE_PATH", str(tmp_path))
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "accounting_agent",
+            {"action": "process_receipt", "text": "Vendor: Anthropic\nDate: 01/15/2026\nTotal: $50.00"},
+        )
+        # 2 execute calls: the expenses INSERT + the final status UPDATE.
+        assert conn.execute.await_count == 2
+        insert_sql, *insert_params = conn.execute.await_args_list[0].args
+        assert "INSERT INTO expenses" in insert_sql
+        final_sql, *final_params = conn.execute.await_args_list[-1].args
+        assert "status = 'executed'" in final_sql
+
+    async def test_process_receipt_no_store_path_writes_failed(self, monkeypatch):
+        monkeypatch.delenv("FINANCE_DOCUMENT_STORE_PATH", raising=False)
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "accounting_agent",
+            {"action": "process_receipt", "text": "Vendor: X\nTotal: $10.00"},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "FINANCE_DOCUMENT_STORE_PATH" in params[0]
+
+    async def test_monthly_summary_reads_real_rows(self, tmp_path, monkeypatch):
+        import datetime
+        monkeypatch.setenv("FINANCE_DOCUMENT_STORE_PATH", str(tmp_path))
+        app, conn = _make_app_with_db()
+        conn.fetch = AsyncMock(return_value=[{
+            "amount": 50, "vendor": "Anthropic", "description": "API usage",
+            "expense_date": datetime.date(2026, 1, 15), "irs_category": "Software_Subscriptions",
+            "receipt_url": "/tmp/x.txt", "tax_year": 2026, "deductible": True, "approved_by_cpa": False,
+        }])
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "accounting_agent",
+            {"action": "monthly_summary", "year": 2026, "month": 1},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["expenses_this_month"] == 50.0
+
+    async def test_unknown_action_writes_failed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FINANCE_DOCUMENT_STORE_PATH", str(tmp_path))
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "accounting_agent", {"action": "track_invoice"}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "process_receipt" in params[0]
+
+
+class TestTaxAgentDispatch:
+    async def test_track_deductions_uses_real_expenses(self):
+        app, conn = _make_app_with_db()
+        conn.fetch = AsyncMock(return_value=[])
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "tax_agent",
+            {"action": "track_deductions", "tax_year": 2026, "has_dedicated_workspace": True, "office_sqft": 150},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["tax_year"] == 2026
+
+    async def test_quarterly_estimate_card_success(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "tax_agent",
+            {"action": "quarterly_estimate_card", "tax_year": 2026, "quarter": 1, "ytd_net_income": 40000},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert result["quarter"] == 1
+
+    async def test_unknown_action_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "tax_agent", {"action": "year_end_package"}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "track_deductions" in params[0]
+
+
+class TestWealthAgentDispatch:
+    async def test_monthly_cash_flow_success(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "wealth_agent",
+            {"action": "monthly_cash_flow", "year": 2026, "month": 1, "revenue": 5000,
+             "expenses": 2000, "annual_estimated_tax": 12000},
+        )
+        sql, *params = conn.execute.await_args.args
+        result = json.loads(params[0])
+        assert result["available_surplus"] == 2000.0
+
+    async def test_salary_recommendation_invalid_entity_type_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "wealth_agent",
+            {"action": "salary_recommendation", "entity_type": "not_a_real_type", "business_net_income": 80000},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+
+    async def test_unknown_action_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "wealth_agent", {"action": "record_allocation"}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "monthly_cash_flow" in params[0]
+
+
+class TestFinanceAssistantAgentDispatch:
+    async def test_tax_reserve_status_success(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "finance_assistant_agent",
+            {"action": "tax_reserve_status", "year": 2026, "month": 1, "revenue": 5000,
+             "expenses": 2000, "annual_estimated_tax": 12000},
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        result = json.loads(params[0])
+        assert "Recommended tax reserve" in result["answer"]
+
+    async def test_other_action_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "finance_assistant_agent", {"action": "revenue_ytd", "year": 2026}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "tax_reserve_status" in params[0]

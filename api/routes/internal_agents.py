@@ -31,6 +31,7 @@ import dataclasses
 import datetime
 import json
 import logging
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -127,6 +128,10 @@ _WIRABLE_AGENTS = {
     "email_sequence_agent",
     "sop_agent",
     "gap_detector_agent",
+    "accounting_agent",
+    "tax_agent",
+    "wealth_agent",
+    "finance_assistant_agent",
 }
 
 _NOT_WIRED_REASONS = {
@@ -161,31 +166,6 @@ _NOT_WIRED_REASONS = {
         "agent's Lead dataclass) — worth reconciling before building "
         "anything on top of any of them, not something to resolve as a "
         "side effect of wiring one agent's dispatch branch."
-    ),
-    "accounting_agent": (
-        "Constructible (InvoiceTracker/RevenueLedger are in-memory, no "
-        "external deps), but every fire creates a fresh instance with empty "
-        "state — no Supabase-backed persistence wires finance/accounting's "
-        "in-memory trackers to the expenses/revenue_events/invoices tables "
-        "CLAUDE.md's own finance-system spec calls for. Firing it would "
-        "silently no-op (report zero everything) every single time, which "
-        "isn't real functionality — it's an unwired placeholder wearing a "
-        "constructible face."
-    ),
-    "finance_assistant_agent": (
-        "Same root cause as accounting_agent — it wraps AccountingAgent/"
-        "TaxAgent/InvoiceTracker/RevenueLedger, none of which persist "
-        "across calls without a real DB-backed store that doesn't exist yet."
-    ),
-    "tax_agent": (
-        "DeductionTracker/YearEndPackager are stateless in-memory classes "
-        "with no persistence layer — same gap as accounting_agent, deferred "
-        "for the same reason."
-    ),
-    "wealth_agent": (
-        "CashFlowMonitor/InvestmentTracker are stateless in-memory classes "
-        "with no persistence layer — same gap as accounting_agent, deferred "
-        "for the same reason."
     ),
 }
 
@@ -566,6 +546,231 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
                     "yet (see onboarding_agent.py's own FileNotFoundError)."
                 ),
             }
+
+        elif agent_id == "accounting_agent":
+            import datetime as _dt
+
+            from finance.accounting.document_organizer import DocumentOrganizer
+            from finance.accounting.invoice_tracker import InvoiceTracker
+            from finance.accounting.receipt_processor import ReceiptProcessor, ReceiptSource
+            from finance.accounting.revenue_ledger import RevenueLedger
+            from finance.integrations.document_store import LocalFileSystemStore
+            from agents.internal.accounting_agent import AccountingAgent
+
+            action = payload.get("action")
+            store_path = os.environ.get("FINANCE_DOCUMENT_STORE_PATH")
+            if not store_path:
+                raise ValueError("FINANCE_DOCUMENT_STORE_PATH not set — cannot file receipt documents")
+            accounting = AccountingAgent(
+                receipt_processor=ReceiptProcessor(),
+                invoice_tracker=InvoiceTracker(),
+                revenue_ledger=RevenueLedger(),
+                document_organizer=DocumentOrganizer(LocalFileSystemStore(store_path)),
+            )
+
+            if action == "process_receipt":
+                text = payload.get("text")
+                if not text or not str(text).strip():
+                    raise ValueError("payload.text is required for action=process_receipt")
+                card = accounting.process_receipt(text, source=ReceiptSource.DASHBOARD_UPLOAD)
+                rec = card["expense_record"]
+                # accounting_agent holds this in an in-memory list that resets
+                # every fire (constructed fresh per call, matching every other
+                # agents/internal/* module's "no DB connection of its own"
+                # design) — this dispatch layer owns turning that into real
+                # persistence, same division of responsibility as
+                # research_agent's result being persisted by the caller, not
+                # the agent itself.
+                async with db.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO expenses (product_id, amount, vendor, description, expense_date, "
+                        "irs_category, receipt_url, receipt_ocr_text, tax_year, deductible, approved_by_cpa) "
+                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                        payload.get("product_id"), rec.get("amount"), rec["vendor"], rec.get("description"),
+                        _dt.date.fromisoformat(rec["date"]) if rec.get("date") else None,
+                        rec["irs_category"], rec.get("receipt_url"), rec.get("receipt_ocr_text"),
+                        rec.get("tax_year"), rec.get("deductible", True), rec.get("approved_by_cpa", False),
+                    )
+                result = card
+
+            elif action == "monthly_summary":
+                year = payload.get("year")
+                month = payload.get("month")
+                if not year or not month:
+                    raise ValueError("payload.year and payload.month are required for action=monthly_summary")
+                # Hydrate the fresh AccountingAgent's in-memory _expenses from
+                # the real table before summarizing — direct attribute set,
+                # not a public API on this class (it wasn't designed to load
+                # external state); documented here rather than changing
+                # accounting_agent.py's own "no DB connection" contract.
+                async with db.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT amount, vendor, description, expense_date, irs_category, "
+                        "receipt_url, tax_year, deductible, approved_by_cpa FROM expenses WHERE tax_year = $1",
+                        int(year),
+                    )
+                accounting._expenses = [
+                    {
+                        "amount": float(r["amount"]) if r["amount"] is not None else None,
+                        "vendor": r["vendor"], "description": r["description"],
+                        "date": r["expense_date"].isoformat() if r["expense_date"] else None,
+                        "irs_category": r["irs_category"], "receipt_url": r["receipt_url"],
+                        "tax_year": r["tax_year"], "deductible": r["deductible"], "approved_by_cpa": r["approved_by_cpa"],
+                    }
+                    for r in rows
+                ]
+                result = accounting.monthly_summary(int(year), int(month))
+
+            else:
+                raise ValueError(
+                    "payload.action must be 'process_receipt' or 'monthly_summary' — "
+                    "track_invoice/overdue_invoice_cards/sync_stripe_revenue/"
+                    "export_monthly_stripe_csv need invoices/revenue_events tables "
+                    "that don't exist yet, not wired in this pass"
+                )
+
+        elif agent_id == "tax_agent":
+            import datetime as _dt
+
+            from agents.internal.tax_agent import TaxAgent
+
+            action = payload.get("action")
+            tax = TaxAgent()
+
+            if action == "track_deductions":
+                tax_year = payload.get("tax_year")
+                if not tax_year:
+                    raise ValueError("payload.tax_year is required for action=track_deductions")
+                # Real persisted expenses, not fabricated — same table
+                # accounting_agent's monthly_summary reads.
+                async with db.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT amount, vendor, description, expense_date, irs_category, tax_year "
+                        "FROM expenses WHERE tax_year = $1", int(tax_year),
+                    )
+                expenses = [
+                    {
+                        "amount": float(r["amount"]) if r["amount"] is not None else None,
+                        "vendor": r["vendor"], "description": r["description"],
+                        "date": r["expense_date"].isoformat() if r["expense_date"] else None,
+                        "irs_category": r["irs_category"], "tax_year": r["tax_year"],
+                    }
+                    for r in rows
+                ]
+                result = tax.track_deductions(
+                    tax_year=int(tax_year),
+                    expenses=expenses,
+                    has_dedicated_workspace=bool(payload.get("has_dedicated_workspace", False)),
+                    office_sqft=payload.get("office_sqft"),
+                    business_miles=float(payload.get("business_miles", 0.0)),
+                    health_insurance_premiums=float(payload.get("health_insurance_premiums", 0.0)),
+                    retirement_contributions=float(payload.get("retirement_contributions", 0.0)),
+                    net_se_income=payload.get("net_se_income"),
+                    home_internet_monthly_bill=float(payload.get("home_internet_monthly_bill", 0.0)),
+                    home_internet_business_use_percent=float(payload.get("home_internet_business_use_percent", 0.0)),
+                )
+
+            elif action == "quarterly_estimate_card":
+                required = ["tax_year", "quarter", "ytd_net_income"]
+                missing = [k for k in required if payload.get(k) is None]
+                if missing:
+                    raise ValueError(f"payload missing required fields for quarterly_estimate_card: {missing}")
+                result = tax.quarterly_estimate_card(
+                    tax_year=int(payload["tax_year"]), quarter=int(payload["quarter"]),
+                    ytd_net_income=float(payload["ytd_net_income"]),
+                    prior_year_tax=payload.get("prior_year_tax"), prior_year_agi=payload.get("prior_year_agi"),
+                )
+
+            else:
+                raise ValueError(
+                    "payload.action must be 'track_deductions' or 'quarterly_estimate_card' — "
+                    "year_end_package needs a populated RevenueLedger/InvoiceTracker/quarterly_estimates "
+                    "history that doesn't persist across fires yet, not wired in this pass"
+                )
+
+        elif agent_id == "wealth_agent":
+            from agents.internal.wealth_agent import WealthAgent
+            from finance.wealth.salary_advisor import EntityType
+
+            action = payload.get("action")
+            wealth = WealthAgent()
+
+            if action == "monthly_cash_flow":
+                required = ["year", "month", "revenue", "expenses", "annual_estimated_tax"]
+                missing = [k for k in required if payload.get(k) is None]
+                if missing:
+                    raise ValueError(f"payload missing required fields for monthly_cash_flow: {missing}")
+                result = wealth.monthly_cash_flow(
+                    year=int(payload["year"]), month=int(payload["month"]),
+                    revenue=float(payload["revenue"]), expenses=float(payload["expenses"]),
+                    annual_estimated_tax=float(payload["annual_estimated_tax"]),
+                )
+
+            elif action == "surplus_opportunity_card":
+                required = ["year", "month", "revenue", "expenses", "annual_estimated_tax"]
+                missing = [k for k in required if payload.get(k) is None]
+                if missing:
+                    raise ValueError(f"payload missing required fields for surplus_opportunity_card: {missing}")
+                card = wealth.surplus_opportunity_card(
+                    year=int(payload["year"]), month=int(payload["month"]),
+                    revenue=float(payload["revenue"]), expenses=float(payload["expenses"]),
+                    annual_estimated_tax=float(payload["annual_estimated_tax"]),
+                    emergency_fund_current=payload.get("emergency_fund_current"),
+                    emergency_fund_avg_monthly_expenses=payload.get("emergency_fund_avg_monthly_expenses"),
+                )
+                result = card if card is not None else {"card": None, "message": "No surplus opportunity this period."}
+
+            elif action == "salary_recommendation":
+                required = ["entity_type", "business_net_income"]
+                missing = [k for k in required if payload.get(k) is None]
+                if missing:
+                    raise ValueError(f"payload missing required fields for salary_recommendation: {missing}")
+                try:
+                    entity_type = EntityType(payload["entity_type"])
+                except ValueError:
+                    raise ValueError(
+                        f"payload.entity_type must be one of {[e.value for e in EntityType]}"
+                    )
+                result = wealth.salary_recommendation(
+                    entity_type=entity_type, business_net_income=float(payload["business_net_income"]),
+                    prior_salary=payload.get("prior_salary"),
+                )
+
+            else:
+                raise ValueError(
+                    "payload.action must be 'monthly_cash_flow', 'surplus_opportunity_card', or "
+                    "'salary_recommendation' — record_allocation/wealth_building_ratio need "
+                    "investment_allocations persistence that doesn't exist yet, tax_writeoff_surface "
+                    "needs tax_agent's deduction flags from the same fire (state doesn't cross calls), "
+                    "none wired in this pass"
+                )
+
+        elif agent_id == "finance_assistant_agent":
+            from finance.wealth.cash_flow_monitor import CashFlowMonitor
+
+            action = payload.get("action")
+            if action != "tax_reserve_status":
+                raise ValueError(
+                    "payload.action must be 'tax_reserve_status' — every other method on this agent "
+                    "reads accounting_agent/tax_agent/invoice_tracker/revenue_ledger state that resets "
+                    "every fire (fresh instances, no cross-call persistence for those), so answers would "
+                    "always be empty/wrong; this is the one method that's pure math on payload inputs "
+                    "with no dependency on that state, not wired further in this pass"
+                )
+            required = ["year", "month", "revenue", "expenses", "annual_estimated_tax"]
+            missing = [k for k in required if payload.get(k) is None]
+            if missing:
+                raise ValueError(f"payload missing required fields for tax_reserve_status: {missing}")
+            summary = CashFlowMonitor().monthly_summary(
+                int(payload["year"]), int(payload["month"]),
+                float(payload["revenue"]), float(payload["expenses"]), float(payload["annual_estimated_tax"]),
+            )
+            from finance import disclaim as _disclaim
+            result = _disclaim({
+                "answer": f"Recommended tax reserve for {payload['year']}-{int(payload['month']):02d}: ${summary.recommended_tax_reserve:,.2f}",
+                "source": "cash_flow_monitor",
+                "available_surplus": summary.available_surplus,
+            })
 
         else:
             # Unreachable: run_internal_agent already gates on _WIRABLE_AGENTS.
