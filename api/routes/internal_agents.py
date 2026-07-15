@@ -441,25 +441,43 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
                 )
 
         elif agent_id == "code_quality_agent":
-            from agents.internal.code_quality_agent import CodeQualityAgent
+            from agents.internal.code_quality_agent import CodeQualityAgent, _discover_py_files
 
-            raw_paths = payload.get("paths")
-            if not raw_paths:
-                raise ValueError(
-                    "payload.paths (list of repo-relative .py file paths) is "
-                    "required to run code_quality_agent"
+            if payload.get("full_sweep"):
+                # Same file-discovery helper the weekly-sweep.yml CLI uses —
+                # not duplicated, imported directly. Filesystem walk, not
+                # free even after early-pruning excluded dirs — offloaded
+                # same as review() below.
+                resolved: list[Path] = await asyncio.get_running_loop().run_in_executor(
+                    None, _discover_py_files, _REPO_ROOT
                 )
-            resolved: list[Path] = []
-            for p in raw_paths:
-                candidate = (_REPO_ROOT / p).resolve()
-                if _REPO_ROOT not in candidate.parents:
-                    raise ValueError(f"path '{p}' escapes the repo root — refusing")
-                if not candidate.is_file():
-                    raise ValueError(f"path '{p}' does not exist or is not a file")
-                resolved.append(candidate)
-            report = CodeQualityAgent().review(resolved)
+            else:
+                raw_paths = payload.get("paths")
+                if not raw_paths:
+                    raise ValueError(
+                        "payload.paths (list of repo-relative .py file paths) or "
+                        "payload.full_sweep=true is required to run code_quality_agent"
+                    )
+                resolved = []
+                for p in raw_paths:
+                    candidate = (_REPO_ROOT / p).resolve()
+                    if _REPO_ROOT not in candidate.parents:
+                        raise ValueError(f"path '{p}' escapes the repo root — refusing")
+                    if not candidate.is_file():
+                        raise ValueError(f"path '{p}' does not exist or is not a file")
+                    resolved.append(candidate)
+            # review() is synchronous, CPU/IO-bound ast parsing across
+            # potentially hundreds of files - full_sweep found this blocks
+            # the entire event loop (every other request freezes) for the
+            # whole scan if awaited inline. The original few-paths chat use
+            # case was small enough this never surfaced. run_in_executor
+            # moves it off the loop into a worker thread.
+            loop = asyncio.get_running_loop()
+            report = await loop.run_in_executor(None, CodeQualityAgent().review, resolved)
             result = {
                 "files_reviewed": report.files_reviewed,
+                "blocking_count": len(report.blocking),
+                "non_blocking_count": len(report.non_blocking),
                 "issues": [issue.to_row() for issue in report.issues],
                 "clean_files": report.clean_files,
             }
@@ -820,4 +838,37 @@ async def get_internal_agent_run(
         "status": row["status"],
         "result": result_raw,
         "error": row["error"],
+    }
+
+
+@router.get("/runs")
+async def list_internal_agent_runs(
+    request: Request,
+    user: dict = Depends(get_internal_user),
+    limit: int = 50,
+) -> dict:
+    """Recent internal-agent runs, most recent first — backs ceo-dashboard's
+    System Health panel. Real data only: no result payload here (that's
+    what GET /runs/{run_id} is for), just enough to render a status feed."""
+    limit = max(1, min(limit, 200))
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, agent_id, status, error, requested_by_email, created_at, updated_at "
+            "FROM internal_agent_runs ORDER BY created_at DESC LIMIT $1",
+            limit,
+        )
+    return {
+        "runs": [
+            {
+                "run_id": str(r["id"]),
+                "agent_id": r["agent_id"],
+                "status": r["status"],
+                "error": r["error"],
+                "requested_by_email": r["requested_by_email"],
+                "created_at": r["created_at"].isoformat(),
+                "updated_at": r["updated_at"].isoformat(),
+            }
+            for r in rows
+        ],
     }

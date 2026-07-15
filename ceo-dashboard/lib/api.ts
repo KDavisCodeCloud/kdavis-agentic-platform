@@ -83,3 +83,25 @@ export async function pollIncident(
   // the same PollResult without translation.
   return { status: data.status, result: data.result, error: data.error };
 }
+
+export interface InternalAgentRunSummary {
+  run_id: string;
+  agent_id: string;
+  status: string;
+  error: string | null;
+  requested_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchInternalAgentRuns(
+  authToken: string,
+  limit = 20,
+): Promise<InternalAgentRunSummary[]> {
+  const res = await fetch(`${API_BASE}/api/v1/internal/agents/runs?limit=${limit}`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!res.ok) throw new Error(`Fetching recent runs failed: ${res.status}`);
+  const data = await res.json();
+  return data.runs;
+}

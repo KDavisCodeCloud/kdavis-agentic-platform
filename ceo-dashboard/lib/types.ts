@@ -14,7 +14,11 @@ export type BadgeStatus =
   | "READY_TO_BUILD" | "validated" | "watch"
   | "open" | "closed" | "P1" | "P2" | "P3"
   | "queued" | "in_progress" | "done"
-  | "read" | "write" | "admin";
+  | "read" | "write" | "admin"
+  // internal_agent_runs' real status vocab (core/hitl.py's execution_status
+  // subset actually used by this table) - "executing"/"executed", not
+  // "in_progress"/"complete"/"done".
+  | "executing" | "executed" | "budget_exceeded";
 
 export interface TeamMember {
   id: string;
@@ -68,6 +72,20 @@ export interface AgentRunRow {
   status: string;
   started_at: string | null;
   completed_at: string | null;
+}
+
+// agents/internal/* runs (api/routes/internal_agents.py's internal_agent_runs
+// table) - separate from AgentRunRow above, which is the commercial
+// agent_01-10 system's agent_runs table. Different auth path, different
+// status vocab, different data source - do not merge these two shapes.
+export interface InternalAgentRun {
+  run_id: string;
+  agent_id: string;
+  status: "executing" | "executed" | "failed";
+  error: string | null;
+  requested_by_email: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface BuildQueueItem {

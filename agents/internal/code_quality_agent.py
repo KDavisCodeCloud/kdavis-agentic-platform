@@ -466,10 +466,23 @@ _SWEEP_EXCLUDE_DIRS = {
 
 
 def _discover_py_files(root: Path) -> list[Path]:
-    return sorted(
-        p for p in root.rglob("*.py")
-        if not any(part in _SWEEP_EXCLUDE_DIRS for part in p.parts)
-    )
+    """os.walk with early directory pruning, not Path.rglob(). rglob walks
+    the entire tree (including every file inside .venv/'s tens of thousands
+    of installed-package files) before filtering by path parts - on a slow
+    filesystem (WSL's /mnt/c mount, confirmed here) that made a full sweep
+    take 30-45+ seconds just discovering files, most of it wasted inside
+    .venv. os.walk lets excluded directories be pruned before descending
+    into them at all."""
+    import os as _os_walk
+
+    # NOTE: this repo has real, reviewed source under dot-directories
+    # (.llm/router.py, etc.) - only prune the explicit exclude set, never a
+    # blanket "skip anything starting with .".
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in _os_walk.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _SWEEP_EXCLUDE_DIRS]
+        found.extend(Path(dirpath) / f for f in filenames if f.endswith(".py"))
+    return sorted(found)
 
 
 if __name__ == "__main__":

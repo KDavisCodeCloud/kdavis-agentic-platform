@@ -3,6 +3,7 @@ import { TopBar } from "@/components/shell/TopBar";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { FireButton } from "@/components/ui/FireButton";
+import { SystemHealthPanel } from "@/components/ui/SystemHealthPanel";
 import type { AgentRunRow, BuildQueueItem } from "@/lib/types";
 
 const INFRA = [
@@ -73,6 +74,14 @@ export default async function TechPage() {
 
       <div className="flex-1 overflow-y-auto p-6 min-w-0">
         <div className="space-y-5">
+          {/* System Health — real internal-agent run history + on-demand
+              checks against live data. Distinct from "Infrastructure Health"
+              below, which is a static services list, and "Agent Health",
+              which covers the commercial agent_01-10 system only. */}
+          <SectionCard title="System Health">
+            <SystemHealthPanel />
+          </SectionCard>
+
           {/* Infrastructure Health */}
           <SectionCard title="Infrastructure Health">
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
