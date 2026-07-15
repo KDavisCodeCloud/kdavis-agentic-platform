@@ -1,5 +1,14 @@
 # Cloud Decoded — Python Backend Dependencies
 # Install: pip install -r requirements.txt
+#
+# REQUIRES Python 3.11+. langgraph's async node execution only passes
+# contextvars into asyncio.create_task() correctly on 3.11+ (ASYNCIO_ACCEPTS_
+# CONTEXT in langgraph/utils/runnable.py). On 3.10, the HITL interrupt() call
+# in core/engine.py's hitl_gate node fails with "RuntimeError: Called
+# get_config outside of a runnable context" — every agent's safety pause
+# silently breaks. Confirmed root cause 2026-07-14, fixed by installing
+# python3.11 (deadsnakes PPA) and rebuilding .venv against it — do not
+# rebuild this venv against python3.10 again.
 
 # API framework
 fastapi==0.115.0

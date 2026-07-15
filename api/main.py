@@ -35,6 +35,8 @@ import asyncpg
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from psycopg import AsyncConnection
+from psycopg.rows import dict_row
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -95,9 +97,21 @@ async def lifespan(app: FastAPI):
 
     # LangGraph Postgres checkpointer — persists agent workflow state
     # Uses psycopg (separate from asyncpg) — both connect to the same Postgres DB
+    #
+    # NOT using AsyncPostgresSaver.from_conn_string(): it hardcodes
+    # prepare_threshold=0, which means "prepare on first use" - the opposite
+    # of what's needed here. Against Supabase's transaction-mode pooler (same
+    # DATABASE_URL as the asyncpg pool above), a session-pinned prepared
+    # statement left behind by one pooled connection collides with the next
+    # request that lands on the same underlying server connection -
+    # DuplicatePreparedStatement on checkpointer.setup(). prepare_threshold=
+    # None disables server-side prepared statements entirely, same fix as
+    # asyncpg's statement_cache_size=0 above, just psycopg's equivalent knob.
     lg_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-    checkpointer_cm = AsyncPostgresSaver.from_conn_string(lg_url)
-    checkpointer = await checkpointer_cm.__aenter__()
+    lg_conn = await AsyncConnection.connect(
+        lg_url, autocommit=True, prepare_threshold=None, row_factory=dict_row
+    )
+    checkpointer = AsyncPostgresSaver(conn=lg_conn)
     await checkpointer.setup()
     app.state.checkpointer = checkpointer
     log.info("[API] LangGraph Postgres checkpointer initialized")
@@ -108,7 +122,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     await app.state.db_pool.close()
-    await checkpointer_cm.__aexit__(None, None, None)
+    await lg_conn.close()
     log.info("[API] Shutdown complete")
 
 
