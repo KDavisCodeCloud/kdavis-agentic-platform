@@ -1,12 +1,31 @@
 name: Weekly Sweep
 
-# Monday morning review: full code quality sweep, gap detection,
-# and portfolio digest. All three create dashboard cards for review.
+# Monday morning review: full code quality sweep, gap detection, and
+# portfolio digest. Each step writes its own section to this run's job
+# summary (visible in the Actions UI, no extra step needed) and the raw
+# JSON reports are uploaded as a downloadable artifact. There is
+# deliberately no webhook/notify step here - it used to POST to a
+# DASHBOARD_WEBHOOK_URL secret that was never configured, pointing at a
+# dashboard that isn't deployed anywhere (local-only by design). Real-time
+# agent-run visibility lives in ceo-dashboard's System Health panel
+# instead, which queries live data directly rather than waiting for this
+# weekly cron.
 # Trigger: cron every Monday.
 #
 # NOTE: GitHub Actions cron runs in UTC. 11:00 UTC is 6:00am Central
 # Standard Time (UTC-5). Adjust if the operating timezone changes or
 # during daylight saving time (UTC-5 CDT would need 10:00 UTC / "0 10 * * 1").
+#
+# Requires these repo secrets to actually query live data (none are set as
+# of this writing - see the audit for what's needed and why they aren't
+# set automatically):
+#   DATABASE_URL - same Postgres pooler connection string as local .env,
+#                   reachable from GitHub Actions runners since it's
+#                   Supabase's cloud endpoint, not this machine.
+# Without it, the quality sweep still runs (pure filesystem, no DB), but
+# gap_detector_agent and portfolio_monitor will fail with a clear
+# "DATABASE_URL not set" error (continue-on-error: true keeps the job
+# going; the final step below still fails the overall run so it's visible).
 
 on:
   schedule:
@@ -57,18 +76,13 @@ jobs:
             --digest \
             --report-out weekly_portfolio_report.json
 
-      - name: Notify dashboard — weekly digest ready
-        run: |
-          curl -sf -X POST "${{ secrets.DASHBOARD_WEBHOOK_URL }}/events" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.DASHBOARD_WEBHOOK_TOKEN }}" \
-            -d '{
-              "event": "weekly_sweep_complete",
-              "quality_status": "${{ steps.quality.outcome }}",
-              "gap_status": "${{ steps.gaps.outcome }}",
-              "portfolio_status": "${{ steps.portfolio.outcome }}",
-              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }' || true
+      - name: Upload JSON reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-sweep-reports
+          path: weekly_*.json
+          if-no-files-found: ignore
 
       - name: Fail run if any sweep step errored
         if: steps.quality.outcome == 'failure' || steps.gaps.outcome == 'failure' || steps.portfolio.outcome == 'failure'

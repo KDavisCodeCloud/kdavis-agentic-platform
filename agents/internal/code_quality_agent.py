@@ -448,3 +448,70 @@ class CodeQualityAgent:
         clean_files = sorted(path for path, file_issues in issues_by_file.items() if not file_issues)
 
         return CodeQualityReport(files_reviewed=len(parsed_files), issues=issues, clean_files=clean_files)
+
+
+# ──────────────────────────────────────────────
+# CLI — backs the "Full codebase sweep" step in .github/workflows/weekly-sweep.yml
+# ──────────────────────────────────────────────
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Dirs that are never source-of-truth Python for this repo's own quality bar:
+# vendored/installed code, frontend JS projects, and generated caches.
+_SWEEP_EXCLUDE_DIRS = {
+    ".venv", "venv", "node_modules", ".git", "__pycache__",
+    "frontend", "ceo-dashboard", "team-dashboard", "empire-dashboard",
+    ".pytest_cache",
+}
+
+
+def _discover_py_files(root: Path) -> list[Path]:
+    return sorted(
+        p for p in root.rglob("*.py")
+        if not any(part in _SWEEP_EXCLUDE_DIRS for part in p.parts)
+    )
+
+
+if __name__ == "__main__":
+    import argparse
+    import json
+    import os
+    import sys
+
+    parser = argparse.ArgumentParser(description="Run code_quality_agent")
+    parser.add_argument("--full-sweep", action="store_true", help="Review every .py file in the repo")
+    parser.add_argument("--paths", nargs="*", help="Specific files to review instead of a full sweep")
+    parser.add_argument("--report-out", required=True, help="Path to write the JSON report")
+    args = parser.parse_args()
+
+    if args.full_sweep:
+        target_paths = _discover_py_files(REPO_ROOT)
+    elif args.paths:
+        target_paths = [Path(p) for p in args.paths]
+    else:
+        parser.error("either --full-sweep or --paths is required")
+
+    report = CodeQualityAgent().review(target_paths)
+    text_report = report.to_report_text()
+    print(text_report)
+
+    Path(args.report_out).write_text(json.dumps({
+        "files_reviewed": report.files_reviewed,
+        "blocking_count": len(report.blocking),
+        "non_blocking_count": len(report.non_blocking),
+        "issues": [i.to_row() for i in report.issues],
+        "clean_files": report.clean_files,
+    }, indent=2))
+    print(f"\nReport written to {args.report_out}")
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a") as f:
+            f.write(f"## Code Quality Sweep\n\n- Files reviewed: {report.files_reviewed}\n"
+                     f"- Blocking issues: {len(report.blocking)}\n"
+                     f"- Non-blocking issues: {len(report.non_blocking)}\n\n"
+                     f"<details><summary>Full report</summary>\n\n```\n{text_report}\n```\n\n</details>\n\n")
+
+    # Blocking issues fail the sweep — matches code-quality-gate.yml's PR
+    # semantics (non-blocking is informational, blocking must be addressed).
+    sys.exit(1 if report.blocking else 0)

@@ -264,3 +264,148 @@ class GapDetectorAgent:
         with open(path, "a") as f:
             f.write("\n".join(section))
         return str(path)
+
+
+# ──────────────────────────────────────────────
+# CLI — backs the "Coverage gap scan" step in .github/workflows/weekly-sweep.yml
+#
+# This agent has no DB connection of its own (see module docstring), so the
+# CLI is what actually fetches real signal — same tables, same query shape,
+# same status-vocab mapping, and the same roster source (api/routes/
+# internal_agents.py's _KNOWN_INTERNAL_AGENTS/_WIRABLE_AGENTS, not a
+# separate table that could drift) already proven working in
+# api/routes/internal_agents.py's own gap_detector_agent dispatch branch.
+# ──────────────────────────────────────────────
+
+async def _run_weekly_scan(days_back: int) -> dict:
+    import asyncpg
+
+    database_url = _os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        raise EnvironmentError("DATABASE_URL not set")
+    asyncpg_url = database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    # statement_cache_size=0 is not optional against Supabase's transaction
+    # pooler — see api/main.py's own db_pool for the full explanation.
+    conn = await asyncpg.connect(asyncpg_url, statement_cache_size=0)
+    try:
+        run_rows = await conn.fetch(
+            "SELECT agent_id, product_id, status, confidence_score, created_at "
+            "FROM internal_agent_runs WHERE created_at > now() - ($1 || ' days')::interval",
+            str(days_back),
+        )
+        correction_rows = await conn.fetch(
+            "SELECT agent_name, original_option, corrected_option, occurred_at "
+            "FROM hitl_corrections WHERE occurred_at > now() - ($1 || ' days')::interval",
+            str(days_back),
+        )
+        query_rows = await conn.fetch(
+            "SELECT query_text, routed_to_claude, occurred_at "
+            "FROM chat_queries WHERE occurred_at > now() - ($1 || ' days')::interval",
+            str(days_back),
+        )
+    finally:
+        await conn.close()
+
+    _STATUS_MAP = {"executed": "completed", "executing": "running", "failed": "failed"}
+    runs = [
+        AgentRunRecord(
+            agent_name=r["agent_id"],
+            product_id=r["product_id"] or "internal",
+            status=_STATUS_MAP.get(r["status"], r["status"]),
+            confidence_score=float(r["confidence_score"]) if r["confidence_score"] is not None else None,
+            started_at=r["created_at"].date(),
+        )
+        for r in run_rows
+    ]
+    corrections = [
+        HITLCorrection(
+            agent_name=r["agent_name"], original_option=r["original_option"],
+            corrected_option=r["corrected_option"], occurred_at=r["occurred_at"].date(),
+        )
+        for r in correction_rows
+    ]
+    chat_queries = [
+        ChatQuery(text=r["query_text"], routed_to_claude=r["routed_to_claude"], occurred_at=r["occurred_at"].date())
+        for r in query_rows
+    ]
+
+    # Local import: api/routes/internal_agents.py pulls in FastAPI and the
+    # rest of the route stack — deferred so a plain `--help` or import of
+    # this module doesn't require the full API dependency tree.
+    from api.routes.internal_agents import _KNOWN_INTERNAL_AGENTS, _WIRABLE_AGENTS
+
+    roster = [
+        AgentRosterEntry(agent_name=name, status="active" if name in _WIRABLE_AGENTS else "recommended")
+        for name in _KNOWN_INTERNAL_AGENTS
+    ]
+
+    recommendations = GapDetectorAgent().weekly_scan(
+        runs=runs, corrections=corrections, chat_queries=chat_queries, roster=roster
+    )
+    return {
+        "days_back": days_back,
+        "runs_analyzed": len(runs),
+        "corrections_analyzed": len(corrections),
+        "chat_queries_analyzed": len(chat_queries),
+        "recommendations": [rec.to_row() for rec in recommendations],
+        "_recommendations_obj": recommendations,  # stripped before JSON write
+    }
+
+
+if __name__ == "__main__":
+    import argparse
+    import asyncio
+    import json
+    import os as _os
+    import sys
+
+    # Standalone script, not routed through api/main.py's lifespan - .env
+    # isn't loaded automatically. In CI this is a no-op (env vars come from
+    # real GitHub Actions secrets); locally it's required.
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+
+    parser = argparse.ArgumentParser(description="Run gap_detector_agent.weekly_scan against live data")
+    parser.add_argument("--days-back", type=int, default=30, help="Lookback window in days (default 30)")
+    parser.add_argument("--report-out", required=True, help="Path to write the JSON report")
+    parser.add_argument("--append-gaps-md", action="store_true", help="Also append findings to GAPS.md")
+    args = parser.parse_args()
+
+    try:
+        result = asyncio.run(_run_weekly_scan(args.days_back))
+    except EnvironmentError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    recommendations = result.pop("_recommendations_obj")
+
+    print(f"gap_detector_agent — {result['days_back']}-day scan")
+    print(f"  runs analyzed:       {result['runs_analyzed']}")
+    print(f"  corrections analyzed: {result['corrections_analyzed']}")
+    print(f"  chat queries analyzed: {result['chat_queries_analyzed']}")
+    print(f"  recommendations found: {len(recommendations)}")
+    print()
+    for rec in recommendations:
+        print(rec.to_markdown())
+
+    Path(args.report_out).write_text(json.dumps(result, indent=2))
+    print(f"Report written to {args.report_out}")
+
+    if args.append_gaps_md and recommendations:
+        written_to = GapDetectorAgent().append_to_gaps_md(recommendations)
+        print(f"Appended {len(recommendations)} recommendation(s) to {written_to}")
+
+    summary_path = _os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a") as f:
+            f.write(f"## Gap Detector — {result['days_back']}-day scan\n\n"
+                     f"- Runs analyzed: {result['runs_analyzed']}\n"
+                     f"- Corrections analyzed: {result['corrections_analyzed']}\n"
+                     f"- Chat queries analyzed: {result['chat_queries_analyzed']}\n"
+                     f"- Recommendations: {len(recommendations)}\n\n")
+            if recommendations:
+                f.write("<details><summary>Recommendations</summary>\n\n")
+                for rec in recommendations:
+                    f.write(rec.to_markdown() + "\n")
+                f.write("</details>\n\n")
