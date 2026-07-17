@@ -2,6 +2,26 @@
 
 ---
 
+## Sprint 4 — Factory Expansion (2026-07-17)
+**Note:** this log wasn't updated between 2026-07-03 and 2026-07-17 — a large amount of work (full research swarm across all 6 verticals, complete build/deploy pipeline, outreach engine, test harness) shipped in that gap and isn't reflected in Sprints 1-3 below. See [[overview]] for the accurate current-state summary; treat Sprints 1-3 as historical record only, not current status.
+
+### Done This Sprint
+- [x] MSE dashboard "Pipeline" tab renamed to "Opportunities" (nav + page title + empty/loading states)
+- [x] Migration `20260717000011_factory_expansion.sql` — `industry_color_map`, `mse_build_briefs`, `mse_monitoring_events`, activation functions, Realtime enabled — applied live, FK corrected to real `opportunity_pipeline` table
+- [x] Migration `20260717000012_industry_color_map_real_verticals.sql` — seeded the 6 real research verticals (original spec's seed data was placeholder names that didn't match this system)
+- [x] `CLAUDE.md` — Factory Expansion rule additions (search visibility, brief generation, monitoring activation, customer docs)
+- [x] `agents/factory/brief_generator.py` built + wired to `POST /factory/generate-brief/{opportunity_id}` + 13 new tests, full suite 94 passing
+- [x] MSE dashboard: Build Briefs section added to Opportunities page
+- [x] `docs/monitoring-agent-suite.md` + `docs/customer-docs-sop-template.md` reference docs saved
+- [x] Obsidian vault updated: empire-state.md, this sprint log, overview.md, new build-brief doc
+
+### Next
+- [ ] Pick first opportunity, run full pipeline end-to-end by hand
+- [ ] Create dedicated MSE Stripe account once that opportunity clears Verdict
+- [ ] CEO dashboard cross-repo wiring for brief cards / monitoring cards
+
+---
+
 ## Sprint 3 — Active (2026-07-03)
 **Focus:** Code gaps — Stripe webhook, RLS fix, legal docs
 

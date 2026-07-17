@@ -1,8 +1,8 @@
 # Empire State — Current Status
 
-**Last updated:** 2026-07-03  
-**Entity:** KDavis Agentic Systems LLC  
-**Brand:** The Hustle: Decoded / Decoded Empire  
+**Last updated:** 2026-07-17
+**Entity:** THD Agentic Systems LLC
+**Brand:** The Hustle: Decoded / Decoded Empire
 **Owner:** Kelvin Davis (King Kelz) — USAF veteran, Fortune 500 cloud DevOps
 
 ---
@@ -12,51 +12,67 @@
 ### Micro SaaS Engine
 | Field | Value |
 |---|---|
-| Status | Building |
-| Progress | 45% |
+| Status | Building — factory pipeline live, no product has gone through it end-to-end yet |
+| Progress | ~75% |
 | MRR | $0 |
-| Supabase | `microsaas-prod` — 6 tables live, RLS confirmed |
-| Stripe | Dedicated account — live mode — `acct_1TpLcKLIpoJRr7Tc` |
-| GitHub | `KDavisCodeCloud/kdavis-microsaas-engine` |
+| Supabase | `microsaas-prod` — full schema live, RLS confirmed on every table |
+| Stripe | Dedicated account — **not yet created**, deferred until first opportunity clears Verdict |
+| GitHub | `KDavisCodeCloud/kdavis-microsaas-engine` (git root is the parent `projects/` folder) |
+| Domain | `thdstack.com` — wildcard, per-product subdomains |
 | Full notes | [[micro-saas-engine/overview]] |
 | Sprint log | [[micro-saas-engine/sprint-log]] |
 
-**What's built:**
-- FastAPI backend — 12 routes — JWT auth — `/docs` accessible
-- Supabase migrations — 6 tables — RLS on all — $4K MRR floor CHECK constraint live
-- Next.js 15 frontend — 4 pages — UsageTracker wired
-- n8n 2.28.6 — 2 workflows imported — needs first-run setup
-- All infra except: Stripe webhook handler, RLS per-request fix, legal docs
+**What's built:** Full research → Verdict → build/deploy pipeline (Phases 1-6), outreach engine (Apollo.io + LinkedIn manual-outreach-only, HITL-gated), 94 passing tests, real Systeme.io/Apollo.io keys live. "Pipeline" dashboard tab renamed to "Opportunities" (2026-07-17). Factory Expansion shipped this session: `industry_color_map`/`mse_build_briefs`/`mse_monitoring_events` tables, `brief_generator` agent (auto-generates build briefs on Verdict PASS, HITL-gated), Build Briefs section added to the Opportunities dashboard page, monitoring/incident/support agent + customer-docs templates saved as reference docs (intentionally not built — no live product to monitor yet).
 
 **Blockers (Kelvin — manual):**
-- Fill `ANTHROPIC_API_KEY` in `.env`
-- Fill `RESEND_API_KEY` in `.env`
-- n8n first-run setup at `localhost:5678`
+- Pick and greenlight the first opportunity to run through the full pipeline
+- Create the dedicated MSE Stripe account once that opportunity clears Verdict
 
 **Blockers (Claude — code):**
-- `api/routers/stripe.py` — webhook handler
-- `core/supabase_client.py` — per-request JWT client (RLS fix)
-- `legal/EULA.md`, `legal/privacy-policy.md`, `legal/dpa-template.md`
+- CEO dashboard cross-repo wiring for brief cards / monitoring health cards (separate repo, not started)
+- "Agent last-ran" correlation fix across MSE/CEO/DecodedSix dashboards
+
+**Done since last update:** LinkedIn HITL queue disclaimer for manual cold-DM outreach — amber banner + "MANUAL SEND" badge live on `/outreach` (2026-07-17).
 
 ---
 
-### Cloud Decoded
+### Cloud Decoded / CEO Command Center
 | Field | Value |
 |---|---|
-| Status | Building |
-| Progress | 85% |
+| Status | Building — 14/16 CEO dashboard agents live |
+| Progress | ~85% |
 | MRR | $0 |
-| Supabase | Not provisioned yet |
 | GitHub | `KDavisCodeCloud/kdavis-agentic-platform` |
 
-**What's built:** Full FastAPI backend, 10 specialized agents, MCP server, Next.js 14 frontend, Stripe billing routes.
+**What's built:** Full FastAPI backend, specialized agents (14/16 live on the CEO dashboard), MCP server, Next.js frontend, Stripe billing routes. HITL `interrupt()` bug fixed 2026-07-14 (was silently broken under Python 3.10, confirmed working on 3.11).
 
-**Blocking deploy:**
-- Supabase project + migrations applied
-- Auth pages (`/signup`, `/signin`)
-- Stripe product/price IDs wired
-- DNS + hosting (Vercel + Railway/Render)
-- Env vars filled
+**Note:** this repo's own `CLAUDE.md` describes a much larger from-scratch build plan (LangGraph engine, DeepSeek-primary LLM routing, full team-management/onboarding system, revenue intelligence, finance/tax/wealth agents) that is largely aspirational relative to what's actually running today — treat that file as a long-range spec, not a status report. Actual current state is captured here and in [[micro-saas-engine/overview]] instead.
+
+**Blocking full launch:**
+- CEO dashboard R&D panel: brief cards + monitoring health cards from MSE (not wired)
+- Remaining 2/16 agents
+- DNS + hosting finalization
+
+---
+
+### DecodedSix (decodedsix.com)
+| Field | Value |
+|---|---|
+| Status | **LIVE** — since 2026-07-08 |
+| MRR | $0 (pre-monetization / fan utility phase) |
+| Supabase | `decodedsix-prod` — live, 10 tables + 4 seed articles |
+| Vercel | `decoded-six-sand.vercel.app` → `thedecodedsix.com` |
+
+GTA 6 fan utility / gaming content site. Vice City stats aesthetic design system (dark bg + stripe pattern, cyan/pink accents, WASTED/MISSION PASSED overlays). Content agent (DSX-CA1) scheduled to start 2026-07-15. Dashboard "Agents" tab previously showed "never run" incorrectly for agents that had in fact run — flagged, not yet fixed; part of the broader cross-dashboard agent-correlation gap.
+
+---
+
+### LinkedIn + Canva Pipeline
+| Field | Value |
+|---|---|
+| Status | **PAUSED** since 2026-07-14 |
+
+Internal LinkedIn OAuth flow (separate from the customer-facing one in `content.py`) is built but click-through fails, likely a `redirect_uri` mismatch — needs the exact error captured before further work. Canva integration not started, sequenced after LinkedIn is fixed.
 
 ---
 
