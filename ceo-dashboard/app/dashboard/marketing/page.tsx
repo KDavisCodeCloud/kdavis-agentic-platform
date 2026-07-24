@@ -2,6 +2,7 @@ import { TopBar } from "@/components/shell/TopBar";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { AgentRosterCard } from "@/components/ui/AgentRosterCard";
+import { LinkedInBatchReview } from "@/components/ui/LinkedInBatchReview";
 
 const PIPELINE_STAGES = [
   { stage: "Cold",      count: 0, mrr_potential: "$0" },
@@ -11,10 +12,8 @@ const PIPELINE_STAGES = [
   { stage: "Paying",    count: 0, mrr_potential: "$0" },
 ];
 
-const CALENDAR_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
 const MARKETING_AGENTS = [
-  { name: "LinkedIn Content",   status: "pending",  lastRun: null, output: "Not yet built" },
+  { name: "LinkedIn Content",   status: "active",   lastRun: null, output: "MKT-LI1 — monthly batch, ~12 posts" },
   { name: "Cold Email",         status: "pending",  lastRun: null, output: "Not yet built" },
   { name: "Conversion Tracker", status: "pending",  lastRun: null, output: "Not yet built" },
 ];
@@ -53,25 +52,9 @@ export default function MarketingPage() {
             </div>
           </SectionCard>
 
-          {/* Content Calendar */}
-          <SectionCard title="Content Calendar">
-            <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}>
-              {CALENDAR_DAYS.map((day) => (
-                <div
-                  key={day}
-                  className="rounded-[8px] p-2.5"
-                  style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", minHeight: "80px" }}
-                >
-                  <p className="text-[11px] font-mono font-semibold mb-2" style={{ color: "#8b96a3" }}>
-                    {day}
-                  </p>
-                  <p className="text-[10px] font-mono" style={{ color: "#3a4250" }}>
-                    No posts scheduled
-                  </p>
-                </div>
-              ))}
-            </div>
-            {/* TODO: Wife's approval queue lives inline here in production */}
+          {/* LinkedIn Monthly Batch — MKT-LI1's ~12 posts, review/approve/schedule */}
+          <SectionCard title="LinkedIn Monthly Batch">
+            <LinkedInBatchReview />
           </SectionCard>
 
           {/* Marketing Agents */}

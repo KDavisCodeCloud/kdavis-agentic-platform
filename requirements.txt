@@ -56,6 +56,11 @@ openai==1.52.0
 boto3==1.35.36
 google-cloud-aiplatform==1.69.0
 
+# Gemini image generation (assets_library/gemini_image_gen.py) — REST API
+# directly via requests, not the google-genai SDK: that SDK requires
+# httpx>=0.28, which conflicts with supabase==2.7.4's httpx<0.28 pin.
+requests==2.34.2
+
 # YAML config
 pyyaml==6.0.2
 
@@ -63,3 +68,6 @@ pyyaml==6.0.2
 pytest==8.3.3
 pytest-asyncio==0.24.0
 ruff==0.6.9
+
+# Asset vault (assets_library/image_indexer.py)
+pillow==10.4.0

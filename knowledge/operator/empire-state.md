@@ -3,7 +3,7 @@
 **Last updated:** 2026-07-17
 **Entity:** THD Agentic Systems LLC
 **Brand:** The Hustle: Decoded / Decoded Empire
-**Owner:** Kelvin Davis (King Kelz) — USAF veteran, Fortune 500 cloud DevOps
+**Owner:** Kelvin Davis — USAF veteran, Fortune 500 cloud DevOps
 
 ---
 

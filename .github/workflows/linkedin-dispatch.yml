@@ -1,0 +1,53 @@
+name: LinkedIn Scheduled Dispatch
+
+# Fires every approved linkedin_content_queue post whose scheduled_for
+# has arrived. This is the "approve the batch once, it runs itself the
+# rest of the month" half of the monthly cadence — approval happens once
+# in the dashboard (POST /internal/marketing/linkedin-queue/batch-approve),
+# this cron does the actual publishing over the following weeks.
+#
+# Runs every 15 minutes so a post goes out within 15 min of its
+# scheduled_for time (all posts are scheduled on the hour per
+# agents/marketing/mkt_li1_linkedin_brand.py's POST_HOUR_ET).
+#
+# Requires these repo secrets (same DATABASE_URL as weekly-sweep.yml,
+# plus the credentials scripts/dispatch_scheduled_posts.py needs to
+# actually post — none are set as of this writing):
+#   DATABASE_URL       - same Supabase pooler connection string as local .env
+#   ENCRYPTION_KEY      - decrypts the stored LinkedIn/Canva tokens
+#   SUPABASE_URL         - used by assets_library/asset_logger.py on a
+#   SUPABASE_KEY         successful post with an asset-vault image
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Publish due scheduled posts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Dispatch due posts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/dispatch_scheduled_posts.py

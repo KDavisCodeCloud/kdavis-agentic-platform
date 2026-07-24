@@ -1,7 +1,7 @@
 # THD Agentic Systems — Master Build Order
 **Company:** THD Agentic Systems LLC
 **Last updated:** 2026-07-04
-**Owner:** Kelvin Davis (King Kelz)
+**Owner:** Kelvin Davis
 **Purpose:** Single source of truth for what gets built next across all products. No phases, no timelines — just ordered execution. Do the next thing on the list.
 
 ---

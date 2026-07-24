@@ -1,0 +1,23 @@
+[
+  {
+    "post_text": "Kubernetes is not the hard part. Understanding what problem it solves is.",
+    "topic": "kubernetes",
+    "pillar": "Cloud/DevOps",
+    "hitl_tier": "T2",
+    "suggested_hashtags": ["#Kubernetes", "#DevOps", "#CloudEngineering"]
+  },
+  {
+    "post_text": "Most teams treat RAG like a search engine. It is not. It is a context injection pipeline.",
+    "topic": "RAG pipeline",
+    "pillar": "AI Topics",
+    "hitl_tier": "T2",
+    "suggested_hashtags": ["#RAG", "#LLM", "#AgenticAI"]
+  },
+  {
+    "post_text": "The gap between a cloud engineer and an AI platform engineer is not a new degree. It is one production agent deployment.",
+    "topic": "AI platform engineer",
+    "pillar": "Career",
+    "hitl_tier": "T2",
+    "suggested_hashtags": ["#AIPlatformEngineer", "#CloudEngineering", "#AgenticAI"]
+  }
+]

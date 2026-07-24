@@ -18,7 +18,9 @@ export type BadgeStatus =
   // internal_agent_runs' real status vocab (core/hitl.py's execution_status
   // subset actually used by this table) - "executing"/"executed", not
   // "in_progress"/"complete"/"done".
-  | "executing" | "executed" | "budget_exceeded";
+  | "executing" | "executed" | "budget_exceeded"
+  // linkedin_content_queue's real status vocab (db/migrations/007).
+  | "pending_review";
 
 export interface TeamMember {
   id: string;
@@ -146,6 +148,35 @@ export interface OpportunityPipelineItem {
   build_confidence_score: number | null;
   status: string;
   competition_density: string | null;
+  created_at: string;
+}
+
+export interface ImageBrief {
+  image_id: string | null;
+  image_path: string | null;
+  credit_line: string | null;
+  is_original: boolean | null;
+  selected_because: string;
+  generation_available?: boolean;
+}
+
+// linkedin_content_queue rows, as returned by
+// GET /internal/marketing/linkedin-queue (api/routes/internal_marketing.py).
+export interface LinkedInQueuePost {
+  id: string;
+  pillar: number | null;
+  pillar_name: string | null;
+  topic: string | null;
+  post_copy: string;
+  hook_variants: string[] | null;
+  format: "text_post" | "document_carousel";
+  image_brief: ImageBrief | null;
+  hitl_tier: number | null;
+  status: "pending_review" | "approved" | "rejected" | "published";
+  hitl_notes: string | null;
+  batch_month: string | null;
+  scheduled_for: string | null;
+  published_at: string | null;
   created_at: string;
 }
 

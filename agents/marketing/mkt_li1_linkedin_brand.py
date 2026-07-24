@@ -10,14 +10,15 @@ on non-payment or terms violation.
 """
 
 """
-MKT-LI1 — LinkedIn Personal Brand Agent v2.0.
+MKT-LI1 — LinkedIn Personal Brand Agent v2.1.
 
 Builds Kelvin as the authority — his personal brand is the warm
 distribution channel for every product launch. Distinct from product
 marketing (MKT-V1). Full spec: knowledge/Marketing/Marketing-Engine-Agent-Specs.md.
 System prompt: knowledge/Marketing/MKT-LI1-System-Prompt-v2.md.
 
-v2.0 content pillars (4/3/2/1 per batch of 10):
+v2.1 content pillars (per monthly batch of ~12 — see MONTHLY BATCH
+CADENCE below for why this replaced the old weekly/10 model):
   Pillar 1: Cloud and AI Execution (40%) — primary authority engine
   Pillar 2: Builder's Journey (30%) — human layer, build-in-public
   Pillar 3: Philosophy, Faith, Gardening (20%) — differentiation layer
@@ -30,11 +31,53 @@ Veteran and corporate career are texture, not identity — never headline.
 Every post runs through MKT-10 (run_compliance_guard) before MKT-09
 (queue_for_review) writes it to linkedin_content_queue. This agent never
 posts (core/publishers/linkedin.py handles that after HITL approval).
+
+MONTHLY BATCH CADENCE (changed 2026-07-23, replacing the old weekly
+4/week model): Kelvin's technical/authority content (the Gemini-illustrated
+diagram series) reads as a fixed monthly batch, not a pooled weekly draw —
+so MKT-LI1 now generates POSTS_PER_BATCH posts once per batch_month and
+reviews/approves them together. Approval is a one-time action; each post
+then fires on its own scheduled_for timestamp across the month via
+scripts/dispatch_scheduled_posts.py (cron), not an immediate bulk-publish —
+see db/migrations/013_linkedin_batch_scheduling.sql.
+
+Image asset vault (added 2026-07-22): for text_post format only (carousel
+posts use carousel_pdf_brief instead, untouched by this), selects an
+existing curated image from assets_library/ via asset_selector.select_asset()
+using this post's topic, and OVERWRITES image_brief with that selection's
+payload (image_id/image_path/credit_line/is_original/selected_because) —
+the old Canva concept/style/brand_colors shape is not used while the
+Canva Autofill integration is parked (per Kelvin's 2026-07-22 directive:
+Canva is for original-idea generation only, not in use yet). The selected
+image is attached HERE, before HITL queuing, specifically so the human
+reviewer sees and can reject the image choice along with the copy — never
+re-selected later at publish time, which would let a different image go
+live than the one actually reviewed. post_copy is also run through
+post_formatter.format_post() here, using this same selection's
+credit_line/is_original, so the queued row is the exact text that will be
+posted — publish-time uses it verbatim, no reformatting.
+
+Gemini image generation (added 2026-07-23): each drafted post now also
+carries image_description — a fully-composed, single-diagram Gemini
+prompt (see VOICE_SYSTEM_PROMPT's OUTPUT FORMAT section) for posts whose
+topic calls for an original technical diagram rather than a vault photo.
+MKT-LI1 itself never calls Gemini — at draft time, select_asset() is
+still tried first against the existing vault (a my_originals/ match from
+earlier in this same batch run always wins), and image_description just
+rides along on the queued row unused if a match was found. When no match
+exists yet, generation_available=true on image_brief signals that
+assets_library/gemini_image_gen.py can still produce one — it runs after
+this agent, in monthly_batch.sh's Step 1.5, and re-attaches the generated
+image directly to this exact queue row by id (never by fuzzy topic
+re-matching — a monthly technical diagram is bespoke to its own post, not
+a shared reusable asset like the vault's other photos).
 """
 
 import json
 import logging
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from agents.marketing._shared import (
     MARKETING_PRODUCT_ID,
@@ -46,6 +89,8 @@ from agents.marketing._shared import (
 )
 from agents.marketing.mkt_09_hitl_queue_manager import queue_for_review
 from agents.marketing.mkt_10_compliance_guard import run_compliance_guard
+from assets_library.asset_selector import select_asset
+from assets_library.post_formatter import format_post
 
 log = logging.getLogger(__name__)
 
@@ -59,10 +104,12 @@ PILLAR_NAMES = {
     "pillar_3": "Philosophy, Faith, and Gardening",
     "pillar_4": "Product, Business, and CTA",
 }
-POSTS_PER_WEEK = 4
-POST_TIMES = ["Tuesday 8am ET", "Wednesday 9am ET", "Thursday 8am ET", "Monday 9am ET"]
+POSTS_PER_BATCH = 12
+POST_WEEKDAYS = [1, 2, 3]  # Tue, Wed, Thu (Monday=0) — same cadence feel as the old weekly rotation
+POST_HOUR_ET = 9
+_ET = ZoneInfo("America/New_York")
 
-VOICE_SYSTEM_PROMPT = """You are MKT-LI1, the LinkedIn content generation agent for Kelvin Davis (King Kelz),
+VOICE_SYSTEM_PROMPT = """You are MKT-LI1, the LinkedIn content generation agent for Kelvin Davis,
 founder of THD Agentic Systems LLC and the Decoded Empire portfolio. Your sole function
 is to draft LinkedIn posts that build Kelvin's personal brand as a cloud and AI
 practitioner-builder. You do not publish.
@@ -131,6 +178,32 @@ details; generate engagement bait (no "what do you think?", no "share if you agr
 Format rule: use "document_carousel" when content has 3-8 discrete points (framework,
 steps, comparison). Otherwise use "text_post". Populate exactly one pair; other is null.
 
+## OUTPUT FORMAT
+
+image_description (text_post only, null for document_carousel): a fully-composed prompt
+for a Gemini image-generation call that becomes this post's custom technical diagram.
+One Gemini API call renders exactly one image from this string verbatim — it must
+describe ONE standalone diagram only, never a grid, collage, or multi-panel composite
+(that is what Gemini defaults to when a prompt implies more than one concept at once).
+
+image_description must describe the diagram spatially and specifically:
+- Name every node, box, and label
+- Describe the layout (left to right, top to bottom, grid, flow)
+- Specify arrow directions and what connects to what
+- Include real tool/service names and logos where relevant to the post topic
+
+Always start image_description with:
+"Single standalone diagram. One concept only. No panels, no grids, no collages.
+Full bleed 1080x1080px white background."
+
+Always end image_description with:
+"Navy #0A0F1E primary elements, blue #5a96ff highlights, amber #F5A623 callouts and
+important labels. Clean sans-serif font. Real cloud provider logos where relevant.
+Small text \"Kelvin Davis\" bottom right corner. Professional LinkedIn infographic
+style similar to ByteByteGo. White background. No dark backgrounds."
+
+Never use any name other than "Kelvin Davis" anywhere in image_description or post_copy.
+
 Respond with ONLY a JSON object matching this exact shape:
 {
   "pillar": 1 | 2 | 3 | 4,
@@ -141,6 +214,7 @@ Respond with ONLY a JSON object matching this exact shape:
   "hook_variants": [str, str, str],
   "format": "text_post" | "document_carousel",
   "image_brief": {"concept": str, "style": str, "brand_colors": [str]} or null,
+  "image_description": str or null,
   "carousel_slides": [str, ...] or null,
   "carousel_pdf_brief": {"concept": str, "slide_count": int, "style": str} or null,
   "notes": str
@@ -177,8 +251,8 @@ def _content_pool(research_report: dict, idea_reservoir: list, build_updates: li
     return pool
 
 
-def _build_slots(pool: dict[str, list[dict]], posts_per_week: int = POSTS_PER_WEEK) -> list[dict]:
-    quota = apportion(CONTENT_MIX_RATIO, posts_per_week)
+def _build_slots(pool: dict[str, list[dict]], posts_per_batch: int = POSTS_PER_BATCH) -> list[dict]:
+    quota = apportion(CONTENT_MIX_RATIO, posts_per_batch)
     slots: list[dict] = []
     for pillar_key, count in quota.items():
         for _ in range(count):
@@ -193,6 +267,35 @@ def _build_slots(pool: dict[str, list[dict]], posts_per_week: int = POSTS_PER_WE
                 continue
             slots.append({"pillar_key": pillar_key, "source": pool[pillar_key].pop(0)})
     return slots
+
+
+def _current_batch_month(today: Optional[date] = None) -> str:
+    return (today or date.today()).strftime("%Y-%m")
+
+
+def _compute_schedule(batch_month: str, count: int) -> list[datetime]:
+    """
+    Spreads `count` posts across batch_month on POST_WEEKDAYS at
+    POST_HOUR_ET, cycling through weeks until every post has a date —
+    e.g. 12 posts at 3/week (Tue/Wed/Thu) fills exactly 4 weeks. Falls
+    into the following month automatically if a batch is larger than
+    the target month can fit on those weekdays alone (never drops a
+    post to make it fit).
+    """
+    year, month = (int(part) for part in batch_month.split("-"))
+    first_of_month = date(year, month, 1)
+
+    candidate_dates: list[date] = []
+    d = first_of_month
+    while len(candidate_dates) < count:
+        if d.weekday() in POST_WEEKDAYS:
+            candidate_dates.append(d)
+        d += timedelta(days=1)
+
+    return [
+        datetime(d.year, d.month, d.day, POST_HOUR_ET, 0, tzinfo=_ET)
+        for d in candidate_dates
+    ]
 
 
 def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: dict) -> dict:
@@ -223,6 +326,7 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
             "hook_variants": [],
             "format": "text_post",
             "image_brief": {"concept": source_text, "style": "Decoded brand", "brand_colors": ["#5a96ff", "#f5a623"]},
+            "image_description": None,
             "carousel_slides": None,
             "carousel_pdf_brief": None,
             "notes": "",
@@ -230,19 +334,33 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
     return parsed
 
 
+def _select_image_for_post(topic: str, image_description: Optional[str] = None) -> Optional[dict]:
+    """Returns asset_selector's payload, or None if no curated image matches
+    this post's topic AND no Gemini generation is possible for it either (a
+    text_post is still valid with neither — MKT-LI1 never fabricates a
+    match, same principle as never fabricating a milestone in _build_slots
+    above). image_description is passed through only so select_asset can
+    set generation_available on its output; it plays no role in matching."""
+    result = select_asset(topic, image_description=image_description)
+    return result if result["image_id"] or result["generation_available"] else None
+
+
 def run_li1_brand_agent(
     research_report: dict,
     idea_reservoir: list,
     kelvin_voice_profile: dict,
     build_updates: Optional[list] = None,
+    batch_month: Optional[str] = None,
     supabase_client: Optional[Any] = None,
     anthropic_client: Optional[Any] = None,
 ) -> list[dict]:
     build_updates = build_updates or []
+    batch_month = batch_month or _current_batch_month()
     client = get_anthropic_client(anthropic_client)
 
     pool = _content_pool(research_report, idea_reservoir, build_updates)
     slots = _build_slots(pool)
+    schedule = _compute_schedule(batch_month, len(slots))
 
     posts: list[dict] = []
     try:
@@ -255,6 +373,7 @@ def run_li1_brand_agent(
             # hitl_tier from model output; pillar_4 always Tier 3 regardless
             hitl_tier = 3 if pillar_key == "pillar_4" else int(draft.get("hitl_tier", 2))
 
+            scheduled_for = schedule[i]
             post = {
                 "pillar": draft.get("pillar", int(pillar_key.split("_")[1])),
                 "pillar_name": PILLAR_NAMES.get(pillar_key, pillar_key),
@@ -263,9 +382,12 @@ def run_li1_brand_agent(
                 "estimated_length": draft.get("estimated_length", "medium"),
                 "post_copy": draft.get("post_copy", ""),
                 "hook_variants": draft.get("hook_variants", []) or [],
-                "suggested_post_time": POST_TIMES[i % len(POST_TIMES)],
+                "batch_month": batch_month,
+                "scheduled_for": scheduled_for.isoformat(),
+                "suggested_post_time": scheduled_for.strftime("%A %-I%p ET"),
                 "format": draft.get("format", "text_post"),
                 "image_brief": draft.get("image_brief"),
+                "image_description": draft.get("image_description"),
                 "carousel_slides": draft.get("carousel_slides"),
                 "carousel_pdf_brief": draft.get("carousel_pdf_brief"),
                 "notes": draft.get("notes", ""),
@@ -274,6 +396,18 @@ def run_li1_brand_agent(
             compliance = run_compliance_guard(post["post_copy"], platform="linkedin", product_id=MARKETING_PRODUCT_ID)
             if compliance["revised_content"]:
                 post["post_copy"] = compliance["revised_content"]
+
+            if post["format"] == "text_post":
+                asset = _select_image_for_post(post["topic"], image_description=post["image_description"])
+                post["image_brief"] = asset
+                formatted_copy, format_warnings = format_post(
+                    post["post_copy"],
+                    credit_line=asset["credit_line"] if asset else None,
+                    is_original=asset["is_original"] if asset else False,
+                )
+                post["post_copy"] = formatted_copy
+                if format_warnings:
+                    post["notes"] = (post["notes"] + " | " if post["notes"] else "") + "post_formatter: " + "; ".join(format_warnings)
 
             content_item = {**post, "agent_id": AGENT_ID}
             if compliance["flags"]:
@@ -284,10 +418,10 @@ def run_li1_brand_agent(
             post["id"] = queued.get("id")
             posts.append(post)
 
-        write_audit_log(AGENT_ID, "weekly_calendar_generated", resource=f"{len(posts)} posts", outcome="success")
-        emit_event(AGENT_ID, "weekly_calendar_generated", {"post_count": len(posts)})
+        write_audit_log(AGENT_ID, "monthly_batch_generated", resource=f"{len(posts)} posts, batch_month={batch_month}", outcome="success")
+        emit_event(AGENT_ID, "monthly_batch_generated", {"post_count": len(posts), "batch_month": batch_month})
         return posts
     except Exception as exc:
-        write_audit_log(AGENT_ID, "weekly_calendar_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
-        emit_event(AGENT_ID, "weekly_calendar_failed", {"error": str(exc)})
+        write_audit_log(AGENT_ID, "monthly_batch_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
+        emit_event(AGENT_ID, "monthly_batch_failed", {"error": str(exc)})
         raise

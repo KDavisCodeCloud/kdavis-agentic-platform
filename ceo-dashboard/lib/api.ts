@@ -1,3 +1,5 @@
+import type { LinkedInQueuePost } from "./types";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Agents that live in agents/internal/* and require the separate owner/team
@@ -104,4 +106,72 @@ export async function fetchInternalAgentRuns(
   if (!res.ok) throw new Error(`Fetching recent runs failed: ${res.status}`);
   const data = await res.json();
   return data.runs;
+}
+
+// ── LinkedIn monthly batch (api/routes/internal_marketing.py) ──────────────
+// linkedin_content_queue has RLS restricted to service_role only — these
+// calls must go through the backend (get_internal_user, same admin-session
+// auth as triggerAgent above), never a direct browser-side Supabase read.
+
+export async function fetchLinkedInQueue(
+  authToken: string,
+  filters: { batchMonth?: string; status?: string } = {},
+): Promise<LinkedInQueuePost[]> {
+  const params = new URLSearchParams();
+  if (filters.batchMonth) params.set("batch_month", filters.batchMonth);
+  if (filters.status) params.set("status", filters.status);
+  const qs = params.toString();
+
+  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/linkedin-queue${qs ? `?${qs}` : ""}`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!res.ok) throw new Error(`Fetching LinkedIn queue failed: ${res.status}`);
+  const data = await res.json();
+  return data.posts;
+}
+
+export async function updateLinkedInQueueRow(
+  authToken: string,
+  queueId: string,
+  update: { status?: string; hitl_notes?: string; scheduled_for?: string },
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/linkedin-queue/${queueId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+    body: JSON.stringify(update),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Updating queue row failed: ${res.status}`);
+  }
+}
+
+// Fetches one assets_library/ file authenticated and returns an object
+// URL for use as an <img src>. Caller owns the returned URL and must
+// revoke it (URL.revokeObjectURL) when done — see AssetThumbnail.tsx.
+// assetPath is image_brief.image_path with the "assets_library/" prefix
+// already stripped (e.g. "my_originals/foo.png").
+export async function fetchAssetBlobUrl(authToken: string, assetPath: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/assets/${assetPath}`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!res.ok) throw new Error(`Fetching asset failed: ${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function batchApproveLinkedInQueue(
+  authToken: string,
+  batchMonth: string,
+): Promise<{ approved_count: number }> {
+  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/linkedin-queue/batch-approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+    body: JSON.stringify({ batch_month: batchMonth }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Batch approve failed: ${res.status}`);
+  }
+  return res.json();
 }

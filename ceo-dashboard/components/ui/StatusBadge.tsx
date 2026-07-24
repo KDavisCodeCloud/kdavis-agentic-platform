@@ -21,6 +21,7 @@ const STATUS_MAP: Record<string, { text: string; bg: string; label?: string }> =
   budget_exceeded:{ text: "#e05d5d", bg: "#e05d5d22" },
   planning:       { text: "#e8963f", bg: "#e8963f22" },
   flagged:        { text: "#e8963f", bg: "#e8963f22" },
+  pending_review: { text: "#e8963f", bg: "#e8963f22", label: "NEEDS REVIEW" },
   watch:          { text: "#e8963f", bg: "#e8963f22" },
   degraded:       { text: "#e8963f", bg: "#e8963f22" },
   draft:          { text: "#e8963f", bg: "#e8963f22" },

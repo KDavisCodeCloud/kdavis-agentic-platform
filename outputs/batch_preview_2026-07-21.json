@@ -1,0 +1,53 @@
+[
+  {
+    "topic": "kubernetes",
+    "pillar": "Cloud/DevOps",
+    "hitl_tier": "T2",
+    "selected_image": {
+      "image_id": null,
+      "image_path": null,
+      "credit_line": null,
+      "is_original": null,
+      "selected_because": "no match found \u2014 post without image or add more assets"
+    },
+    "formatted_post": "Kubernetes is not the hard part.\n\nUnderstanding what problem it solves is.\n\n#Kubernetes #DevOps #CloudEngineering",
+    "formatter_warnings": [
+      "Hook line has no emoji -- consider adding one (not auto-added, requires human judgment)"
+    ],
+    "would_post_live": false
+  },
+  {
+    "topic": "RAG pipeline",
+    "pillar": "AI Topics",
+    "hitl_tier": "T2",
+    "selected_image": {
+      "image_id": null,
+      "image_path": null,
+      "credit_line": null,
+      "is_original": null,
+      "selected_because": "no match found \u2014 post without image or add more assets"
+    },
+    "formatted_post": "Most teams treat RAG like a search engine.\n\nIt is not.\n\nIt is a context injection pipeline.\n\n#RAG #LLM #AgenticAI",
+    "formatter_warnings": [
+      "Hook line has no emoji -- consider adding one (not auto-added, requires human judgment)"
+    ],
+    "would_post_live": false
+  },
+  {
+    "topic": "AI platform engineer",
+    "pillar": "Career",
+    "hitl_tier": "T2",
+    "selected_image": {
+      "image_id": null,
+      "image_path": null,
+      "credit_line": null,
+      "is_original": null,
+      "selected_because": "no match found \u2014 post without image or add more assets"
+    },
+    "formatted_post": "The gap between a cloud engineer and an AI platform engineer is not a new degree.\n\nIt is one production agent deployment.\n\n#AIPlatformEngineer #CloudEngineering #AgenticAI",
+    "formatter_warnings": [
+      "Hook line has no emoji -- consider adding one (not auto-added, requires human judgment)"
+    ],
+    "would_post_live": false
+  }
+]

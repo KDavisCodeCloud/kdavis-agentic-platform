@@ -56,6 +56,7 @@ class LinkedInBrandRequest(BaseModel):
     idea_reservoir: list
     kelvin_voice_profile: dict
     build_updates: list = Field(default_factory=list)
+    batch_month: Optional[str] = None
 
 
 class ContentMultiplyRequest(BaseModel):
@@ -83,6 +84,7 @@ def linkedin_brand(body: LinkedInBrandRequest, _: None = Depends(require_marketi
         posts = run_li1_brand_agent(
             body.research_report, body.idea_reservoir, body.kelvin_voice_profile,
             build_updates=body.build_updates,
+            batch_month=body.batch_month,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"MKT-LI1 failed: {exc}") from exc
@@ -91,6 +93,11 @@ def linkedin_brand(body: LinkedInBrandRequest, _: None = Depends(require_marketi
         "success": True,
         "post_count": len(posts),
         "queue_ids": [post["id"] for post in posts if post.get("id")],
+        # Full drafted posts (topic/pillar/image_description/id per post) —
+        # scripts/monthly_batch.sh saves this response and pipes it into
+        # assets_library/extract_image_briefs.py, which needs more than
+        # just queue_ids to build Gemini's per-post image briefs.
+        "posts": posts,
     }
 
 
