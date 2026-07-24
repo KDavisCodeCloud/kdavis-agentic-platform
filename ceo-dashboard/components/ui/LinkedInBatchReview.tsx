@@ -38,6 +38,7 @@ export function LinkedInBatchReview() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -177,9 +178,36 @@ export function LinkedInBatchReview() {
                   </span>
                 </div>
 
-                <p className="text-[11.5px] mb-1.5 truncate-text" style={{ color: "#aab4bd" }}>
-                  {post.post_copy}
-                </p>
+                {expandedId === post.id ? (
+                  <div className="mb-2">
+                    {post.image_brief?.image_path && (
+                      <div className="mb-2">
+                        <AssetThumbnail imagePath={post.image_brief.image_path} alt={post.topic ?? "post image"} size={320} />
+                      </div>
+                    )}
+                    <p className="text-[12px] whitespace-pre-wrap mb-2" style={{ color: "#eef2f5" }}>
+                      {post.post_copy}
+                    </p>
+                    {post.hook_variants && post.hook_variants.length > 0 && (
+                      <div className="mb-2">
+                        <p className="text-[10px] font-mono uppercase mb-1" style={{ color: "#5b6673" }}>
+                          Hook variants
+                        </p>
+                        <ul className="space-y-1">
+                          {post.hook_variants.map((hook, i) => (
+                            <li key={i} className="text-[11.5px]" style={{ color: "#aab4bd" }}>
+                              {i + 1}. {hook}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11.5px] mb-1.5 truncate-text" style={{ color: "#aab4bd" }}>
+                    {post.post_copy}
+                  </p>
+                )}
 
                 <p className="text-[10.5px] font-mono mb-2" style={{ color: "#5b6673" }}>
                   {formatScheduledFor(post.scheduled_for)} · {imageStatusLabel(post)}
@@ -193,6 +221,16 @@ export function LinkedInBatchReview() {
                     📝 {post.hitl_notes}
                   </p>
                 )}
+
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <button
+                    onClick={() => setExpandedId(expandedId === post.id ? null : post.id)}
+                    className="px-3 py-1.5 rounded-[6px] text-[11px] font-mono font-semibold transition-colors"
+                    style={{ border: "1px solid #8b96a3", color: "#c7cfd6", backgroundColor: expandedId === post.id ? "#8b96a31a" : "transparent" }}
+                  >
+                    {expandedId === post.id ? "Collapse" : "Review"}
+                  </button>
+                </div>
 
                 {post.status !== "published" && (
                   <div className="flex items-center gap-2 flex-wrap mb-2">

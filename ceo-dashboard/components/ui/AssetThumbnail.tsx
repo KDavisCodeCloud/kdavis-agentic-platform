@@ -7,6 +7,9 @@ interface AssetThumbnailProps {
   // image_brief.image_path as stored, e.g. "assets_library/my_originals/foo.png"
   imagePath: string;
   alt: string;
+  // Pixel size (square) — 64 for the list row, larger (e.g. 320) for the
+  // per-post review expansion where the actual diagram needs to be legible.
+  size?: number;
 }
 
 // Renders one assets_library/my_originals/ image via app/api/asset/[...path]/
@@ -14,7 +17,7 @@ interface AssetThumbnailProps {
 // automatic — no Bearer token needed, unlike the old FastAPI-backed
 // version). Fetches the bytes once, renders as a blob URL, and revokes
 // it on unmount/path change so object URLs don't leak across re-renders.
-export function AssetThumbnail({ imagePath, alt }: AssetThumbnailProps) {
+export function AssetThumbnail({ imagePath, alt, size = 64 }: AssetThumbnailProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -50,8 +53,8 @@ export function AssetThumbnail({ imagePath, alt }: AssetThumbnailProps) {
   if (!blobUrl) {
     return (
       <div
-        className="rounded-[6px]"
-        style={{ width: 64, height: 64, backgroundColor: "#10151b", border: "1px solid #1c222b" }}
+        className="rounded-[6px] shrink-0"
+        style={{ width: size, height: size, backgroundColor: "#10151b", border: "1px solid #1c222b" }}
       />
     );
   }
@@ -61,8 +64,8 @@ export function AssetThumbnail({ imagePath, alt }: AssetThumbnailProps) {
     <img
       src={blobUrl}
       alt={alt}
-      className="rounded-[6px] object-cover"
-      style={{ width: 64, height: 64, border: "1px solid #1c222b" }}
+      className="rounded-[6px] object-cover shrink-0"
+      style={{ width: size, height: size, border: "1px solid #1c222b" }}
     />
   );
 }
