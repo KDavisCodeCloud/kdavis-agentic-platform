@@ -18,6 +18,26 @@ def test_splits_run_on_sentences_onto_separate_double_spaced_lines():
     )
 
 
+def test_numbered_list_marker_stays_on_the_same_line_as_its_statement():
+    # Found 2026-07-25 in a real drafted post: the sentence-splitter
+    # treated "1." as a sentence-ending period, same as a real ".", and
+    # split the list number onto its own line, separate from its
+    # statement. "1." must never count as a sentence boundary on its own.
+    raw = (
+        "1. Are you Azure-only now and in 18 months? "
+        "2. Who's maintaining this? "
+        "3. What's your blast radius?"
+    )
+    formatted, _ = format_post(raw)
+    assert formatted == (
+        "1. Are you Azure-only now and in 18 months?\n\n"
+        "2. Who's maintaining this?\n\n"
+        "3. What's your blast radius?"
+    )
+    assert "1.\n\n" not in formatted
+    assert "2.\n\n" not in formatted
+
+
 def test_preserves_arrow_marker_lines_as_atomic_not_sentence_split():
     raw = "In 2024 you did this manually.\n→ Writing Terraform line by line.\n→ Reviewing every PR yourself."
     formatted, _ = format_post(raw)

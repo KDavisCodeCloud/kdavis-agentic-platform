@@ -56,7 +56,18 @@ _BROAD_HASHTAGS = {
 }
 
 _HASHTAG_BLOCK_RE = re.compile(r"(?:#\w+\s*)+$")
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# (?<!\d[.!?]) excludes a numbered-list marker's period ("1.", "2.", ...)
+# from counting as a sentence end -- without it, "1. Are you Azure-only
+# now?" split into "1." on its own line and "Are you Azure-only now?" on
+# the next, separating every list number from its own statement. Found
+# 2026-07-25 reviewing a real drafted post through the dashboard's new
+# full-text Review view. Needs its own 2-char lookbehind rather than
+# combining with (?<=[.!?]) in one -- Python's re evaluates multiple
+# lookbehinds at the *same* position, so a single-char "not a digit"
+# lookbehind there would check whether the period itself is a digit
+# (never true) instead of the character before it -- confirmed the first
+# attempt at this fix didn't actually change behavior at all.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])(?<!\d[.!?])\s+")
 
 
 def _split_hashtags(text: str) -> tuple[str, list[str]]:
