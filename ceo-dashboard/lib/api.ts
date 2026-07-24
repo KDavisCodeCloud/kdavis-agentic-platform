@@ -108,13 +108,21 @@ export async function fetchInternalAgentRuns(
   return data.runs;
 }
 
-// ── LinkedIn monthly batch (api/routes/internal_marketing.py) ──────────────
-// linkedin_content_queue has RLS restricted to service_role only — these
-// calls must go through the backend (get_internal_user, same admin-session
-// auth as triggerAgent above), never a direct browser-side Supabase read.
+// ── LinkedIn monthly batch (app/api/linkedin-queue/*) ───────────────────────
+// Runs as Next.js route handlers directly in this app (service-role
+// Supabase client server-side) — NOT the FastAPI backend in
+// api/routes/internal_marketing.py, which has never been deployed
+// anywhere publicly reachable (found 2026-07-24: this is why the batch
+// panel showed "Failed to fetch" — NEXT_PUBLIC_API_URL wasn't set in
+// Vercel production, so it fell back to http://localhost:8000, which
+// obviously isn't reachable from a real visitor's browser). Cookie-based
+// session auth is automatic for same-origin fetches, so no Bearer token
+// needed here — see lib/api-auth.ts for the server-side role check.
+// Image thumbnails (fetchAssetBlobUrl below) are unaffected by this
+// change and still point at the FastAPI backend, since the actual image
+// bytes live on that repo's filesystem, not reachable from this app.
 
 export async function fetchLinkedInQueue(
-  authToken: string,
   filters: { batchMonth?: string; status?: string } = {},
 ): Promise<LinkedInQueuePost[]> {
   const params = new URLSearchParams();
@@ -122,22 +130,22 @@ export async function fetchLinkedInQueue(
   if (filters.status) params.set("status", filters.status);
   const qs = params.toString();
 
-  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/linkedin-queue${qs ? `?${qs}` : ""}`, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  });
-  if (!res.ok) throw new Error(`Fetching LinkedIn queue failed: ${res.status}`);
+  const res = await fetch(`/api/linkedin-queue${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching LinkedIn queue failed: ${res.status}`);
+  }
   const data = await res.json();
   return data.posts;
 }
 
 export async function updateLinkedInQueueRow(
-  authToken: string,
   queueId: string,
   update: { status?: string; hitl_notes?: string; scheduled_for?: string },
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/linkedin-queue/${queueId}`, {
+  const res = await fetch(`/api/linkedin-queue/${queueId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(update),
   });
   if (!res.ok) {
@@ -161,12 +169,11 @@ export async function fetchAssetBlobUrl(authToken: string, assetPath: string): P
 }
 
 export async function batchApproveLinkedInQueue(
-  authToken: string,
   batchMonth: string,
 ): Promise<{ approved_count: number }> {
-  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/linkedin-queue/batch-approve`, {
+  const res = await fetch(`/api/linkedin-queue/batch-approve`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ batch_month: batchMonth }),
   });
   if (!res.ok) {

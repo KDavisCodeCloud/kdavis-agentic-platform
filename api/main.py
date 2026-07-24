@@ -145,10 +145,24 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS — tighten in production to FRONTEND_URL
+# CORS — ALLOWED_ORIGINS is a comma-separated list; multiple real frontends
+# (ceo-dashboard, team-dashboard, Cloud Decoded's customer site) all need
+# to call this one backend. FRONTEND_URL alone (single origin) was too
+# narrow the moment a second dashboard needed access -- found 2026-07-24
+# when ceo-dashboard's LinkedIn batch panel got a CORS-blocked "Failed to
+# fetch" because FRONTEND_URL was set to theclouddecoded.com only.
+_allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS",
+        os.environ.get("FRONTEND_URL", "http://localhost:3000"),
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.environ.get("FRONTEND_URL", "http://localhost:3000")],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],

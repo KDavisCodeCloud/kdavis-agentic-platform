@@ -53,3 +53,5 @@ knowledge/operator/llm-audit.md
 .idea/
 *.swp
 finance_documents/
+.vercel
+.env*

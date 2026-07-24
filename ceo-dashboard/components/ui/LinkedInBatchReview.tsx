@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { batchApproveLinkedInQueue, fetchLinkedInQueue, updateLinkedInQueueRow } from "@/lib/api";
 import { AssetThumbnail } from "./AssetThumbnail";
 import { StatusBadge } from "./StatusBadge";
@@ -33,32 +32,25 @@ function imageStatusLabel(post: LinkedInQueuePost): string {
 }
 
 export function LinkedInBatchReview() {
-  const supabase = createClient();
   const [batchMonth, setBatchMonth] = useState(currentBatchMonth());
   const [posts, setPosts] = useState<LinkedInQueuePost[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
-
-  const getToken = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) throw new Error("Not signed in");
-    return session.access_token;
-  }, [supabase]);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     setActionError(null);
     try {
-      const token = await getToken();
-      const rows = await fetchLinkedInQueue(token, { batchMonth });
+      const rows = await fetchLinkedInQueue({ batchMonth });
       setPosts(rows);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Failed to load batch");
     } finally {
       setLoading(false);
     }
-  }, [batchMonth, getToken]);
+  }, [batchMonth]);
 
   useEffect(() => {
     load();
@@ -67,8 +59,7 @@ export function LinkedInBatchReview() {
   async function review(queueId: string, status: "approved" | "rejected") {
     setActionError(null);
     try {
-      const token = await getToken();
-      await updateLinkedInQueueRow(token, queueId, { status });
+      await updateLinkedInQueueRow(queueId, { status });
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Update failed");
@@ -79,11 +70,26 @@ export function LinkedInBatchReview() {
     if (!localDateTime) return;
     setActionError(null);
     try {
-      const token = await getToken();
-      await updateLinkedInQueueRow(token, queueId, { scheduled_for: new Date(localDateTime).toISOString() });
+      await updateLinkedInQueueRow(queueId, { scheduled_for: new Date(localDateTime).toISOString() });
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Reschedule failed");
+    }
+  }
+
+  // "Append" — adds/updates a reviewer note on a post independently of an
+  // approve/reject decision (e.g. "approve, but flag the second sentence"
+  // or a reason for rejecting). Never overwrites status.
+  async function appendNote(queueId: string) {
+    const note = noteDrafts[queueId];
+    if (!note || !note.trim()) return;
+    setActionError(null);
+    try {
+      await updateLinkedInQueueRow(queueId, { hitl_notes: note.trim() });
+      setNoteDrafts((prev) => ({ ...prev, [queueId]: "" }));
+      await load();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Adding note failed");
     }
   }
 
@@ -91,8 +97,7 @@ export function LinkedInBatchReview() {
     setApproving(true);
     setActionError(null);
     try {
-      const token = await getToken();
-      const result = await batchApproveLinkedInQueue(token, batchMonth);
+      const result = await batchApproveLinkedInQueue(batchMonth);
       await load();
       if (result.approved_count === 0) {
         setActionError("No pending_review posts left to approve in this batch.");
@@ -106,6 +111,7 @@ export function LinkedInBatchReview() {
 
   const pendingCount = posts.filter((p) => p.status === "pending_review").length;
   const approvedCount = posts.filter((p) => p.status === "approved").length;
+  const rejectedCount = posts.filter((p) => p.status === "rejected").length;
   const publishedCount = posts.filter((p) => p.status === "published").length;
 
   return (
@@ -120,7 +126,7 @@ export function LinkedInBatchReview() {
             style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#eef2f5" }}
           />
           <span className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
-            {posts.length} posts · {pendingCount} awaiting review · {approvedCount} approved · {publishedCount} published
+            {posts.length} posts · {pendingCount} awaiting review · {approvedCount} approved · {rejectedCount} rejected · {publishedCount} published
           </span>
         </div>
         <button
@@ -133,8 +139,9 @@ export function LinkedInBatchReview() {
             backgroundColor: "transparent",
             opacity: approving ? 0.6 : 1,
           }}
+          title="Approves every post still awaiting review in this batch_month. Posts already approved or rejected individually are left as-is — this is not all-or-nothing."
         >
-          {approving ? "Approving…" : `Approve entire batch (${pendingCount})`}
+          {approving ? "Approving…" : `Approve all pending (${pendingCount})`}
         </button>
       </div>
 
@@ -178,8 +185,17 @@ export function LinkedInBatchReview() {
                   {formatScheduledFor(post.scheduled_for)} · {imageStatusLabel(post)}
                 </p>
 
+                {post.hitl_notes && (
+                  <p
+                    className="text-[11px] mb-2 px-2.5 py-1.5 rounded-[6px]"
+                    style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#e8963f" }}
+                  >
+                    📝 {post.hitl_notes}
+                  </p>
+                )}
+
                 {post.status !== "published" && (
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap mb-2">
                     <button
                       onClick={() => review(post.id, "approved")}
                       disabled={post.status === "approved"}
@@ -204,6 +220,28 @@ export function LinkedInBatchReview() {
                       style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#aab4bd" }}
                       title="Reschedule this post"
                     />
+                  </div>
+                )}
+
+                {post.status !== "published" && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Append a note (e.g. why you rejected this, or a tweak to make before it goes out)…"
+                      value={noteDrafts[post.id] ?? ""}
+                      onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [post.id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === "Enter") appendNote(post.id); }}
+                      className="flex-1 min-w-0 text-[11px] px-2.5 py-1.5 rounded-[6px]"
+                      style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#eef2f5" }}
+                    />
+                    <button
+                      onClick={() => appendNote(post.id)}
+                      disabled={!noteDrafts[post.id]?.trim()}
+                      className="px-3 py-1.5 rounded-[6px] text-[11px] font-mono font-semibold transition-colors shrink-0"
+                      style={{ border: "1px solid #7ea6f5", color: noteDrafts[post.id]?.trim() ? "#7ea6f5" : "#3a4250", backgroundColor: "transparent" }}
+                    >
+                      Append
+                    </button>
                   </div>
                 )}
               </div>
