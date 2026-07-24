@@ -30,7 +30,7 @@ export default function MarketingPage() {
       <div className="flex-1 overflow-y-auto p-6 min-w-0">
         <div className="space-y-5">
           {/* Pipeline Stages */}
-          <SectionCard title="Sales Pipeline">
+          <SectionCard title="Sales Pipeline" status="not_built" statusNote="static mock — no CRM/pipeline table wired yet">
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
               {PIPELINE_STAGES.map((stage) => (
                 <div
@@ -53,12 +53,12 @@ export default function MarketingPage() {
           </SectionCard>
 
           {/* LinkedIn Monthly Batch — MKT-LI1's ~12 posts, review/approve/schedule */}
-          <SectionCard title="LinkedIn Monthly Batch">
+          <SectionCard title="LinkedIn Monthly Batch" status="live" statusNote="linkedin_content_queue, MKT-LI1 + Gemini">
             <LinkedInBatchReview />
           </SectionCard>
 
           {/* Marketing Agents */}
-          <SectionCard title="Marketing Agents">
+          <SectionCard title="Marketing Agents" status="partial" statusNote="LinkedIn Content is real (MKT-LI1) — roster itself is a static list, not a live agent registry">
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
               {MARKETING_AGENTS.map((a) => (
                 <AgentRosterCard key={a.name} {...a} />
@@ -67,7 +67,7 @@ export default function MarketingPage() {
           </SectionCard>
 
           {/* Cold Outreach Tracker */}
-          <SectionCard title="Cold Outreach Tracker">
+          <SectionCard title="Cold Outreach Tracker" status="not_built" statusNote="static mock — no outreach sequence tracking wired yet">
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
                 <thead>

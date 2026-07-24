@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { DEPT_ROUTES, type Role } from "@/lib/types";
+import { DEPT_ROUTES } from "@/lib/types";
+import { resolveRole } from "@/lib/role";
 
 const PUBLIC_PATHS = ["/login", "/auth/callback"];
 
@@ -45,7 +46,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Role-based department access
-  const userRole = (user.user_metadata?.role ?? "rnd") as Role;
+  const userRole = resolveRole(user.email, user.user_metadata?.role);
 
   const matchedDept = DEPT_ROUTES.find((d) => pathname.startsWith(d.path));
   if (matchedDept && !(matchedDept.roles as readonly string[]).includes(userRole)) {

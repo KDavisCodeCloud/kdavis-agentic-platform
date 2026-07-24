@@ -82,14 +82,18 @@ export default function OverviewPage() {
             className="grid gap-4"
             style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
           >
-            <MetricCard label="Portfolio MRR"  value="$0"    subtext="5 products tracked"  accent="#5eead4" />
-            <MetricCard label="Products Live"  value="0"     subtext="of 5 in portfolio"   accent="#6fce8f" />
-            <MetricCard label="Open HITL Items" value={String(hitlCount)} subtext="pending approval" accent="#e8963f" />
-            <MetricCard label="Stack Burn / mo" value="~$225" subtext="infra cost estimate" accent="#e05d5d" />
+            <MetricCard label="Portfolio MRR"  value="$0"    subtext="5 products tracked"  accent="#5eead4" live={false} />
+            <MetricCard label="Products Live"  value="0"     subtext="of 5 in portfolio"   accent="#6fce8f" live={false} />
+            <MetricCard label="Open HITL Items" value={String(hitlCount)} subtext="pending approval" accent="#e8963f" live={true} />
+            <MetricCard label="Stack Burn / mo" value="~$225" subtext="infra cost estimate" accent="#e05d5d" live={false} />
           </div>
 
           {/* All Products */}
-          <SectionCard title="All Products">
+          <SectionCard
+            title="All Products"
+            status="partial"
+            statusNote="MRR/agent/queue counts are placeholders — fire buttons trigger real agents"
+          >
             <div
               className="grid gap-3"
               style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}
@@ -134,7 +138,7 @@ export default function OverviewPage() {
             style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)" }}
           >
             {/* Agent Activity Feed */}
-            <SectionCard title="Agent Activity">
+            <SectionCard title="Agent Activity" status="live" statusNote="agent_events, realtime">
               {loading ? (
                 <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                   Loading events…
@@ -149,14 +153,14 @@ export default function OverviewPage() {
             </SectionCard>
 
             {/* HITL Approval Queue */}
-            <SectionCard title="HITL Approval Queue">
+            <SectionCard title="HITL Approval Queue" status="live" statusNote="hitl_queue, realtime">
               <HITLQueuePanel onCountChange={setHitlCount} />
               {/* TODO: batch-approve UX for 3+ similar items */}
             </SectionCard>
           </div>
 
           {/* Team Ops */}
-          <SectionCard title="Team Ops">
+          <SectionCard title="Team Ops" status="not_built" statusNote="static mock roster">
             <div
               className="grid gap-3"
               style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}

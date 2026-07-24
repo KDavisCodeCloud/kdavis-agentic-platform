@@ -51,7 +51,12 @@ export default async function AdvisoryPage() {
               ).slice(0, 3);
 
               return (
-                <SectionCard key={advisor.role} title="">
+                <SectionCard
+                  key={advisor.role}
+                  title=""
+                  status="partial"
+                  statusNote="thread history is live (advisory_threads) — memory summary is a static blurb, Brief button not wired"
+                >
                   <div className="mb-3">
                     <p className="text-[15px] font-bold mb-0.5" style={{ color: advisor.accent }}>
                       {advisor.name}

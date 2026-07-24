@@ -50,14 +50,14 @@ export default async function FinancePage() {
         <div className="space-y-5">
           {/* Metric cards */}
           <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
-            <MetricCard label="Total MRR"     value="$0"   subtext="all products"       accent="#5eead4" />
-            <MetricCard label="MoM Growth"    value="—"    subtext="no prior month"     accent="#6fce8f" />
-            <MetricCard label="Runway"        value="—"    subtext="months remaining"   accent="#7ea6f5" />
-            <MetricCard label="Stack Burn/mo" value={`$${totalBurn.toFixed(0)}`} subtext="active services" accent="#e05d5d" />
+            <MetricCard label="Total MRR"     value="$0"   subtext="all products"       accent="#5eead4" live={false} />
+            <MetricCard label="MoM Growth"    value="—"    subtext="no prior month"     accent="#6fce8f" live={false} />
+            <MetricCard label="Runway"        value="—"    subtext="months remaining"   accent="#7ea6f5" live={false} />
+            <MetricCard label="Stack Burn/mo" value={`$${totalBurn.toFixed(0)}`} subtext="active services" accent="#e05d5d" live={true} />
           </div>
 
           {/* MRR Breakdown */}
-          <SectionCard title="MRR Breakdown">
+          <SectionCard title="MRR Breakdown" status="not_built" statusNote="static mock rows — no revenue_events wiring yet">
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
                 <thead>
@@ -97,7 +97,7 @@ export default async function FinancePage() {
           </SectionCard>
 
           {/* Operating Stack Cost */}
-          <SectionCard title="Operating Stack Cost">
+          <SectionCard title="Operating Stack Cost" status="live" statusNote="operating_stack table">
             {stackItems.length === 0 ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                 No stack items seeded yet. Run the CEO schema migration and seed the operating_stack table.
@@ -142,6 +142,8 @@ export default async function FinancePage() {
           {/* Exit Gate Tracker */}
           <SectionCard
             title="Exit Gate Tracker — CorVel Acquisition"
+            status="not_built"
+            statusNote="static mock — no MRR-tracking wiring yet"
             style={{
               background: "radial-gradient(circle at 15% 15%, #6fce8f22, #10201a 70%)",
               border: "1px solid #1f3d2e",
@@ -162,7 +164,7 @@ export default async function FinancePage() {
           </SectionCard>
 
           {/* Finance Agent Roster */}
-          <SectionCard title="Finance Agents">
+          <SectionCard title="Finance Agents" status="not_built" statusNote="agent code exists but has never run — static roster, not internal_agent_runs">
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
               {FINANCE_AGENTS.map((a) => (
                 <AgentRosterCard key={a.name} {...a} />

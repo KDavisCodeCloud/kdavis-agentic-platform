@@ -5,14 +5,14 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { FireButton } from "@/components/ui/FireButton";
 import type { SessionLogEntry, GapItem } from "@/lib/types";
 
-// Known issue: api/routes/agents.py only recognizes agent_01-10 prefixes
-// (e.g. "agent_01_cicd_triage"). These short IDs will 400 against today's
-// backend — built to spec anyway, per Session 15 instructions.
+// Fixed 2026-07-24: these were the short form ("cicd_triage") which 400s
+// against api/routes/agents.py — it only recognizes the full agent_0N_*
+// prefixed IDs (confirmed against that file's actual id checks/registry).
 const OPS_AGENTS = [
-  { agentId: "cicd_triage",     label: "CI/CD Triage" },
-  { agentId: "k8s_alert",       label: "K8s Alert Scan" },
-  { agentId: "pr_review",       label: "PR Review" },
-  { agentId: "drift_detection", label: "Drift Detection" },
+  { agentId: "agent_01_cicd_triage",     label: "CI/CD Triage" },
+  { agentId: "agent_02_k8s_alert",       label: "K8s Alert Scan" },
+  { agentId: "agent_03_pr_review",       label: "PR Review" },
+  { agentId: "agent_08_drift_detection", label: "Drift Detection" },
 ];
 
 const BUILD_ORDER_ITEMS = [
@@ -69,7 +69,11 @@ export default async function OpsPage() {
       <div className="flex-1 overflow-y-auto p-6 min-w-0">
         <div className="space-y-5">
           {/* Agent Triggers */}
-          <SectionCard title="Agent Triggers">
+          <SectionCard
+            title="Agent Triggers"
+            status="not_built"
+            statusNote="fixed wrong agent IDs, but these still can't fire — /agents/{id}/run requires an X-Workspace-Token (customer auth), this dashboard only sends a Supabase session token. Architecture mismatch, not a quick fix."
+          >
             <div className="flex flex-wrap gap-2">
               {OPS_AGENTS.map((a) => (
                 <FireButton key={a.agentId} agentId={a.agentId} label={a.label} payload={{}} />
@@ -78,7 +82,7 @@ export default async function OpsPage() {
           </SectionCard>
 
           {/* Build Order tracker */}
-          <SectionCard title="Build Order">
+          <SectionCard title="Build Order" status="not_built" statusNote="static snapshot — doesn't auto-update as gap_tracker changes">
             <div className="space-y-0">
               {BUILD_ORDER_ITEMS.map((item, i) => (
                 <div
@@ -107,7 +111,7 @@ export default async function OpsPage() {
           </SectionCard>
 
           {/* Weekly Rhythm */}
-          <SectionCard title="Weekly Rhythm">
+          <SectionCard title="Weekly Rhythm" status="not_built" statusNote="static schedule template, not derived from session_log">
             <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(7, 1fr)" }}>
               {WEEKLY_RHYTHM.map((day) => (
                 <div
@@ -136,7 +140,7 @@ export default async function OpsPage() {
           </SectionCard>
 
           {/* GAP Tracker */}
-          <SectionCard title="GAP Tracker">
+          <SectionCard title="GAP Tracker" status="live" statusNote="gap_tracker table">
             {gapItems.length === 0 ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                 No gaps tracked yet. Seed the gap_tracker table from the migration.
@@ -163,7 +167,7 @@ export default async function OpsPage() {
           </SectionCard>
 
           {/* Session Log (append-only) */}
-          <SectionCard title="Session Log">
+          <SectionCard title="Session Log" status="live" statusNote="session_log table">
             {sessions.length === 0 ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                 No sessions logged yet.

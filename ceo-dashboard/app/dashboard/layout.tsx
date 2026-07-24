@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { IconRail } from "@/components/shell/IconRail";
 import { Sidebar } from "@/components/shell/Sidebar";
-import type { Role } from "@/lib/types";
+import { OWNER_EMAIL, resolveRole } from "@/lib/role";
 
 export default async function DashboardLayout({
   children,
@@ -14,8 +14,7 @@ export default async function DashboardLayout({
 
   if (!user) redirect("/login");
 
-  const OWNER_EMAIL = "kdav2k5@gmail.com";
-  const role = (user.email === OWNER_EMAIL ? "admin" : (user.user_metadata?.role ?? "rnd")) as Role;
+  const role = resolveRole(user.email, user.user_metadata?.role);
   const initials = user.email === OWNER_EMAIL
     ? "KD"
     : user.user_metadata?.name

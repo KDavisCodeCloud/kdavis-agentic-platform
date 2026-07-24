@@ -78,12 +78,16 @@ export default async function TechPage() {
               checks against live data. Distinct from "Infrastructure Health"
               below, which is a static services list, and "Agent Health",
               which covers the commercial agent_01-10 system only. */}
-          <SectionCard title="System Health">
+          <SectionCard title="System Health" status="live" statusNote="internal_agent_runs + on-demand checks">
             <SystemHealthPanel />
           </SectionCard>
 
           {/* Infrastructure Health */}
-          <SectionCard title="Infrastructure Health">
+          <SectionCard
+            title="Infrastructure Health"
+            status="not_built"
+            statusNote="always shows healthy — no real uptime check, hardcoded"
+          >
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
               {INFRA.map((svc) => (
                 <div
@@ -105,7 +109,11 @@ export default async function TechPage() {
           </SectionCard>
 
           {/* Agent Health */}
-          <SectionCard title="Agent Health">
+          <SectionCard
+            title="Agent Health"
+            status="partial"
+            statusNote="agent_runs data is real — the Re-run button can't fire yet (/agents/{id}/run needs an X-Workspace-Token, this dashboard only has a Supabase session token)"
+          >
             {agentHealth.length === 0 ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                 No agent runs recorded yet.
@@ -153,7 +161,7 @@ export default async function TechPage() {
           </SectionCard>
 
           {/* Build Queue */}
-          <SectionCard title="Build Queue">
+          <SectionCard title="Build Queue" status="live" statusNote="build_queue table">
             {queue.length === 0 ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                 No items in the build queue. Add items via the Operations department.
@@ -182,7 +190,7 @@ export default async function TechPage() {
           </SectionCard>
 
           {/* Cost Optimizer */}
-          <SectionCard title="Cost Optimizer">
+          <SectionCard title="Cost Optimizer" status="not_built" statusNote="hardcoded message — no real cost analysis wired yet">
             <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
               No cost flags detected. All active services within expected ranges.
             </p>

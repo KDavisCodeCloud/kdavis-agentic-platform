@@ -39,7 +39,7 @@ export default async function LegalPage() {
 
         <div className="space-y-5">
           {/* Document Vault */}
-          <SectionCard title="Document Vault">
+          <SectionCard title="Document Vault" status="live" statusNote="legal_documents table">
             {documents.length === 0 ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                 No documents yet. Add legal documents to the legal_documents table.
@@ -85,7 +85,7 @@ export default async function LegalPage() {
           </SectionCard>
 
           {/* Legal Agent Roster */}
-          <SectionCard title="Legal Agents">
+          <SectionCard title="Legal Agents" status="not_built" statusNote="no legal agents exist yet">
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
               {LEGAL_AGENTS.map((a) => (
                 <AgentRosterCard key={a.name} {...a} />
@@ -94,7 +94,7 @@ export default async function LegalPage() {
           </SectionCard>
 
           {/* Legal Q&A */}
-          <SectionCard title="Legal Q&A (AI-Assisted)">
+          <SectionCard title="Legal Q&A (AI-Assisted)" status="not_built" statusNote="hardcoded example response — no live query route wired yet">
             <div
               className="rounded-[8px] p-3.5 mb-3"
               style={{ backgroundColor: "#10151b", border: "1px solid #1c222b" }}

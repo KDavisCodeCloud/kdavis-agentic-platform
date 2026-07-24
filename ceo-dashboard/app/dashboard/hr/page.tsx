@@ -36,7 +36,7 @@ export default async function HrPage() {
       <div className="flex-1 overflow-y-auto p-6 min-w-0">
         <div className="space-y-5">
           {/* Team Roster */}
-          <SectionCard title="Team Roster">
+          <SectionCard title="Team Roster" status="live" statusNote="team_members table">
             {team.length === 0 ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
                 No team members seeded yet. Run the CEO schema migration and insert team_members rows.
@@ -84,7 +84,7 @@ export default async function HrPage() {
           </SectionCard>
 
           {/* Onboarding Flow */}
-          <SectionCard title="Onboarding Flow">
+          <SectionCard title="Onboarding Flow" status="not_built" statusNote="static checklist — no onboarding_steps table exists yet">
             {ONBOARDING_STEPS.map((step, i) => (
               <div
                 key={i}
@@ -103,7 +103,7 @@ export default async function HrPage() {
           </SectionCard>
 
           {/* HITL Routing Rules */}
-          <SectionCard title="HITL Routing Rules">
+          <SectionCard title="HITL Routing Rules" status="not_built" statusNote="static list — hitl_routing_rules table exists but is empty, not queried here">
             {ROUTING_RULES.map((rule, i) => (
               <div
                 key={i}
@@ -121,7 +121,7 @@ export default async function HrPage() {
           </SectionCard>
 
           {/* Approval Chain */}
-          <SectionCard title="Approval Chain">
+          <SectionCard title="Approval Chain" status="not_built" statusNote="static org diagram, not derived from team_members' real roles">
             <div className="flex flex-col items-center gap-3 py-2">
               <div className="rounded-[8px] px-4 py-2 text-center" style={{ backgroundColor: "#5eead41a", border: "1px solid #5eead4" }}>
                 <p className="text-[13px] font-bold" style={{ color: "#5eead4" }}>Kelvin</p>

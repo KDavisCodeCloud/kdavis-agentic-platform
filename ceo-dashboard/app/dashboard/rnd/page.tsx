@@ -68,7 +68,7 @@ export default function RndPage() {
       <div className="flex-1 overflow-y-auto p-6 min-w-0">
         <div className="space-y-5">
           {/* Opportunity Pipeline */}
-          <SectionCard title="Opportunity Pipeline">
+          <SectionCard title="Opportunity Pipeline" status="live" statusNote="opportunity_pipeline table">
             {loading ? (
               <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>Loading pipeline…</p>
             ) : opportunities.length === 0 ? (
@@ -105,7 +105,7 @@ export default function RndPage() {
           </SectionCard>
 
           {/* MSE Agent Swarm */}
-          <SectionCard title="MSE Agent Swarm">
+          <SectionCard title="MSE Agent Swarm" status="partial" statusNote="Dispatch/Verdict are real and run — roster itself is a static list, not live run status">
             <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
               {MSE_AGENTS.map((a) => (
                 <AgentRosterCard key={a.name} {...a} />
@@ -114,7 +114,7 @@ export default function RndPage() {
           </SectionCard>
 
           {/* Build Pipeline */}
-          <SectionCard title="Build Pipeline">
+          <SectionCard title="Build Pipeline" status="not_built" statusNote="static mock — Day 0/29 never updates">
             {BUILD_PIPELINE.map((p) => (
               <div
                 key={p.product}
