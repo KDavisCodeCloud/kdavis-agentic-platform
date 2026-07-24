@@ -75,6 +75,7 @@ a shared reusable asset like the vault's other photos).
 
 import json
 import logging
+import re
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -298,6 +299,9 @@ def _compute_schedule(batch_month: str, count: int) -> list[datetime]:
     ]
 
 
+_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$")
+
+
 def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: dict) -> dict:
     pillar_name = PILLAR_NAMES.get(pillar_key, pillar_key)
     user_prompt = (
@@ -308,13 +312,26 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
     )
     response = client.messages.create(
         model=MODEL,
-        max_tokens=1500,
+        # 1500 was too small once image_description's full spatial-diagram
+        # prompt requirement was added 2026-07-23 -- confirmed by a real
+        # call getting cut off mid-generation (found running the first
+        # live batch). 4000 covers post_copy + hook_variants +
+        # image_description with headroom.
+        max_tokens=4000,
         system=VOICE_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
     )
     raw_text = response.content[0].text if hasattr(response, "content") else str(response)
+    # Claude wraps JSON in a ```json ... ``` fence despite "Respond with
+    # ONLY a JSON object" -- same real-world quirk image_indexer.py's
+    # _tag_image already strips. Without this, json.loads has *never*
+    # actually succeeded on a real response (confirmed 2026-07-23/24: every
+    # post in the first live batch hit the fallback below). strict=False
+    # additionally tolerates literal unescaped newlines inside string
+    # values, which Claude also emits despite valid JSON requiring \n.
+    cleaned_text = _JSON_FENCE_RE.sub("", raw_text.strip()).strip()
     try:
-        parsed = json.loads(raw_text)
+        parsed = json.loads(cleaned_text, strict=False)
     except (json.JSONDecodeError, TypeError):
         log.warning("MKT-LI1: non-JSON model response for pillar=%s, using raw text fallback", pillar_key)
         parsed = {

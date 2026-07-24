@@ -1,0 +1,24 @@
+{
+  "research_report": {
+    "content_angles": [
+      { "angle": "Terraform, Bicep, and ARM all claim to be 'the' way to do IaC on Azure -- most teams pick one without ever seeing the tradeoffs side by side" },
+      { "angle": "The Kubernetes certification path is confusing because every role needs a different sequence -- KCNA, CKA, CKS, KCAD all solve different problems" },
+      { "angle": "A CI/CD pipeline with GitHub Actions looks simple until you have to show the failure paths, not just the happy path" },
+      { "angle": "Most 'multi-agent' marketing systems are one big prompt -- a real dispatch/verdict swarm needs a hard MRR floor or it never stops shipping bad ideas" },
+      { "angle": "HITL gates get built as an afterthought, then teams wonder why nobody trusts the automation -- the gate has to be the loudest part of the diagram, not the smallest" },
+      { "angle": "RAG pipelines get pitched as 'just add a vector database' -- the actual system is a context injection pipeline with a real retrieval step" }
+    ]
+  },
+  "idea_reservoir": [
+    { "type": "journey", "text": "Comparing Azure services to their AWS equivalents is the fastest way to onboard someone who already knows one cloud but not the other" },
+    { "type": "journey", "text": "Multi-agent swarm governance only works if the human-in-the-loop gate can actually reject a proposal, not just rubber-stamp it" },
+    { "type": "repurposed", "text": "Layering an agentic system (infra, data, compute, model, agent execution, UI) the same way you'd layer any distributed system makes the design decisions obvious" }
+  ],
+  "kelvin_voice_profile": {
+    "tone": "Direct, grounded, practitioner first-person. No motivational poster energy.",
+    "recent_focus": "Multi-cloud IaC, agentic pipelines with HITL gates, building in public while employed full-time"
+  },
+  "build_updates": [
+    { "text": "Shipped the Gemini image-gen pipeline this week -- every LinkedIn post now gets its own custom technical diagram instead of a stock photo, and it's wired straight into the HITL review queue" }
+  ]
+}

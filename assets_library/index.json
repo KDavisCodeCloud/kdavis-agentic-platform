@@ -1,1 +1,186 @@
-[]
+[
+  {
+    "id": "img_001",
+    "filename": "my_originals/cloud-and-ai-execution/ci-cd-failure-paths-why-the-happy-path-is-a-lie-and-what-to-actually-diagram_20260723.png",
+    "category": "Cloud / DevOps",
+    "topic_tags": [
+      "CI/CD",
+      "Terraform",
+      "failure handling",
+      "pipeline design"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "CI/CD pipeline best practices",
+      "Terraform state management",
+      "DevOps failure recovery",
+      "HITL approval gates in pipelines",
+      "observability in deployment workflows"
+    ]
+  },
+  {
+    "id": "img_002",
+    "filename": "my_originals/cloud-and-ai-execution/why-most-multi-agent-marketing-systems-are-one-fat-prompt-and-what-a-real-dispatch-verdict-swarm-actually-requires_20260723.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "swarm architecture",
+      "multi-agent systems",
+      "HITL",
+      "agent orchestration"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "multi-agent AI design patterns",
+      "human-in-the-loop AI systems",
+      "AI quality control mechanisms",
+      "dispatcher agent architectures",
+      "agentic workflow orchestration"
+    ]
+  },
+  {
+    "id": "img_003",
+    "filename": "my_originals/the-builder-s-journey/shipping-the-gemini-image-gen-pipeline-replacing-stock-photos-with-auto-generated-technical-diagrams-inside-the-hitl-review-queue_20260723.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "Gemini",
+      "image-generation",
+      "HITL",
+      "content-pipeline"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "AI content automation",
+      "Human-in-the-loop workflows",
+      "Gemini image generation",
+      "AI-assisted content creation",
+      "Automated post approval pipelines"
+    ]
+  },
+  {
+    "id": "img_004",
+    "filename": "my_originals/cloud-and-ai-execution/hitl-gates-as-a-design-first-constraint-not-a-retrofit_20260723.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "HITL",
+      "Human-in-the-Loop",
+      "AI Agent Design",
+      "Agentic Workflows"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Human oversight in AI systems",
+      "Designing safe AI agents",
+      "HITL best practices",
+      "Agentic pipeline architecture",
+      "AI governance and control"
+    ]
+  },
+  {
+    "id": "img_005",
+    "filename": "my_originals/cloud-and-ai-execution/rag-pipelines-are-context-injection-systems-not-just-vector-databases_20260723.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "RAG",
+      "retrieval pipeline",
+      "vector database",
+      "LLM"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "RAG architecture best practices",
+      "why vector databases are not enough for RAG",
+      "reranking in retrieval pipelines",
+      "common RAG failure modes",
+      "building production-grade RAG systems"
+    ]
+  },
+  {
+    "id": "img_006",
+    "filename": "my_originals/philosophy-faith-and-gardening/layered-systems-thinking-as-a-natural-philosophy-how-distributed-system-design-mirrors-how-living-things-are-built_20260723.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "AI architecture",
+      "agent stack",
+      "infrastructure layers",
+      "build order"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "How to build an AI agent stack",
+      "Why build order matters in AI systems",
+      "Layers of an AI application architecture",
+      "Infrastructure choices for AI agents",
+      "Scaling AI systems from data to UI"
+    ]
+  },
+  {
+    "id": "img_007",
+    "filename": "my_originals/the-builder-s-journey/azure-to-aws-mental-model-translation-as-an-onboarding-accelerator_20260723.png",
+    "category": "Cloud / DevOps",
+    "topic_tags": [
+      "AWS",
+      "Azure",
+      "Cloud Migration",
+      "Cloud Equivalents"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "AWS to Azure migration guide",
+      "Multi-cloud strategy",
+      "Cloud platform comparison",
+      "Cloud architecture decisions",
+      "DevOps tooling across providers"
+    ]
+  },
+  {
+    "id": "img_008",
+    "filename": "my_originals/the-builder-s-journey/hitl-gates-that-can-actually-say-no-the-governance-reality-behind-multi-agent-swarms_20260723.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "HITL",
+      "human-in-the-loop",
+      "AI governance",
+      "agentic workflows"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Human-in-the-loop design patterns",
+      "AI agent governance",
+      "Rejection handling in agentic systems",
+      "Responsible AI workflows",
+      "Orchestrator agent architecture"
+    ]
+  }
+]

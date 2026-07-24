@@ -23,7 +23,12 @@ def _mock_client_returning(row: dict) -> MagicMock:
 
 
 class TestAppend:
-    def test_append_writes_scoped_row(self):
+    def test_append_writes_real_schema_columns_not_actor_or_resource(self):
+        # Real table (information_schema.columns, checked 2026-07-23): id,
+        # agent_id, action, outcome, product_id (uuid), tenant_id (uuid),
+        # metadata (jsonb), created_at. No "actor" or "resource" column —
+        # the old shape here silently never wrote a single real row
+        # (PGRST204 "column not found"), only ever exercised via mocks.
         client = _mock_client_returning({"id": "audit-1"})
         log = AuditLog(client=client)
 
@@ -32,21 +37,61 @@ class TestAppend:
             action="scrape_completed",
             resource="lead:123",
             outcome="success",
-            product_id="product-1",
-            tenant_id="tenant-1",
+            product_id="11111111-1111-1111-1111-111111111111",
+            tenant_id="22222222-2222-2222-2222-222222222222",
         )
 
         client.table.assert_called_once_with(TABLE_NAME)
         inserted_row = client.table.return_value.insert.call_args[0][0]
         assert inserted_row == {
-            "actor": "agent_research",
+            "agent_id": "agent_research",
             "action": "scrape_completed",
-            "resource": "lead:123",
             "outcome": "success",
-            "product_id": "product-1",
-            "tenant_id": "tenant-1",
+            "product_id": "11111111-1111-1111-1111-111111111111",
+            "tenant_id": "22222222-2222-2222-2222-222222222222",
+            "metadata": {"resource": "lead:123"},
         }
         assert result == {"id": "audit-1"}
+
+    def test_non_uuid_product_and_tenant_id_fall_back_to_metadata(self):
+        # agents/marketing/_shared.py passes literal "marketing"/"internal"
+        # strings — not valid UUIDs, and product_id/tenant_id are uuid-typed
+        # columns. Must degrade to metadata, never raise and never attempt
+        # a doomed Postgres type cast.
+        client = _mock_client_returning({"id": "audit-1"})
+        log = AuditLog(client=client)
+
+        log.append(
+            actor="mkt-li1",
+            action="monthly_batch_generated",
+            resource="12 posts",
+            outcome="success",
+            product_id="marketing",
+            tenant_id="internal",
+        )
+
+        inserted_row = client.table.return_value.insert.call_args[0][0]
+        assert inserted_row["product_id"] is None
+        assert inserted_row["tenant_id"] is None
+        assert inserted_row["metadata"] == {
+            "resource": "12 posts",
+            "product_id": "marketing",
+            "tenant_id": "internal",
+        }
+
+    def test_valid_uuid_product_id_with_non_uuid_tenant_id_mixed(self):
+        client = _mock_client_returning({"id": "audit-1"})
+        log = AuditLog(client=client)
+
+        log.append(
+            actor="agent_x", action="run", resource="r", outcome="success",
+            product_id="11111111-1111-1111-1111-111111111111", tenant_id="internal",
+        )
+
+        inserted_row = client.table.return_value.insert.call_args[0][0]
+        assert inserted_row["product_id"] == "11111111-1111-1111-1111-111111111111"
+        assert inserted_row["tenant_id"] is None
+        assert inserted_row["metadata"] == {"resource": "r", "tenant_id": "internal"}
 
     def test_missing_product_id_raises_before_write(self):
         client = _mock_client_returning({"id": "audit-1"})
