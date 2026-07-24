@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { fetchAssetBlobUrl } from "@/lib/api";
 
 interface AssetThumbnailProps {
@@ -10,13 +9,12 @@ interface AssetThumbnailProps {
   alt: string;
 }
 
-// Renders one assets_library/ image authenticated — GET /internal/marketing/
-// assets/{path} requires a Bearer token (get_internal_user, same gate as
-// every other internal-marketing route), which a plain <img src="..."> can't
-// send. Fetches the bytes once, renders as a blob URL, and revokes it on
-// unmount/path change so object URLs don't leak across re-renders.
+// Renders one assets_library/my_originals/ image via app/api/asset/[...path]/
+// route.ts (this app's own route handler, cookie-session auth is
+// automatic — no Bearer token needed, unlike the old FastAPI-backed
+// version). Fetches the bytes once, renders as a blob URL, and revokes
+// it on unmount/path change so object URLs don't leak across re-renders.
 export function AssetThumbnail({ imagePath, alt }: AssetThumbnailProps) {
-  const supabase = createClient();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -26,12 +24,8 @@ export function AssetThumbnail({ imagePath, alt }: AssetThumbnailProps) {
 
     async function load() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const authToken = session?.access_token;
-        if (!authToken) throw new Error("Not signed in");
-
         const relativePath = imagePath.replace(/^assets_library\//, "");
-        const url = await fetchAssetBlobUrl(authToken, relativePath);
+        const url = await fetchAssetBlobUrl(relativePath);
         if (cancelled) {
           URL.revokeObjectURL(url);
           return;
@@ -48,7 +42,6 @@ export function AssetThumbnail({ imagePath, alt }: AssetThumbnailProps) {
       cancelled = true;
       if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imagePath]);
 
   if (error) {

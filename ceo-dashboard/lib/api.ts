@@ -154,15 +154,16 @@ export async function updateLinkedInQueueRow(
   }
 }
 
-// Fetches one assets_library/ file authenticated and returns an object
-// URL for use as an <img src>. Caller owns the returned URL and must
-// revoke it (URL.revokeObjectURL) when done — see AssetThumbnail.tsx.
-// assetPath is image_brief.image_path with the "assets_library/" prefix
-// already stripped (e.g. "my_originals/foo.png").
-export async function fetchAssetBlobUrl(authToken: string, assetPath: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/api/v1/internal/marketing/assets/${assetPath}`, {
-    headers: { Authorization: `Bearer ${authToken}` },
-  });
+// Fetches one assets_library/my_originals/ file and returns an object URL
+// for use as an <img src>. Caller owns the returned URL and must revoke
+// it (URL.revokeObjectURL) when done — see AssetThumbnail.tsx. assetPath
+// is image_brief.image_path with the "assets_library/" prefix already
+// stripped (e.g. "my_originals/foo.png"). Served by app/api/asset/[...path]/
+// route.ts directly in this app (see next.config.ts's outputFileTracingIncludes)
+// — not the FastAPI backend, which has never been deployed anywhere
+// publicly reachable.
+export async function fetchAssetBlobUrl(assetPath: string): Promise<string> {
+  const res = await fetch(`/api/asset/${assetPath}`);
   if (!res.ok) throw new Error(`Fetching asset failed: ${res.status}`);
   const blob = await res.blob();
   return URL.createObjectURL(blob);
