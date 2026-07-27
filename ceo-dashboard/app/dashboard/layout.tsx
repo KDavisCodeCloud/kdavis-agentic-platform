@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { IconRail } from "@/components/shell/IconRail";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { MobileNav } from "@/components/shell/MobileNav";
 import { OWNER_EMAIL, resolveRole } from "@/lib/role";
 
 export default async function DashboardLayout({
@@ -22,15 +23,19 @@ export default async function DashboardLayout({
       : user.email?.[0]?.toUpperCase() ?? "?";
 
   return (
-    <div className="flex h-screen overflow-hidden bg-base">
-      {/* Icon rail — 60px */}
-      <IconRail role={role} />
+    <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-base">
+      {/* Desktop shell — icon rail (60px) + labeled sidebar (196px). Hidden
+          below md; MobileNav below replaces both with a hamburger + drawer. */}
+      <div className="hidden md:flex">
+        <IconRail role={role} />
+        <Sidebar role={role} />
+      </div>
 
-      {/* Labeled sidebar — 196px */}
-      <Sidebar role={role} />
+      {/* Mobile shell — hamburger top bar + slide-out drawer, hidden at md+ */}
+      <MobileNav role={role} />
 
       {/* Main content — flex */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden min-w-0">
+      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {children}
       </main>
     </div>

@@ -123,8 +123,8 @@ export function LinkedInBatchReview() {
             type="month"
             value={batchMonth}
             onChange={(e) => setBatchMonth(e.target.value)}
-            className="text-[11px] font-mono px-2 py-1 rounded-[6px]"
-            style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#eef2f5" }}
+            className="font-mono px-2 py-1 rounded-[6px]"
+            style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#eef2f5", minHeight: 44, fontSize: 16 }}
           />
           <span className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
             {posts.length} posts · {pendingCount} awaiting review · {approvedCount} approved · {rejectedCount} rejected · {publishedCount} published
@@ -139,6 +139,7 @@ export function LinkedInBatchReview() {
             color: pendingCount === 0 ? "#3a4250" : "#5eead4",
             backgroundColor: "transparent",
             opacity: approving ? 0.6 : 1,
+            minHeight: 44,
           }}
           title="Approves every post still awaiting review in this batch_month. Posts already approved or rejected individually are left as-is — this is not all-or-nothing."
         >
@@ -226,7 +227,7 @@ export function LinkedInBatchReview() {
                   <button
                     onClick={() => setExpandedId(expandedId === post.id ? null : post.id)}
                     className="px-3 py-1.5 rounded-[6px] text-[11px] font-mono font-semibold transition-colors"
-                    style={{ border: "1px solid #8b96a3", color: "#c7cfd6", backgroundColor: expandedId === post.id ? "#8b96a31a" : "transparent" }}
+                    style={{ border: "1px solid #8b96a3", color: "#c7cfd6", backgroundColor: expandedId === post.id ? "#8b96a31a" : "transparent", minHeight: 44 }}
                   >
                     {expandedId === post.id ? "Collapse" : "Review"}
                   </button>
@@ -238,7 +239,7 @@ export function LinkedInBatchReview() {
                       onClick={() => review(post.id, "approved")}
                       disabled={post.status === "approved"}
                       className="px-3 py-1.5 rounded-[6px] text-[11px] font-mono font-semibold transition-colors"
-                      style={{ border: "1px solid #5eead4", color: post.status === "approved" ? "#3a4250" : "#5eead4", backgroundColor: "transparent" }}
+                      style={{ border: "1px solid #5eead4", color: post.status === "approved" ? "#3a4250" : "#5eead4", backgroundColor: "transparent", minHeight: 44 }}
                     >
                       Approve
                     </button>
@@ -246,16 +247,21 @@ export function LinkedInBatchReview() {
                       onClick={() => review(post.id, "rejected")}
                       disabled={post.status === "rejected"}
                       className="px-3 py-1.5 rounded-[6px] text-[11px] font-mono font-semibold transition-colors"
-                      style={{ border: "1px solid #3a4250", color: post.status === "rejected" ? "#3a4250" : "#8b96a3", backgroundColor: "transparent" }}
+                      style={{ border: "1px solid #3a4250", color: post.status === "rejected" ? "#3a4250" : "#8b96a3", backgroundColor: "transparent", minHeight: 44 }}
                     >
                       Reject
                     </button>
+                    {/* onChange, not onBlur -- a native mobile datetime picker's
+                        "Done"/confirm action doesn't reliably fire blur the way
+                        a desktop click-away does, so a reschedule picked on
+                        mobile could silently never save. onChange fires the
+                        moment a value is actually committed, on any device. */}
                     <input
                       type="datetime-local"
                       defaultValue={post.scheduled_for ? post.scheduled_for.slice(0, 16) : ""}
-                      onBlur={(e) => reschedule(post.id, e.target.value)}
-                      className="text-[10.5px] font-mono px-2 py-1 rounded-[6px]"
-                      style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#aab4bd" }}
+                      onChange={(e) => reschedule(post.id, e.target.value)}
+                      className="font-mono px-2 py-1 rounded-[6px]"
+                      style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#aab4bd", minHeight: 44, fontSize: 16 }}
                       title="Reschedule this post"
                     />
                   </div>
@@ -269,14 +275,14 @@ export function LinkedInBatchReview() {
                       value={noteDrafts[post.id] ?? ""}
                       onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [post.id]: e.target.value }))}
                       onKeyDown={(e) => { if (e.key === "Enter") appendNote(post.id); }}
-                      className="flex-1 min-w-0 text-[11px] px-2.5 py-1.5 rounded-[6px]"
-                      style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#eef2f5" }}
+                      className="flex-1 min-w-0 px-2.5 py-1.5 rounded-[6px]"
+                      style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#eef2f5", minHeight: 44, fontSize: 16 }}
                     />
                     <button
                       onClick={() => appendNote(post.id)}
                       disabled={!noteDrafts[post.id]?.trim()}
                       className="px-3 py-1.5 rounded-[6px] text-[11px] font-mono font-semibold transition-colors shrink-0"
-                      style={{ border: "1px solid #7ea6f5", color: noteDrafts[post.id]?.trim() ? "#7ea6f5" : "#3a4250", backgroundColor: "transparent" }}
+                      style={{ border: "1px solid #7ea6f5", color: noteDrafts[post.id]?.trim() ? "#7ea6f5" : "#3a4250", backgroundColor: "transparent", minHeight: 44 }}
                     >
                       Append
                     </button>
