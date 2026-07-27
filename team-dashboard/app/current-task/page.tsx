@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { TeamShell } from "@/components/shell/TeamShell";
 import { TopBar } from "@/components/shell/TopBar";
+import { MobileTabBar } from "@/components/shell/MobileTabBar";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { MOCK_TASKS, MOCK_STEPS, MOCK_FILES, type FileRequirement } from "@/lib/types";
 
@@ -219,37 +220,5 @@ export default function CurrentTaskPage() {
 
       <MobileTabBar active="current" />
     </TeamShell>
-  );
-}
-
-function MobileTabBar({ active }: { active: "tasks" | "current" | "resources" }) {
-  const tabs = [
-    { label: "My Tasks",     href: "/tasks",        key: "tasks" },
-    { label: "Current Task", href: "/current-task", key: "current" },
-    { label: "Resources",    href: "/resources",    key: "resources" },
-  ];
-  return (
-    <nav
-      className="flex md:hidden shrink-0 fixed bottom-0 left-0 right-0 z-50"
-      style={{
-        height: "48px",
-        backgroundColor: "#0f1520",
-        borderTop: "1px solid #1c2535",
-      }}
-    >
-      {tabs.map((tab) => (
-        <Link
-          key={tab.key}
-          href={tab.href}
-          className="flex-1 flex items-center justify-center text-[11px] font-semibold"
-          style={{
-            color: active === tab.key ? "#5eead4" : "#5b6673",
-            borderTop: active === tab.key ? "2px solid #5eead4" : "2px solid transparent",
-          }}
-        >
-          {tab.label}
-        </Link>
-      ))}
-    </nav>
   );
 }
