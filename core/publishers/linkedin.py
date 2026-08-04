@@ -33,28 +33,84 @@ Reference: https://learn.microsoft.com/en-us/linkedin/marketing/community-manage
 """
 
 import logging
+from datetime import datetime, timezone
+
 import httpx
 
 log = logging.getLogger(__name__)
 
 _POSTS_URL = "https://api.linkedin.com/rest/posts"
 _IMAGES_URL = "https://api.linkedin.com/rest/images"
-_LI_VERSION = "202507"   # LinkedIn API version header (YYYYMM) — LinkedIn
-# deprecates versions ~12 months after release. Confirmed live 2026-07-21
-# against a real API call after 202501 started failing with 426
-# NONEXISTENT_VERSION ("Requested version 20250101 is not active"). Bump
-# this again if it starts failing the same way — LinkedIn does not appear
-# to offer a "latest" alias, so this needs occasional manual updates.
 _TEXT_LIMIT = 3000
 
+# LinkedIn's REST API version header is YYYYMM and has no "latest" alias
+# (confirmed with LinkedIn support docs and by hitting the API directly).
+# A hardcoded version string goes stale and silently kills every publish —
+# this is the second time it's happened: a version bumped 2026-07-21 used
+# "202507" (July *2025*, a year-old off-by-one-year mistake) and every
+# dispatch run failed with 426 NONEXISTENT_VERSION until caught live
+# 2026-08-04. Rather than hardcode another string that will go stale the
+# same way, _resolve_version() computes candidates from the real clock and
+# _request_with_version_fallback() below tries them in order, live, on
+# every cold start — confirmed live 2026-08-04 that the labeled *current*
+# month (202608) is not active yet but the prior 3 months all are, so this
+# always has real headroom. The working version is cached in-process so a
+# single dispatch run (multiple posts) only pays the retry cost once.
+_working_version: str | None = None
 
-def _headers(access_token: str) -> dict:
+
+def _candidate_versions() -> list[str]:
+    now = datetime.now(timezone.utc)
+    versions = []
+    for months_back in range(0, 5):  # current month first, then 4 months back
+        y, m = now.year, now.month - months_back
+        while m <= 0:
+            m += 12
+            y -= 1
+        versions.append(f"{y:04d}{m:02d}")
+    return versions
+
+
+def _headers(access_token: str, version: str) -> dict:
     return {
         "Authorization": f"Bearer {access_token}",
-        "LinkedIn-Version": _LI_VERSION,
+        "LinkedIn-Version": version,
         "Content-Type": "application/json",
         "X-Restli-Protocol-Version": "2.0.0",
     }
+
+
+async def _request_with_version_fallback(
+    client: httpx.AsyncClient, method: str, url: str, access_token: str, **kwargs,
+) -> httpx.Response:
+    """
+    Sends one request, retrying with progressively older LinkedIn-Version
+    values only when LinkedIn's own response says the version itself is
+    the problem (426 NONEXISTENT_VERSION) — any other error (auth, rate
+    limit, bad payload) is never retried here, it raises immediately via
+    raise_for_status() so it surfaces as a real PublishError, never masked
+    as a version issue.
+    """
+    global _working_version
+    candidates = [_working_version] + _candidate_versions() if _working_version else _candidate_versions()
+    send = client.get if method == "GET" else client.post
+
+    last_response: httpx.Response | None = None
+    for version in candidates:
+        response = await send(url, headers=_headers(access_token, version), **kwargs)
+        if response.status_code == 426 and "NONEXISTENT_VERSION" in response.text:
+            last_response = response
+            continue
+        _working_version = version
+        response.raise_for_status()
+        return response
+
+    # Every candidate was rejected as a nonexistent version -- raise the
+    # last real response so the error message shows LinkedIn's own text,
+    # not a generic "all retries failed."
+    assert last_response is not None
+    last_response.raise_for_status()
+    raise AssertionError("unreachable")  # raise_for_status() above always raises on a 426
 
 
 async def _create_post(access_token: str, payload: dict) -> dict:
@@ -64,8 +120,7 @@ async def _create_post(access_token: str, payload: dict) -> dict:
     whether payload["content"] is present.
     """
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(_POSTS_URL, json=payload, headers=_headers(access_token))
-        response.raise_for_status()
+        response = await _request_with_version_fallback(client, "POST", _POSTS_URL, access_token, json=payload)
 
     # LinkedIn returns the post URN in the X-RestLi-Id header, not the body.
     post_urn = response.headers.get("x-restli-id", "")
@@ -129,12 +184,9 @@ async def register_image_upload(access_token: str, author_urn: str) -> tuple[str
     payload = {"initializeUploadRequest": {"owner": author_urn}}
 
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            f"{_IMAGES_URL}?action=initializeUpload",
-            json=payload,
-            headers=_headers(access_token),
+        response = await _request_with_version_fallback(
+            client, "POST", f"{_IMAGES_URL}?action=initializeUpload", access_token, json=payload,
         )
-        response.raise_for_status()
 
     value = response.json()["value"]
     upload_url = value["uploadUrl"]
@@ -213,13 +265,10 @@ async def get_author_urn(access_token: str) -> str:
 
     Returns: "urn:li:person:{id}"
     """
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "LinkedIn-Version": _LI_VERSION,
-    }
     async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.get("https://api.linkedin.com/v2/userinfo", headers=headers)
-        response.raise_for_status()
+        response = await _request_with_version_fallback(
+            client, "GET", "https://api.linkedin.com/v2/userinfo", access_token,
+        )
 
     data = response.json()
     sub = data.get("sub", "")
