@@ -43,6 +43,7 @@ sys.path.insert(0, str(REPO_ROOT))
 load_dotenv(REPO_ROOT / ".env")
 
 from api.routes.internal_marketing import PublishError, publish_queue_row  # noqa: E402
+from core.db import register_jsonb_codec  # noqa: E402
 
 
 async def dispatch_due_posts(conn) -> dict:
@@ -79,6 +80,7 @@ async def dispatch_due_posts(conn) -> dict:
 async def main() -> None:
     database_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
     conn = await asyncpg.connect(database_url, statement_cache_size=0)
+    await register_jsonb_codec(conn)
     try:
         summary = await dispatch_due_posts(conn)
     finally:

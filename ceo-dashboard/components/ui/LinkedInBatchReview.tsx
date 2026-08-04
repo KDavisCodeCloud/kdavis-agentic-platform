@@ -115,6 +115,12 @@ export function LinkedInBatchReview() {
   const rejectedCount = posts.filter((p) => p.status === "rejected").length;
   const publishedCount = posts.filter((p) => p.status === "published").length;
 
+  // A decided post (approved/rejected/published) stays in `posts` for the
+  // counts above, but drops out of the reviewable list below the moment a
+  // decision is made -- the queue is for what still needs a decision, not
+  // a running history of every post ever drafted this month.
+  const reviewablePosts = posts.filter((p) => p.status === "pending_review");
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2 min-w-0">
@@ -157,9 +163,13 @@ export function LinkedInBatchReview() {
         <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
           No posts for {batchMonth} yet — run scripts/monthly_batch.sh to generate this month's batch.
         </p>
+      ) : reviewablePosts.length === 0 ? (
+        <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
+          All {posts.length} posts in this batch have been reviewed — {approvedCount} approved, {rejectedCount} rejected, {publishedCount} published.
+        </p>
       ) : (
         <div className="space-y-0">
-          {posts.map((post) => (
+          {reviewablePosts.map((post) => (
             <div key={post.id} className="py-3 min-w-0 flex gap-3" style={{ borderTop: "1px solid #1c222b" }}>
               {post.image_brief?.image_path && (
                 <AssetThumbnail imagePath={post.image_brief.image_path} alt={post.topic ?? "post image"} />

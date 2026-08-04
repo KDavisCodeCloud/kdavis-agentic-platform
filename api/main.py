@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncpg
+from core.db import register_jsonb_codec
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -93,6 +94,7 @@ async def lifespan(app: FastAPI):
         max_size=10,
         command_timeout=60,
         statement_cache_size=0,
+        init=register_jsonb_codec,
     )
     log.info("[API] Database pool created")
 

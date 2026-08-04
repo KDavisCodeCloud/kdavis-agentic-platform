@@ -16,16 +16,13 @@ name: Weekly Sweep
 # Standard Time (UTC-5). Adjust if the operating timezone changes or
 # during daylight saving time (UTC-5 CDT would need 10:00 UTC / "0 10 * * 1").
 #
-# Requires these repo secrets to actually query live data (none are set as
-# of this writing - see the audit for what's needed and why they aren't
-# set automatically):
-#   DATABASE_URL - same Postgres pooler connection string as local .env,
-#                   reachable from GitHub Actions runners since it's
-#                   Supabase's cloud endpoint, not this machine.
-# Without it, the quality sweep still runs (pure filesystem, no DB), but
-# gap_detector_agent and portfolio_monitor will fail with a clear
-# "DATABASE_URL not set" error (continue-on-error: true keeps the job
-# going; the final step below still fails the overall run so it's visible).
+# Requires the DATABASE_URL repo secret (same Postgres pooler connection
+# string as local .env and linkedin-dispatch.yml, reachable from GitHub
+# Actions runners since it's Supabase's cloud endpoint, not this machine).
+# The secret was added 2026-07-24, but this workflow never actually passed
+# it into the gap_detector_agent / portfolio_monitor steps' env -- confirmed
+# live 2026-08-03 via the run logs ("ERROR: DATABASE_URL not set" on both
+# steps every single week since). Fixed by adding env: below.
 
 on:
   schedule:
@@ -64,6 +61,8 @@ jobs:
       - name: Coverage gap scan — gap_detector_agent
         id: gaps
         continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python -m agents.internal.gap_detector_agent \
             --report-out weekly_gap_report.json
@@ -71,6 +70,8 @@ jobs:
       - name: Portfolio digest — portfolio_monitor
         id: portfolio
         continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python -m agents.internal.portfolio_monitor \
             --digest \

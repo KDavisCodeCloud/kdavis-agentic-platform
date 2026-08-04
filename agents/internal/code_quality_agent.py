@@ -525,6 +525,10 @@ if __name__ == "__main__":
                      f"- Non-blocking issues: {len(report.non_blocking)}\n\n"
                      f"<details><summary>Full report</summary>\n\n```\n{text_report}\n```\n\n</details>\n\n")
 
-    # Blocking issues fail the sweep — matches code-quality-gate.yml's PR
-    # semantics (non-blocking is informational, blocking must be addressed).
-    sys.exit(1 if report.blocking else 0)
+    # Blocking issues fail a PR-scoped run (--paths), matching
+    # code-quality-gate.yml's gate semantics. A --full-sweep run is the
+    # informational Monday digest (CLAUDE.md: "summary card ... top 5 tech
+    # debt items", never a gate) -- confirmed live 2026-08-03 that exiting 1
+    # here made weekly-sweep.yml's overall run permanently red, since a
+    # multi-month-old codebase always has *some* blocking finding somewhere.
+    sys.exit(1 if (report.blocking and not args.full_sweep) else 0)
