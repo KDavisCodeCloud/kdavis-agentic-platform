@@ -1,12 +1,16 @@
 name: Deploy
 
 # Main CI/CD pipeline: test -> build -> Fargate -> notify.
-# Trigger: push to main.
+# Trigger: push to master.
 # CLAUDE.md Phase 1, step 15.
+#
+# Never fired since this workflow was written: it triggered on `main`, but
+# this repo's actual default branch is `master` -- confirmed live 2026-08-04
+# via `gh repo view --json defaultBranchRef`. Fixed to match the real branch.
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read
