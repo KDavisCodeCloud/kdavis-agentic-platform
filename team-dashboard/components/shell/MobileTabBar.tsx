@@ -8,10 +8,11 @@ import Link from "next/link";
 // it at all -- a real dead end on mobile, with no way back to Tasks or
 // Current Task short of the browser back button. Extracted once, fixed
 // positioning applied consistently, and wired into all three pages.
-export function MobileTabBar({ active }: { active: "tasks" | "current" | "resources" }) {
+export function MobileTabBar({ active }: { active: "tasks" | "current" | "build-queue" | "resources" }) {
   const tabs = [
     { label: "My Tasks",     href: "/tasks",        key: "tasks" },
     { label: "Current Task", href: "/current-task", key: "current" },
+    { label: "Build Queue",  href: "/build-queue",  key: "build-queue" },
     { label: "Resources",    href: "/resources",    key: "resources" },
   ] as const;
 

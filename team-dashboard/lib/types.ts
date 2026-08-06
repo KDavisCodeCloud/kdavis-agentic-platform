@@ -94,5 +94,23 @@ export const MOCK_FILES: FileRequirement[] = [
 export const NAV_ITEMS = [
   { label: "My Tasks",      href: "/tasks" },
   { label: "Current Task",  href: "/current-task" },
+  { label: "Build Queue",   href: "/build-queue" },
   { label: "Resources",     href: "/resources" },
 ];
+
+// Deliberately curated for the team view — CLAUDE.md's Team Management
+// System keeps finance/revenue/agent-internals off team members' screens.
+// No MRR, no verdict confidence score, no human_review_comment (can
+// contain internal reasoning) — just enough to answer "what's queued,
+// what's shipped." Built server-side in app/build-queue/page.tsx from the
+// real opportunity_pipeline/mse_build_briefs tables via the service-role
+// client (team members' own session can't read those tables — RLS is
+// admin-only — so this curation happens before any data reaches the
+// client, not as a client-side filter).
+export type BuildQueueItem = {
+  id: string;
+  product_name: string;
+  vertical: string;
+  has_brief: boolean;
+  status: "queued" | "launched";
+};
