@@ -1,21 +1,78 @@
-import Link from "next/link";
 import { TeamShell } from "@/components/shell/TeamShell";
 import { TopBar } from "@/components/shell/TopBar";
 import { MobileTabBar } from "@/components/shell/MobileTabBar";
-import { StatusBadge } from "@/components/ui/StatusBadge";
-import { MOCK_TASKS } from "@/lib/types";
+import { ProductBuildCard } from "@/components/build/ProductBuildCard";
+import { createAdminClient } from "@/lib/supabase/admin";
+import type { BuildQueueItem, BuildTask } from "@/lib/types";
 
-export default function TasksPage() {
-  const tasks = MOCK_TASKS;
+// Same reasoning as build-queue/page.tsx: without this, Next.js prerenders
+// this at build time and it never reflects anything that happens after.
+export const dynamic = "force-dynamic";
+
+// "My Tasks" used to be a hardcoded MOCK_TASKS array (FreightAudit,
+// LeadSequencer -- products that were never real). Replaced with the real
+// build_tasks data: every currently-queued product that still has at
+// least one incomplete task, same checklist component as Build Queue
+// (mark complete + notes), just pre-expanded and filtered to what's
+// actually actionable right now rather than showing 100%-done products.
+async function getMyTasksData(): Promise<{ items: BuildQueueItem[]; tasksByOpportunity: Map<string, BuildTask[]> }> {
+  const supabase = createAdminClient();
+
+  const { data: opportunities } = await supabase
+    .from("opportunity_pipeline")
+    .select("id, solution_concept, vertical, status, human_review_status")
+    .in("status", ["READY_TO_BUILD", "building"])
+    .eq("human_review_status", "approved")
+    .order("created_at", { ascending: false });
+
+  const { data: briefs } = await supabase.from("mse_build_briefs").select("opportunity_id, product_name");
+  const briefNameByOpportunityId = new Map(
+    (briefs ?? []).filter((b) => b.opportunity_id).map((b) => [b.opportunity_id as string, b.product_name as string])
+  );
+
+  const rows = (opportunities ?? []) as { id: string; solution_concept: string; vertical: string }[];
+  const ids = rows.map((r) => r.id);
+
+  const tasksByOpportunity = new Map<string, BuildTask[]>();
+  if (ids.length > 0) {
+    const { data: tasks } = await supabase
+      .from("build_tasks")
+      .select("id, opportunity_id, task_type, title, description, sort_order, status, notes, completed_by, completed_at")
+      .in("opportunity_id", ids)
+      .order("sort_order", { ascending: true });
+    for (const t of (tasks ?? []) as BuildTask[]) {
+      const list = tasksByOpportunity.get(t.opportunity_id) ?? [];
+      list.push(t);
+      tasksByOpportunity.set(t.opportunity_id, list);
+    }
+  }
+
+  // Only products with at least one task still not done -- a fully
+  // completed product belongs on Build Queue's history, not "what's left."
+  const items = rows
+    .filter((r) => (tasksByOpportunity.get(r.id) ?? []).some((t) => t.status !== "completed"))
+    .map((r): BuildQueueItem => ({
+      id: r.id,
+      product_name: briefNameByOpportunityId.get(r.id) ?? r.solution_concept,
+      vertical: r.vertical,
+      has_brief: briefNameByOpportunityId.has(r.id),
+      status: "queued",
+    }));
+
+  return { items, tasksByOpportunity };
+}
+
+export default async function TasksPage() {
+  const { items, tasksByOpportunity } = await getMyTasksData();
 
   return (
     <TeamShell>
       <TopBar taskName="My Tasks" />
       <div className="flex-1 overflow-y-auto p-6 pb-20 md:pb-6 min-w-0">
-        {tasks.length === 0 ? (
+        {items.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-[12px] font-mono" style={{ color: "#5b6673" }}>
-              No tasks assigned yet
+              Nothing left to do — every queued build is fully checked off.
             </p>
           </div>
         ) : (
@@ -29,78 +86,18 @@ export default function TasksPage() {
               </p>
             </div>
 
-            {tasks.map((task, i) => {
-              const isActive = task.status === "in_progress";
-              const isDone = task.status === "completed" || task.status === "approved";
-
-              return (
-                <div
-                  key={task.id}
-                  className="flex items-center gap-3 px-5 py-3 min-w-0 flex-wrap"
-                  style={{
-                    borderTop: "1px solid #1c2535",
-                    borderLeft: isActive ? "3px solid #5eead4" : "3px solid transparent",
-                    opacity: isDone ? 0.5 : 1,
-                  }}
-                >
-                  {/* Product name */}
-                  <span
-                    className="text-[13px] font-semibold shrink-0 min-w-[100px]"
-                    style={{ color: isDone ? "#5b6673" : "#eef2f5" }}
-                  >
-                    {task.product_name}
-                  </span>
-
-                  {/* Task type badge */}
-                  <span
-                    className="text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0"
-                    style={{ backgroundColor: "#111825", color: "#8b96a3", border: "1px solid #1c2535" }}
-                  >
-                    {task.task_type}
-                  </span>
-
-                  {/* Status */}
-                  <StatusBadge status={task.status} pill />
-
-                  {/* Priority */}
-                  <StatusBadge status={task.priority} />
-
-                  {/* Due date */}
-                  <span className="text-[11px] font-mono shrink-0" style={{ color: "#5b6673" }}>
-                    Due {task.due_date}
-                  </span>
-
-                  {/* Progress */}
-                  {task.current_step && task.total_steps && (
-                    <span className="text-[11px] font-mono shrink-0" style={{ color: "#5b6673" }}>
-                      step {task.current_step}/{task.total_steps}
-                    </span>
-                  )}
-
-                  <div className="flex-1" />
-
-                  {/* Submit button — only on in-progress */}
-                  {isActive && (
-                    <Link
-                      href="/current-task"
-                      className="shrink-0 px-3 py-1.5 rounded-[6px] text-[12px] font-semibold transition-opacity hover:opacity-80"
-                      style={{
-                        border: "1px solid #5eead4",
-                        color: "#5eead4",
-                        backgroundColor: "transparent",
-                      }}
-                    >
-                      Open Task
-                    </Link>
-                  )}
-                </div>
-              );
-            })}
+            {items.map((item) => (
+              <ProductBuildCard
+                key={item.id}
+                item={item}
+                tasks={tasksByOpportunity.get(item.id) ?? []}
+                defaultOpen
+              />
+            ))}
           </div>
         )}
       </div>
 
-      {/* Mobile bottom tab bar */}
       <MobileTabBar active="tasks" />
     </TeamShell>
   );

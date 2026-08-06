@@ -114,3 +114,22 @@ export type BuildQueueItem = {
   has_brief: boolean;
   status: "queued" | "launched";
 };
+
+// Mirrors kdavis-microsaas-engine's build_tasks table (migration
+// 20260806000019). Read via the admin client server-side (same reasoning
+// as BuildQueueItem — RLS on the joined opportunity data is admin-only),
+// but build_tasks itself has an "authenticated" RLS policy, so the actual
+// mark-complete/notes writes happen client-side with the team member's own
+// session, not through a server route.
+export type BuildTask = {
+  id: string;
+  opportunity_id: string;
+  task_type: "standard" | "custom";
+  title: string;
+  description: string | null;
+  sort_order: number;
+  status: "pending" | "in_progress" | "completed";
+  notes: string | null;
+  completed_by: string | null;
+  completed_at: string | null;
+};

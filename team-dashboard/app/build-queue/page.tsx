@@ -1,9 +1,9 @@
 import { TeamShell } from "@/components/shell/TeamShell";
 import { TopBar } from "@/components/shell/TopBar";
 import { MobileTabBar } from "@/components/shell/MobileTabBar";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { ProductBuildCard } from "@/components/build/ProductBuildCard";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { BuildQueueItem } from "@/lib/types";
+import type { BuildQueueItem, BuildTask } from "@/lib/types";
 
 // Without this, Next.js sees no per-request API (cookies(), headers()) used
 // directly in this Server Component and prerenders it once at build time --
@@ -18,7 +18,9 @@ export const dynamic = "force-dynamic";
 // status = 'READY_TO_BUILD' alone -- that's Verdict's own pass/fail before
 // a human ever reviewed it, so using it here would show unreviewed
 // opportunities as if they were queued to build.
-async function getBuildQueueData(): Promise<{ queued: BuildQueueItem[]; launched: BuildQueueItem[] }> {
+async function getBuildQueueData(): Promise<{
+  queued: BuildQueueItem[]; launched: BuildQueueItem[]; tasksByOpportunity: Map<string, BuildTask[]>;
+}> {
   const supabase = createAdminClient();
 
   const { data: opportunities } = await supabase
@@ -51,18 +53,44 @@ async function getBuildQueueData(): Promise<{ queued: BuildQueueItem[]; launched
   const queued = rows.filter((o) => o.status !== "launched" && o.human_review_status === "approved").map(toItem);
   const launched = rows.filter((o) => o.status === "launched").map(toItem);
 
-  return { queued, launched };
+  const relevantIds = [...queued, ...launched].map((i) => i.id);
+  const tasksByOpportunity = new Map<string, BuildTask[]>();
+  if (relevantIds.length > 0) {
+    const { data: tasks } = await supabase
+      .from("build_tasks")
+      .select("id, opportunity_id, task_type, title, description, sort_order, status, notes, completed_by, completed_at")
+      .in("opportunity_id", relevantIds)
+      .order("sort_order", { ascending: true });
+    for (const t of (tasks ?? []) as BuildTask[]) {
+      const list = tasksByOpportunity.get(t.opportunity_id) ?? [];
+      list.push(t);
+      tasksByOpportunity.set(t.opportunity_id, list);
+    }
+  }
+
+  return { queued, launched, tasksByOpportunity };
 }
 
 export default async function BuildQueuePage() {
-  const { queued, launched } = await getBuildQueueData();
+  const { queued, launched, tasksByOpportunity } = await getBuildQueueData();
 
   return (
     <TeamShell>
       <TopBar taskName="Build Queue" />
       <div className="flex-1 overflow-y-auto p-6 pb-20 md:pb-6 min-w-0 space-y-5">
-        <Section title="IN BUILD QUEUE" items={queued} emptyText="Nothing approved and queued to build right now." />
-        <Section title="COMPLETED" items={launched} emptyText="Nothing has shipped yet." />
+        <Section
+          title="IN BUILD QUEUE"
+          items={queued}
+          tasksByOpportunity={tasksByOpportunity}
+          emptyText="Nothing approved and queued to build right now."
+          defaultOpenFirst
+        />
+        <Section
+          title="COMPLETED"
+          items={launched}
+          tasksByOpportunity={tasksByOpportunity}
+          emptyText="Nothing has shipped yet."
+        />
       </div>
 
       <MobileTabBar active="build-queue" />
@@ -70,7 +98,12 @@ export default async function BuildQueuePage() {
   );
 }
 
-function Section({ title, items, emptyText }: { title: string; items: BuildQueueItem[]; emptyText: string }) {
+function Section({
+  title, items, tasksByOpportunity, emptyText, defaultOpenFirst,
+}: {
+  title: string; items: BuildQueueItem[]; tasksByOpportunity: Map<string, BuildTask[]>;
+  emptyText: string; defaultOpenFirst?: boolean;
+}) {
   return (
     <div className="rounded-[14px] overflow-hidden" style={{ backgroundColor: "#141c28", border: "1px solid #1c2535" }}>
       <div className="px-5 pt-5 pb-3 flex items-center justify-between">
@@ -88,25 +121,12 @@ function Section({ title, items, emptyText }: { title: string; items: BuildQueue
         </p>
       ) : (
         items.map((item, i) => (
-          <div
+          <ProductBuildCard
             key={item.id}
-            className="flex items-center gap-3 px-5 py-3 min-w-0 flex-wrap"
-            style={{ borderTop: i > 0 ? "1px solid #1c2535" : "none" }}
-          >
-            <span className="text-[13px] font-semibold min-w-0 truncate-text" style={{ color: "#eef2f5" }}>
-              {item.product_name}
-            </span>
-            <span className="text-[11px] font-mono shrink-0" style={{ color: "#5b6673" }}>
-              {item.vertical}
-            </span>
-            <div className="flex-1" />
-            {!item.has_brief && item.status === "queued" && (
-              <span className="text-[10.5px] font-mono shrink-0" style={{ color: "#e8963f" }}>
-                brief not generated yet
-              </span>
-            )}
-            <StatusBadge status={item.status === "launched" ? "completed" : "approved"} pill />
-          </div>
+            item={item}
+            tasks={tasksByOpportunity.get(item.id) ?? []}
+            defaultOpen={defaultOpenFirst && i === 0}
+          />
         ))
       )}
     </div>

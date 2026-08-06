@@ -151,6 +151,20 @@ export interface OpportunityPipelineItem {
   created_at: string;
 }
 
+// build_tasks (kdavis-microsaas-engine migration 20260806000019) -- the
+// per-product build checklist team.thdstack.com writes to (mark complete
+// + notes). Read-only here, same as the MSE dashboard's own reflection --
+// the actual doing/checking-off happens on the team dashboard.
+export interface BuildTaskItem {
+  id: string;
+  opportunity_id: string;
+  task_type: "standard" | "custom";
+  title: string;
+  status: "pending" | "in_progress" | "completed";
+  completed_by: string | null;
+  sort_order: number;
+}
+
 export interface ImageBrief {
   image_id: string | null;
   image_path: string | null;

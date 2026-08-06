@@ -7,7 +7,14 @@ import { SectionCard } from "@/components/ui/SectionCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { AgentRosterCard } from "@/components/ui/AgentRosterCard";
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import type { OpportunityPipelineItem } from "@/lib/types";
+import type { OpportunityPipelineItem, BuildTaskItem } from "@/lib/types";
+
+type BuildPipelineProduct = {
+  opportunity_id: string;
+  product_name: string;
+  vertical: string;
+  tasks: BuildTaskItem[];
+};
 
 const MSE_AGENTS = [
   { name: "Dispatch",  status: "active",   focus: "Orchestrator — all 6 verticals",  lastRun: "last session" },
@@ -20,15 +27,11 @@ const MSE_AGENTS = [
   { name: "Scout",    status: "pending",  focus: "E-commerce vertical intel",        lastRun: null },
 ];
 
-const BUILD_PIPELINE = [
-  { product: "Cloud Decoded",     day: 0,  total: 29, phase: "Pre-build",  mrr: "$4K floor" },
-  { product: "Micro SaaS Engine", day: 0,  total: 29, phase: "Pre-build",  mrr: "$4K floor" },
-];
-
 export default function RndPage() {
   const supabase = createClient();
   const [opportunities, setOpportunities] = useState<OpportunityPipelineItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [buildPipeline, setBuildPipeline] = useState<BuildPipelineProduct[]>([]);
 
   const fetchData = useCallback(async () => {
     const { data } = await supabase
@@ -40,9 +43,54 @@ export default function RndPage() {
     setLoading(false);
   }, [supabase]);
 
+  // Real build progress -- replaces the old "Cloud Decoded / Micro SaaS
+  // Engine, Day 0/29" static mock, which never once updated. Mirrors what
+  // team.thdstack.com actually checks off (build_tasks) and what the MSE
+  // dashboard shows, so all three stay in sync — Realtime-subscribed for
+  // the same reason: this must reflect a task getting marked complete on
+  // the team dashboard without a manual refresh here.
+  const fetchBuildPipeline = useCallback(async () => {
+    const { data: approved } = await supabase
+      .from("opportunity_pipeline")
+      .select("id, solution_concept, vertical")
+      .in("status", ["READY_TO_BUILD", "building"])
+      .eq("human_review_status", "approved");
+
+    const rows = (approved ?? []) as { id: string; solution_concept: string; vertical: string }[];
+    if (rows.length === 0) {
+      setBuildPipeline([]);
+      return;
+    }
+
+    const ids = rows.map((r) => r.id);
+    const [{ data: briefs }, { data: tasks }] = await Promise.all([
+      supabase.from("mse_build_briefs").select("opportunity_id, product_name").in("opportunity_id", ids),
+      supabase.from("build_tasks").select("id, opportunity_id, task_type, title, status, completed_by, sort_order").in("opportunity_id", ids).order("sort_order", { ascending: true }),
+    ]);
+
+    const nameByOpportunityId = new Map(
+      (briefs ?? []).filter((b) => b.opportunity_id).map((b) => [b.opportunity_id as string, b.product_name as string])
+    );
+
+    setBuildPipeline(
+      rows.map((r) => ({
+        opportunity_id: r.id,
+        product_name: nameByOpportunityId.get(r.id) ?? r.solution_concept,
+        vertical: r.vertical,
+        tasks: ((tasks ?? []) as BuildTaskItem[]).filter((t) => t.opportunity_id === r.id),
+      }))
+    );
+  }, [supabase]);
+
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+    fetchBuildPipeline();
+    const channel = supabase
+      .channel("rnd-build-tasks")
+      .on("postgres_changes", { event: "*", schema: "public", table: "build_tasks" }, () => fetchBuildPipeline())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchData, fetchBuildPipeline, supabase]);
 
   async function runResearchSwarm() {
     await fetch(`${process.env.NEXT_PUBLIC_MSE_API_URL}/research/run`, {
@@ -114,28 +162,38 @@ export default function RndPage() {
           </SectionCard>
 
           {/* Build Pipeline */}
-          <SectionCard title="Build Pipeline" status="not_built" statusNote="static mock — Day 0/29 never updates">
-            {BUILD_PIPELINE.map((p) => (
-              <div
-                key={p.product}
-                className="py-3 min-w-0"
-                style={{ borderTop: "1px solid #1c222b" }}
-              >
-                <div className="flex items-center justify-between mb-2 min-w-0">
-                  <span className="text-[12.5px] font-semibold" style={{ color: "#eef2f5" }}>{p.product}</span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
-                      Day {p.day}/{p.total}
-                    </span>
-                    <StatusBadge status="planning" />
+          <SectionCard title="Build Pipeline" status="live" statusNote="build_tasks — reflects team.thdstack.com in real time">
+            {buildPipeline.length === 0 ? (
+              <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
+                Nothing approved and queued to build right now.
+              </p>
+            ) : (
+              buildPipeline.map((p) => {
+                const completed = p.tasks.filter((t) => t.status === "completed").length;
+                const percent = p.tasks.length === 0 ? 0 : Math.round((completed / p.tasks.length) * 100);
+                return (
+                  <div
+                    key={p.opportunity_id}
+                    className="py-3 min-w-0"
+                    style={{ borderTop: "1px solid #1c222b" }}
+                  >
+                    <div className="flex items-center justify-between mb-2 min-w-0">
+                      <span className="text-[12.5px] font-semibold truncate-text min-w-0" style={{ color: "#eef2f5" }}>{p.product_name}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
+                          {completed}/{p.tasks.length} tasks
+                        </span>
+                        <StatusBadge status={percent === 100 ? "complete" : "in_progress"} />
+                      </div>
+                    </div>
+                    <p className="text-[11px] font-mono mb-2 truncate-text" style={{ color: "#8b96a3" }}>
+                      {p.vertical}
+                    </p>
+                    <ProgressBar value={percent} accent="#5eead4" />
                   </div>
-                </div>
-                <p className="text-[11px] font-mono mb-2" style={{ color: "#8b96a3" }}>
-                  Phase: {p.phase} · {p.mrr} enforced at DB level
-                </p>
-                <ProgressBar value={(p.day / p.total) * 100} accent="#5eead4" />
-              </div>
-            ))}
+                );
+              })
+            )}
           </SectionCard>
         </div>
       </div>
