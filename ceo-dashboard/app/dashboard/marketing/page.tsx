@@ -3,6 +3,7 @@ import { SectionCard } from "@/components/ui/SectionCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { AgentRosterCard } from "@/components/ui/AgentRosterCard";
 import { LinkedInBatchReview } from "@/components/ui/LinkedInBatchReview";
+import { MSEContentReview } from "@/components/ui/MSEContentReview";
 
 const PIPELINE_STAGES = [
   { stage: "Cold",      count: 0, mrr_potential: "$0" },
@@ -55,6 +56,15 @@ export default function MarketingPage() {
           {/* LinkedIn Monthly Batch — MKT-LI1's ~12 posts, review/approve/schedule */}
           <SectionCard title="LinkedIn Monthly Batch" status="live" statusNote="linkedin_content_queue, MKT-LI1 + Gemini">
             <LinkedInBatchReview />
+          </SectionCard>
+
+          {/* MSE Community Content — MKT-V1's Reddit/Facebook posts, review/approve/send */}
+          <SectionCard
+            title="MSE Community Content"
+            status="partial"
+            statusNote="mse_social_content, MKT-V1 — review/approve is real; 'sent' is a manual confirmation, no Reddit/Facebook posting API is wired yet"
+          >
+            <MSEContentReview />
           </SectionCard>
 
           {/* Marketing Agents */}

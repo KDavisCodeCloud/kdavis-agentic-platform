@@ -194,6 +194,23 @@ export interface LinkedInQueuePost {
   created_at: string;
 }
 
+// MKT-V1's Reddit/Facebook community-post output (mse_social_content,
+// kdavis-microsaas-engine). "sent" is a manual confirmation, not an
+// automated publish -- no posting client exists for either platform yet.
+export interface MSEContentPost {
+  id: string;
+  product_id: string;
+  campaign_build_id: string;
+  platform: "reddit" | "facebook";
+  title: string | null;
+  body: string;
+  status: "pending_review" | "approved" | "rejected" | "sent";
+  hitl_notes: string | null;
+  reviewed_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
 export const DEPT_ROUTES = [
   { id: "overview",  label: "Overview",        path: "/dashboard/overview",   roles: ["admin", "marketing", "rnd"] },
   { id: "finance",   label: "Finance",          path: "/dashboard/finance",    roles: ["admin"] },

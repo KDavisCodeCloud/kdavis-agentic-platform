@@ -1,4 +1,4 @@
-import type { LinkedInQueuePost } from "./types";
+import type { LinkedInQueuePost, MSEContentPost } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -151,6 +151,39 @@ export async function updateLinkedInQueueRow(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Updating queue row failed: ${res.status}`);
+  }
+}
+
+export async function fetchMSEContentQueue(
+  filters: { productId?: string; status?: string; platform?: string } = {},
+): Promise<MSEContentPost[]> {
+  const params = new URLSearchParams();
+  if (filters.productId) params.set("product_id", filters.productId);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.platform) params.set("platform", filters.platform);
+  const qs = params.toString();
+
+  const res = await fetch(`/api/mse-content-queue${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching MSE content queue failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.posts;
+}
+
+export async function updateMSEContentRow(
+  contentId: string,
+  update: { status?: string; hitl_notes?: string },
+): Promise<void> {
+  const res = await fetch(`/api/mse-content-queue/${contentId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(update),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Updating MSE content row failed: ${res.status}`);
   }
 }
 

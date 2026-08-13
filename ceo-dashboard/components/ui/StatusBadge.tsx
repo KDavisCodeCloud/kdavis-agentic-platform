@@ -6,6 +6,7 @@ const STATUS_MAP: Record<string, { text: string; bg: string; label?: string }> =
   healthy:        { text: "#6fce8f", bg: "#6fce8f22" },
   complete:       { text: "#6fce8f", bg: "#6fce8f22" },
   published:      { text: "#6fce8f", bg: "#6fce8f22" },
+  sent:           { text: "#6fce8f", bg: "#6fce8f22" },
   approved:       { text: "#6fce8f", bg: "#6fce8f22" },
   done:           { text: "#6fce8f", bg: "#6fce8f22" },
   closed:         { text: "#6fce8f", bg: "#6fce8f22" },
