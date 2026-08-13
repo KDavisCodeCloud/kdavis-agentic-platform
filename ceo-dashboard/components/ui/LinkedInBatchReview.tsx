@@ -15,8 +15,27 @@ function formatScheduledFor(iso: string | null): string {
   if (!iso) return "unscheduled";
   return new Date(iso).toLocaleString("en-US", {
     weekday: "short", month: "short", day: "numeric",
-    hour: "numeric", minute: "2-digit", timeZone: "America/New_York",
-  }) + " ET";
+    hour: "numeric", minute: "2-digit", timeZone: "America/Phoenix",
+  }) + " AZ";
+}
+
+// datetime-local inputs carry no timezone -- their value is just wall-clock
+// digits. These two convert between that wall-clock string and a UTC ISO
+// instant, always anchored to Arizona time (UTC-7, no DST, year-round) so
+// what the owner picks is what actually gets stored and redisplayed.
+function isoToArizonaLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date(iso));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+function arizonaLocalInputToISO(localDateTime: string): string {
+  return new Date(`${localDateTime}:00-07:00`).toISOString();
 }
 
 function imageStatusLabel(post: LinkedInQueuePost): string {
@@ -38,6 +57,7 @@ export function LinkedInBatchReview() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [rescheduleDrafts, setRescheduleDrafts] = useState<Record<string, string>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -67,11 +87,17 @@ export function LinkedInBatchReview() {
     }
   }
 
-  async function reschedule(queueId: string, localDateTime: string) {
+  async function reschedule(queueId: string) {
+    const localDateTime = rescheduleDrafts[queueId];
     if (!localDateTime) return;
     setActionError(null);
     try {
-      await updateLinkedInQueueRow(queueId, { scheduled_for: new Date(localDateTime).toISOString() });
+      await updateLinkedInQueueRow(queueId, { scheduled_for: arizonaLocalInputToISO(localDateTime) });
+      setRescheduleDrafts((prev) => {
+        const next = { ...prev };
+        delete next[queueId];
+        return next;
+      });
       await load();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Reschedule failed");
@@ -261,19 +287,34 @@ export function LinkedInBatchReview() {
                     >
                       Reject
                     </button>
-                    {/* onChange, not onBlur -- a native mobile datetime picker's
-                        "Done"/confirm action doesn't reliably fire blur the way
-                        a desktop click-away does, so a reschedule picked on
-                        mobile could silently never save. onChange fires the
-                        moment a value is actually committed, on any device. */}
+                    {/* onChange fires per field the native picker commits (date,
+                        then hour, then minute, ...), each one a distinct event --
+                        saving on every onChange meant picking a date and time was
+                        never one action and could commit a half-picked value. So
+                        onChange only buffers into local draft state; the actual
+                        save happens once, on OK. */}
                     <input
                       type="datetime-local"
-                      defaultValue={post.scheduled_for ? post.scheduled_for.slice(0, 16) : ""}
-                      onChange={(e) => reschedule(post.id, e.target.value)}
+                      value={rescheduleDrafts[post.id] ?? isoToArizonaLocalInput(post.scheduled_for)}
+                      onChange={(e) => setRescheduleDrafts((prev) => ({ ...prev, [post.id]: e.target.value }))}
                       className="font-mono px-2 py-1 rounded-[6px]"
                       style={{ backgroundColor: "#10151b", border: "1px solid #1c222b", color: "#aab4bd", minHeight: 44, fontSize: 16 }}
-                      title="Reschedule this post"
+                      title="Reschedule this post (Arizona time)"
                     />
+                    <button
+                      onClick={() => reschedule(post.id)}
+                      disabled={!rescheduleDrafts[post.id]}
+                      className="px-3 py-1.5 rounded-[6px] text-[11px] font-mono font-semibold transition-colors"
+                      style={{
+                        border: "1px solid #5eead4",
+                        color: rescheduleDrafts[post.id] ? "#5eead4" : "#3a4250",
+                        backgroundColor: "transparent",
+                        minHeight: 44,
+                      }}
+                      title="Save the picked date/time"
+                    >
+                      OK
+                    </button>
                   </div>
                 )}
 
