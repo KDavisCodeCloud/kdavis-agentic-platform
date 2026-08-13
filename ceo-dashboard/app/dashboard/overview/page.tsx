@@ -14,10 +14,20 @@ import type { AgentEvent } from "@/lib/types";
 
 const PRODUCTS = [
   { name: "Cloud Decoded",      status: "building",  mrr: "$0",   agents: 4, queue: 2 },
-  { name: "Micro SaaS Engine",  status: "building",  mrr: "$0",   agents: 8, queue: 1 },
-  { name: "GTA 6 Hub",          status: "planning",  mrr: "$0",   agents: 0, queue: 0 },
+  { name: "Showing Signal",     status: "launched",  mrr: "$0",   agents: 0, queue: 0 },
+  { name: "Micro SaaS Engine",  status: "building",  mrr: "$0",   agents: 10, queue: 1 },
+  { name: "DecodedSix",         status: "building",  mrr: "$0",   agents: 0, queue: 5 },
   { name: "CEO Decoded",        status: "building",  mrr: "$0",   agents: 3, queue: 0 },
   { name: "Hustle Decoded",     status: "planning",  mrr: "$0",   agents: 0, queue: 0 },
+  // Showing Signal added 2026-08-12 -- it was live at showingsignal.thdstack.com
+  // (Stripe billing, real signup flow, deployed on Vercel/Railway) and simply
+  // missing from this list entirely. mrr stays "$0" -- no real revenue figure
+  // has been confirmed, never invented here (see CEO Decoded / Finance section
+  // rules on labeled-estimate-only figures). "GTA 6 Hub" renamed to
+  // DecodedSix (its real product name) and queue set to 4 -- pending_review
+  // article count in decoded-six's own articles table, not a placeholder.
+  // Micro SaaS Engine's agents count is now 10, matching the real files in
+  // agents/marketing/ + agents/orchestrator/ as of this date, not a guess.
   // TODO: link each tile to that product's dedicated dashboard
 ];
 
@@ -82,8 +92,8 @@ export default function OverviewPage() {
             className="grid gap-4"
             style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
           >
-            <MetricCard label="Portfolio MRR"  value="$0"    subtext="5 products tracked"  accent="#5eead4" live={false} />
-            <MetricCard label="Products Live"  value="0"     subtext="of 5 in portfolio"   accent="#6fce8f" live={false} />
+            <MetricCard label="Portfolio MRR"  value="$0"    subtext="6 products tracked"  accent="#5eead4" live={false} />
+            <MetricCard label="Products Live"  value="1"     subtext="of 6 in portfolio"   accent="#6fce8f" live={false} />
             <MetricCard label="Open HITL Items" value={String(hitlCount)} subtext="pending approval" accent="#e8963f" live={true} />
             <MetricCard label="Stack Burn / mo" value="~$225" subtext="infra cost estimate" accent="#e05d5d" live={false} />
           </div>

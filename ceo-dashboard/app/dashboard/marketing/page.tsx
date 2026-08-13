@@ -13,7 +13,7 @@ const PIPELINE_STAGES = [
 ];
 
 const MARKETING_AGENTS = [
-  { name: "LinkedIn Content",   status: "active",   lastRun: null, output: "MKT-LI1 — monthly batch, ~12 posts" },
+  { name: "LinkedIn Content",   status: "active",   lastRun: "2026-08-12", output: "MKT-LI1 — normally ~12 posts/mo, 16-post batch this run" },
   { name: "Cold Email",         status: "pending",  lastRun: null, output: "Not yet built" },
   { name: "Conversion Tracker", status: "pending",  lastRun: null, output: "Not yet built" },
 ];
