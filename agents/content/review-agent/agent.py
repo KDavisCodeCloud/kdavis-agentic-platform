@@ -12,6 +12,8 @@ a revised version with specific changes.
 This is the gate before any content goes to publish-agent.
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

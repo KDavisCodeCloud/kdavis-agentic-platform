@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Human-in-the-Loop state manager.
 
 Governance: Rule 11 — No autonomous remediation. Every fix MUST go through

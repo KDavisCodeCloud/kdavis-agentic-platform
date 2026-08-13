@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 06 — FinOps Cost Optimization execution tools.
 
 These tools are called ONLY after operator approval via POST /incidents/{id}/approve.
@@ -22,7 +20,6 @@ Two categories:
 Supported clouds: AWS, Azure, GCP
 """
 
-import json
 import logging
 import os
 from typing import Optional

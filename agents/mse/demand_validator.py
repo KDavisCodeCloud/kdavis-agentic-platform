@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 demand_validator — MSE pipeline step 2. Scores an opportunity_finder
 candidate and, if it clears the bar, upserts it into mse_opportunities for
 CEO dashboard review.

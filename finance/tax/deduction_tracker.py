@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 deduction_tracker — surfaces potential deductions by category and year.
 Never claims eligibility on its own behalf; every flag carries
 "Confirm with CPA before claiming." IRS dollar limits below are cited
@@ -18,7 +16,7 @@ tax year before being relied on.
 """
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 

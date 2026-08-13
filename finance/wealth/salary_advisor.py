@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 salary_advisor — surfaces a reasonable-compensation benchmark for
 S-Corp/C-Corp owners (an IRS requirement for those entity types) using a
 caller-supplied market rate range. This module has no salary survey data

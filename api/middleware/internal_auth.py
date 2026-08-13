@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Internal (owner/team) auth — completely separate from api/middleware/auth.py's
 customer workspace-token model. This path validates a real Supabase session
 JWT issued by the platform's own Supabase project (SUPABASE_URL /

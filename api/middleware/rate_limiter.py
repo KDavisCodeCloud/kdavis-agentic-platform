@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Per-workspace rate limiter.
 Uses slowapi (a FastAPI-compatible wrapper around limits).
 

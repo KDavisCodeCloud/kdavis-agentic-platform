@@ -229,7 +229,6 @@ class TestPRReviewToolsPostReview:
                 inline_comments=inline,
             )
 
-        sent_payload = ctx.post.call_args.kwargs.get("json") or ctx.post.call_args.args[1] if len(ctx.post.call_args.args) > 1 else {}
         # The request body is passed as json kwarg
         assert ctx.post.called
 

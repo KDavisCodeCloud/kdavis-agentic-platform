@@ -93,21 +93,13 @@ What this file validates:
 
 import base64
 import json
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from agents.agent_10_dependency_patch.tools import (
     DependencyPatchTools,
-    _parse_package_json,
-    _parse_requirements_txt,
-    _parse_go_mod,
-    _parse_pom_xml,
-    _parse_gemfile_lock,
-    _parse_cargo_toml,
-    _extract_severity,
-    _extract_fixed_version,
 )
 from agents.agent_10_dependency_patch.workflow import (
     DependencyPatchWorkflow,

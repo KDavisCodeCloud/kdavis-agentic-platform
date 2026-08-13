@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 asyncpg connection pool singleton for the MCP server.
 
 The MCP server shares the same Postgres database as the main backend

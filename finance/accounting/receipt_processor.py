@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 receipt_processor — turns a receipt (image bytes or already-extracted text)
 into a structured, categorized record.
 
@@ -20,7 +18,7 @@ session that wires this into accounting_agent's live pipeline.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from typing import Callable, Optional

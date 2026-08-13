@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 revenue_ledger — append-only record of every revenue event, whether it
 came from Stripe or was entered manually. Provides the monthly/YTD
 aggregation the accounting_agent monthly summary and tax_agent quarterly

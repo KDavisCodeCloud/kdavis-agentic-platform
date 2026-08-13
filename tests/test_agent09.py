@@ -409,7 +409,7 @@ class TestCreateKnowledgeIssue:
         ctx.post = AsyncMock(return_value=issue_resp)
 
         with patch("agents.agent_09_onboarding_buddy.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.create_knowledge_issue(
+            await tools.create_knowledge_issue(
                 "acme", "backend",
                 "On-Call Brief: payment-service",
                 "## Brief",
@@ -496,7 +496,6 @@ class TestExecuteOption:
         with patch.object(tools, "create_knowledge_issue", new=AsyncMock(return_value=expected)) as mock_issue:
             result = await tools.execute_option({"id": "opt_1"}, context)
         assert result["status"] == "issue_created"
-        _, call_kwargs = mock_issue.call_args.args, mock_issue.call_args.kwargs
         assert "onboarding" in mock_issue.call_args.kwargs.get("labels", [])
 
     async def test_opt1_without_repository_returns_skipped(self, tools, context):
@@ -572,7 +571,7 @@ class TestIngestNode:
         shield_mock.sanitize.return_value = MagicMock(sanitized_text="x" * 2020)
 
         with patch("agents.agent_09_onboarding_buddy.workflow.shield", shield_mock):
-            result = await wf._ingest_node(state)
+            await wf._ingest_node(state)
 
         # The question sent to shield should be truncated at 2000 chars
         sanitized_arg = shield_mock.sanitize.call_args.args[0]

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 10 — Dependency & Vulnerability Patching
 LangGraph state machine with Postgres checkpointing and HITL interrupt gate.
 
@@ -33,7 +31,6 @@ HITL gate controls:
 Governance Rule 11: no PR or issue is created without operator approval.
 """
 
-import json
 import logging
 import uuid
 from pathlib import Path

@@ -12,6 +12,8 @@ Read-only analysis only. All recommendations require human approval before
 any resource changes are made (Governance Rule 11).
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

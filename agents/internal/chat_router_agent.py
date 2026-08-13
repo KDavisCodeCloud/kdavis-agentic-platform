@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 chat_router_agent — routes dashboard AgentChat input to the correct
 handler by keyword match, per CLAUDE.md's routing logic:
   metrics/product name keywords  -> portfolio_monitor
@@ -34,7 +32,7 @@ dashboard can hand it straight to gap_detector_agent.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 KEYWORDS_METRICS = {"metrics", "mrr", "revenue", "churn", "signups", "conversion", "portfolio", "product"}

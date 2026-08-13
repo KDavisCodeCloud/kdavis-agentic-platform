@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Read-only MCP tools — scope: mcp:read, all tiers, 100 req/min.
 
 list_incidents        — incident queue summary

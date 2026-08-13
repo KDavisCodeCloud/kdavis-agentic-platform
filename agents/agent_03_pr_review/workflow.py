@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 03 — PR Review for Architecture & Security
 LangGraph state machine with Postgres checkpointing and HITL interrupt gate.
 
@@ -20,20 +18,17 @@ The ingest node fetches the PR diff from GitHub so the diagnose node has
 full file-level context for the LLM review.
 """
 
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Optional, TypedDict
 
-import httpx
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
-from agents.agent_03_pr_review.tools import PRReviewTools, _gh_headers
+from agents.agent_03_pr_review.tools import PRReviewTools
 from core.security import shield
 
 log = logging.getLogger(__name__)

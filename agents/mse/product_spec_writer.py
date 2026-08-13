@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 product_spec_writer — MSE pipeline step 3. Writes a 1-page product spec
 for a validated (go=True) opportunity and inserts it into
 mse_product_specs, linked to its mse_opportunities row.

@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 SSRF-protected HTTP client for all calls to the FastAPI backend.
 
 SECURITY CONTRACT:

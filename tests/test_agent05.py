@@ -870,7 +870,7 @@ class TestHITLGateNode:
 
         with patch.object(wf, "record_token_usage", new=AsyncMock()), \
              patch("agents.agent_05_iam_minimizer.workflow.interrupt", return_value={"id": "hold"}):
-            result = await wf._hitl_gate_node(state)
+            await wf._hitl_gate_node(state)
 
         mock_hitl.create_incident.assert_called_once()
         call_kwargs = mock_hitl.create_incident.call_args.kwargs

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 visitor_capture_agent — processes every inbound lead/trial signup,
 optionally enriches it, scores intent, and either routes it to a
 dashboard decision card (high intent) or lets the nurture sequence run

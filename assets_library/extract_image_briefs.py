@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 LinkedIn Asset Vault — extract_image_briefs.py
 
 Reads a MKT-LI1 batch response (the JSON body POST /marketing/linkedin-brand

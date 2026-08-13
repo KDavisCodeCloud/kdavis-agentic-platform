@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 invoice_tracker — tracks every invoice issued and every invoice received
 from vendors/contractors. Flags overdue invoices with actionable options.
 Pure Python, in-memory store — the caller (accounting_agent) is responsible

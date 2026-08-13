@@ -11,7 +11,6 @@ internal marketing publish path actually uses.
 httpx.AsyncClient is patched directly (no respx/pytest-httpx dependency
 in this repo), matching tests/test_linkedin_publisher.py's approach.
 """
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

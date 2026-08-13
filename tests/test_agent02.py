@@ -47,7 +47,6 @@ What this file validates:
 """
 
 import json
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -166,16 +165,6 @@ class TestK8sToolsPatchMemory:
                 "production", "payment-service", "1Gi",
                 container_name="payment-container",
             )
-
-        # The JSON body passed to patch() should include the container name
-        patch_call_json = None
-        # Check all mock calls for json kwarg
-        for call in [ctx.patch, ctx.post, ctx.get, ctx.put]:
-            if hasattr(call, "call_args") and call.call_args:
-                kw = call.call_args.kwargs
-                if "json" in kw:
-                    patch_call_json = kw["json"]
-                    break
 
         # If the call went through, json body should contain container name
         # (We verify via result since the mock doesn't capture the body directly here)

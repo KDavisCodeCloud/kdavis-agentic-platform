@@ -10,10 +10,11 @@ Usage:
   python3 workflows/devops/run-self-heal.py --issue-id 1  (real GitHub issue)
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 import time
-import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -73,13 +74,6 @@ def run_triage(issue: dict) -> dict:
         f"Classifying issue: {issue['title']}",
         "New issue detected — running triage agent"
     )
-
-    sys.path.insert(0, str(ROOT / "agents" / "devops" / "triage-agent"))
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "triage", ROOT / "agents" / "devops" / "triage-agent" / "agent.py"
-    )
-    mod = importlib.util.load_from_spec = None
 
     result = complete(
         task_type="issue_triage",

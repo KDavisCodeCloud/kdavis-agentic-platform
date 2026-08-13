@@ -1,16 +1,13 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Token usage middleware — tracks API call counts per workspace for rate limiting
 and usage analytics. Distinct from core/token_budget.py which tracks LLM spend.
 """
 
 import logging
 import time
-from datetime import datetime, timezone
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request

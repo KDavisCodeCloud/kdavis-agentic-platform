@@ -7,6 +7,8 @@ Reads the original issue ONLY — never the fix plan.
 This is intentional: validates outcome, not intention.
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

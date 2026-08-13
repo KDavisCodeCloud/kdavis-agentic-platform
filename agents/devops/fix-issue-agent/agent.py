@@ -13,6 +13,8 @@ Consumes the output of triage-agent and produces a structured fix plan that
 includes pre-conditions, exact steps, rollback instructions, and validation steps.
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

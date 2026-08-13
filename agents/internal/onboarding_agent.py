@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 onboarding_agent — handles inviting a new internal team member (the
 pattern CLAUDE.md alludes to: "when your son comes on board"). Not
 speced anywhere in CLAUDE.md's BUILD SEQUENCE or EXECUTION_ORDER.md —

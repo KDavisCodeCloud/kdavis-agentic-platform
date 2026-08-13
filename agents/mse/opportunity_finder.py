@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 opportunity_finder — MSE pipeline step 1. Scans a niche for underserved
 micro-SaaS opportunities using a cheap, high-volume model.
 

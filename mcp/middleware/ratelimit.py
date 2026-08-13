@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Per-tool, per-workspace sliding window rate limiter.
 
 Limits (from config.py):
@@ -23,7 +21,6 @@ different workspace+tool combinations.
 import asyncio
 import time
 from collections import defaultdict, deque
-from typing import Optional
 
 from config import TOOL_RATE_LIMITS
 

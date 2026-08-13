@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 investment_tracker — records brokerage/retirement allocations you tell it
 about (manual input only — no brokerage API integration) and reports the
 wealth-building ratio (invested vs gross revenue). No buy/sell

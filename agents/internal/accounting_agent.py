@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 accounting_agent — keeps receipts, invoices, and revenue organized,
 categorized, and retrievable. Never files anything with a taxing
 authority. Every output carries the CPA/advisor disclaimer.

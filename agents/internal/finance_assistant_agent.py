@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 finance_assistant_agent — read-only retrieval and coordination layer.
 Answers questions immediately by reading accounting_agent, tax_agent,
 and the ledgers/trackers they hold. Never writes, updates, or modifies
@@ -21,7 +19,6 @@ timestamp, and a related action when one applies.
 
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Optional
 
 from finance import disclaim
 from finance.accounting.expense_categorizer import IRSCategory

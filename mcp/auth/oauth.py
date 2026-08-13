@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 OAuth 2.1 JWT validation for MCP server auth.
 
 Token source: Supabase Auth (HS256, project JWT secret).

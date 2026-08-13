@@ -10,6 +10,8 @@ search this session -- nothing about Take-Two's CEO, Rockstar, Sony, or
 Netflix is invented. Anything not officially confirmed is labeled
 speculation inline, per docs/VOICE.md's Critical Accuracy Rules.
 """
+
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
 import os
 import sys
 from datetime import datetime, timezone

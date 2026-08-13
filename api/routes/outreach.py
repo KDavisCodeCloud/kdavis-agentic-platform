@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Outreach pipeline routes — Phase 3.
 
 POST /outreach/leads                    — create lead, run qualify→assess→propose pipeline
@@ -33,7 +31,6 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from pydantic import BaseModel
 
 from api.middleware.auth import get_workspace
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
@@ -76,7 +73,6 @@ def _draft_connection_note(qualify_output: dict, lead_name: str, company: str) -
 
     talk_track = qualify_output.get("talk_track", "")
     icp_matches = qualify_output.get("icp_matches", [])
-    tier = qualify_output.get("tier_recommendation", "growth")
 
     pain_hint = icp_matches[0] if icp_matches else talk_track[:80] if talk_track else "DevOps challenges"
 

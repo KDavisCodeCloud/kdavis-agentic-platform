@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 LinkedIn Asset Vault — gemini_image_gen.py
 
 Generates one custom technical diagram per post via the Gemini image API,

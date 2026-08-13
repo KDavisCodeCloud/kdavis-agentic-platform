@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 MCP API key management — customer-facing CRUD.
 
 POST   /mcp/keys           — generate a new scoped API key (raw key returned once)

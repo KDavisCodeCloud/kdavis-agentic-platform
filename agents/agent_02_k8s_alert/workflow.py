@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 02 — Kubernetes Alert Fatigue & Remediation
 LangGraph state machine with Postgres checkpointing and HITL interrupt gate.
 
@@ -23,7 +21,6 @@ Supports two webhook payload formats:
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Optional, TypedDict
 

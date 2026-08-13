@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 code_quality_agent — overseer of code quality across the platform, per
 CLAUDE.md Phase 2 Step 26. Runs on every PR (code-quality-gate.yml, not
 wired here), on-demand via chat ("review [module]"), and on a weekly
@@ -176,7 +174,6 @@ def _used_names(tree: ast.Module, exclude_import_lines: set[int]) -> set[str]:
 
 def check_unused_imports(parsed: ParsedFile) -> list[Issue]:
     imported = _imported_names(parsed.tree)
-    import_lines = set(imported.values())
     used = _used_names(parsed.tree, exclude_import_lines=set())
     issues = []
     for name, line in imported.items():

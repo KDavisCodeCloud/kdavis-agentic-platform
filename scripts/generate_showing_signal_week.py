@@ -19,7 +19,7 @@ queue writer, then assets_library/gemini_image_gen.py for the images
 the duplicate problem in the first place).
 """
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

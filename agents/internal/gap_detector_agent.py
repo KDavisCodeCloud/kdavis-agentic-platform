@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 gap_detector_agent — finds coverage gaps in the agent roster and surfaces
 them as build recommendations. Never builds anything itself (CLAUDE.md
 non-negotiable #10: "When you identify a gap that needs a new agent,

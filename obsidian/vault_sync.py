@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 vault_sync — writes SOP markdown directly into the local Obsidian vault
 filesystem at OBSIDIAN_VAULT_PATH. This is the interactive/local-session
 path; the CI-side push from a Supabase `sops` row INSERT

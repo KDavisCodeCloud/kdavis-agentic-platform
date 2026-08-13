@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 01 — CI/CD Pipeline Failure Triage
 LangGraph state machine with Postgres checkpointing and HITL interrupt gate.
 
@@ -22,9 +20,8 @@ POST /incidents/{id}/approve endpoint calls graph.ainvoke(Command(resume=...)).
 
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Optional, TypedDict, Annotated
+from typing import Optional, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
@@ -141,7 +138,6 @@ class CICDTriageWorkflow(BaseAgent):
             job_name = run.get("name", "unknown-job")
             repository = payload.get("repository", {}).get("full_name", "unknown/unknown")
             owner_or_org = repository.split("/")[0] if "/" in repository else "unknown"
-            repo_name = repository.split("/")[1] if "/" in repository else repository
             branch = run.get("head_branch", "main")
             run_id = run.get("id", 0)
             pr_number = pr_list[0].get("number") if pr_list else None
@@ -175,14 +171,12 @@ class CICDTriageWorkflow(BaseAgent):
                 f"Project: {project.get('name', 'unknown')}",
             ]
             log_excerpt = "\n".join(log_lines)
-            repo_name = repository
 
         else:
             log.warning("[Agent01] Unknown cloud_provider: %s", provider)
             job_name = "unknown"
             repository = "unknown/unknown"
             owner_or_org = "unknown"
-            repo_name = "unknown"
             branch = "main"
             run_id = 0
             pr_number = None

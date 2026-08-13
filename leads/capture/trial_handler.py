@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 trial_handler — processes /trial/[product] starts. Builds on
 signup_handler.process_signup() (signup_type="trial") for the shared
 lead-writing/CRM-sync logic, then creates the Stripe customer and

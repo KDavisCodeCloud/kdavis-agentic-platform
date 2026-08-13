@@ -15,6 +15,7 @@ Runs with stdlib only — no extra pip installs needed.
 
 import hashlib
 import re
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -448,7 +449,6 @@ class TestModuleSingleton:
 
 class TestCustomPatterns:
     def test_extra_pattern_applied(self):
-        import re
         custom_pattern = ("ssn", re.compile(r"\d{3}-\d{2}-\d{4}"), "[REDACTED:SSN]")
         s_custom = DataSanitizationShield(extra_patterns=[custom_pattern])
 
@@ -457,7 +457,6 @@ class TestCustomPatterns:
         assert "[REDACTED:SSN]" in result.sanitized_text
 
     def test_builtin_patterns_still_fire_with_extra(self):
-        import re
         custom_pattern = ("ssn", re.compile(r"\d{3}-\d{2}-\d{4}"), "[REDACTED:SSN]")
         s_custom = DataSanitizationShield(extra_patterns=[custom_pattern])
 
@@ -466,7 +465,6 @@ class TestCustomPatterns:
         assert "123-45-6789" not in result.sanitized_text
 
     def test_broken_pattern_does_not_crash(self):
-        import re
         # Regex that always raises on .subn() — deliberately broken
         bad_regex = MagicMock()
         bad_regex.subn = MagicMock(side_effect=Exception("bad pattern"))
@@ -476,7 +474,3 @@ class TestCustomPatterns:
         # Should not raise; shield catches pattern exceptions and logs a warning
         result = s_custom.sanitize("some text")
         assert isinstance(result, SanitizationResult)
-
-
-# Need MagicMock for the broken pattern test
-from unittest.mock import MagicMock

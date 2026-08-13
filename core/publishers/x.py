@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 X (Twitter) publisher — official API v2 only.
 
 Posts tweets on behalf of the authenticated user via the X API v2

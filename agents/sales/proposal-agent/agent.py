@@ -11,6 +11,8 @@ Produces a structured proposal that Kelvin reviews and customizes before sending
 This agent does NOT send anything. Output is a draft for human review.
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

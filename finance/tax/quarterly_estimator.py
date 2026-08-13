@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 quarterly_estimator — rough, safe-harbor-based quarterly estimated tax
 calculation for a self-employed / pass-through entity owner.
 

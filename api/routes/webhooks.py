@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Webhook receivers — GitHub Actions and Azure DevOps.
 
 Both endpoints:
@@ -22,7 +20,6 @@ Workspace identification: webhook URL includes workspace token
   POST /webhooks/azure-devops?token=<workspace_token>
 """
 
-import asyncio
 import hashlib
 import hmac
 import json

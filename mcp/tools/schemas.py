@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 JSON Schema definitions for all MCP tool inputs.
 
 Every tool call validates its arguments against the schema here before

@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Per-request CallerIdentity via Python contextvars.
 
 Each asyncio task (i.e., each HTTP request in ASGI) gets its own

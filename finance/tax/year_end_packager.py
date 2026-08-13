@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 year_end_packager — compiles the full-year CPA handoff package: revenue
 and expense summaries, receipt manifest, invoice export, deduction
 export, quarterly estimate history, and 1099-NEC candidates.
@@ -20,7 +18,7 @@ PDF export is a presentation-layer concern for a later session).
 
 import csv
 import io
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from finance.accounting.document_organizer import cpa_handoff_year_complete_folder
 from finance.accounting.expense_categorizer import IRSCategory

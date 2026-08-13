@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 cash_flow_monitor — tracks monthly inflows vs outflows, sets aside a
 recommended (not moved — informational only) tax reserve, and surfaces
 the available surplus. Never moves money.

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Stripe setup script — CLAUDE.md Phase 1, Step 13.
 
 Owner runs this manually. It does not run in CI/CD and is not imported by

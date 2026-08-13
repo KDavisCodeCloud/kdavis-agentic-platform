@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 BaseAgent — shared base class for all 10 commercial agents.
 
 Every agent MUST:
@@ -20,7 +18,6 @@ Every agent MUST:
 """
 
 import os
-import sys
 import json
 import time
 import logging
@@ -36,8 +33,8 @@ from cryptography.fernet import Fernet
 
 from core.security import shield
 from core.hitl import HITLGate
-from core.compliance import WorkspaceComplianceGuard, SubscriptionError
-from core.token_budget import TokenBudgetGuard, BudgetExceededError
+from core.compliance import WorkspaceComplianceGuard
+from core.token_budget import TokenBudgetGuard
 
 log = logging.getLogger(__name__)
 

@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Stripe billing routes.
 
 POST /billing/checkout  — create a hosted Checkout Session for a tier

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 release_notes_agent — turns a completed deploy into release notes.
 Triggers on deploy.yml completion (CI wiring is out of scope here — this
 module takes a DeploySummary and produces markdown + a releases-table

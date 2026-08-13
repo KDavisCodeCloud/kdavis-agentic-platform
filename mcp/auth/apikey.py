@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 API key validation for MCP server auth (Starter + Growth tiers only).
 
 Key format:  cd_mcp_<22 random base64url chars>
@@ -102,8 +100,8 @@ async def validate_api_key(raw_key: str, db_pool: asyncpg.Pool) -> CallerIdentit
 
     if tier in OAUTH_REQUIRED_TIERS:
         raise AuthError(
-            f"Enterprise tier requires OAuth 2.1 authentication. "
-            f"API keys are not permitted for Enterprise workspaces.",
+            "Enterprise tier requires OAuth 2.1 authentication. "
+            "API keys are not permitted for Enterprise workspaces.",
             status_code=403,
         )
 

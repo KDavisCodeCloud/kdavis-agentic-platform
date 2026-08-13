@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Agent execution endpoints — manual trigger (not webhook-driven).
 
 POST /agents/{agent_id}/run  — manually trigger an agent with a payload

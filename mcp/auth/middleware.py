@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 MCPAuthMiddleware — pure ASGI middleware for MCP server authentication.
 
 Why pure ASGI (not Starlette's BaseHTTPMiddleware):

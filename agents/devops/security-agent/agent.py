@@ -13,6 +13,8 @@ All findings require human review before any remediation begins (Rule 11).
 Credentials must never appear in config_data — reference by name only (Rule 8).
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

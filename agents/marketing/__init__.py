@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Wave 2 marketing agents (MKT-LI1, MKT-CN1, MKT-V1, MKT-N1). Plain
 functions with injected collaborators (supabase_client, anthropic_client)
 — no agents/base_agent.py dependency, same convention as agents/internal/*

@@ -76,7 +76,6 @@ What this file validates:
     - Includes Cloud Decoded attribution
 """
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -604,7 +603,7 @@ class TestIngestNode:
         shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
 
         with patch("agents.agent_08_drift_detection.workflow.shield", shield_mock):
-            result = await wf._ingest_node(state)
+            await wf._ingest_node(state)
 
         # Both blobs were passed to sanitize
         assert shield_mock.sanitize.call_count == 2

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 portfolio_monitor — daily 6am digest across the whole product portfolio.
 Pulls per-product MRR, new subscriptions, cancellations, trial signups,
 trial-to-paid conversion, agent run volume/error rate, and token cost;

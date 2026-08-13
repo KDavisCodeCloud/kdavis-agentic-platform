@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 MCP server configuration — environment variables and kill switches.
 
 All kill switches default to True (enabled). Flip to False to disable

@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Internal agent execution — owner/team-only. Completely separate from the
 customer-facing POST /agents/{agent_id}/run + X-Workspace-Token path in
 api/routes/agents.py: different auth (api.middleware.internal_auth,

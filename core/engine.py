@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 core/engine.py — LangGraph state machine, master orchestrator. CLAUDE.md Phase 1, step 5.
 
 Generic, agent-agnostic engine: validate_input -> sanitize -> execute ->

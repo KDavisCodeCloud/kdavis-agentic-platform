@@ -14,6 +14,8 @@ or scheduling tool uses to publish. External communications require human
 approval on first use per client (Governance Rule per MISSION.md).
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

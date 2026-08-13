@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 MKT-CN1 — Image Brief Agent.
 
 Takes the lightweight image_brief dict MKT-LI1/MKT-V1 attach to a

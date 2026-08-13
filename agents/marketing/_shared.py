@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Shared helpers for the Wave 2 marketing agents. Kept in one place so the
 audit_log / events / sanitize / queue-insert boilerplate isn't
 duplicated four times across mkt_li1/mkt_cn1/mkt_v1/mkt_n1.

@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 MCP audit logger — structured log line + DB write per tool call.
 
 Security rule: argument SHAPES only, never argument VALUES.

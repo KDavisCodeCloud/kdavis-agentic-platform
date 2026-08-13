@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 signup_handler — processes both capture points described in CLAUDE.md's
 Lead Capture section: the above-fold "Start free trial" CTA and the
 lightweight email-only capture form. Writes to Supabase `leads`,

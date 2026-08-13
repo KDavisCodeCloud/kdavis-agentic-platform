@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Write MCP tools — scope: mcp:write, Growth + Enterprise only, 10 req/min.
 
 approve_incident  — approve the top-recommended fix through the HITL gate
@@ -183,7 +181,7 @@ async def reject_incident(
     caller, t0 = await guard("reject_incident", arg_keys)
 
     try:
-        result = await upstream.post(
+        await upstream.post(
             f"/incidents/{incident_id}/reject",
             caller.workspace_id,
             body={"reason": reason},

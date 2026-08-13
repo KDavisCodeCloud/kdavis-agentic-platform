@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 queue/worker — SQS long-polling consumer. Each message body is expected
 to be JSON shaped {"job_type": "...", "payload": {...}}; job_type is
 looked up in a HandlerRegistry and dispatched to the matching agent

@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Internal marketing integrations — owner-only. Completely separate from
 api/routes/content.py's OAuth flow, which is a customer-facing Cloud Decoded
 product feature (workspace_social_connections, gated by

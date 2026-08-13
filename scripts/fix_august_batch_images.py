@@ -28,6 +28,8 @@ One-off repair for the 2026-08 LinkedIn batch (16 posts):
      on-topic image_description for it before generation, matching
      mkt_li1_linkedin_brand.py's own VOICE_SYSTEM_PROMPT format exactly.
 """
+
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
 import json
 import os
 import re

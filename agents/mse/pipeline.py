@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 pipeline — chains opportunity_finder -> demand_validator -> product_spec_writer.
 CLI entry point for a manual/cron-triggered MSE research run.
 """

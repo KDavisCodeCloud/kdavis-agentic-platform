@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Marketing routes — triggers the Wave 2 marketing agents
 (agents/marketing/*.py): MKT-LI1, MKT-V1, MKT-N1, MKT-CN1.
 
@@ -104,7 +102,7 @@ def linkedin_brand(body: LinkedInBrandRequest, _: None = Depends(require_marketi
 @router.post("/content-multiply")
 def content_multiply(body: ContentMultiplyRequest, _: None = Depends(require_marketing_api_key)) -> dict:
     try:
-        drafts = run_v1_content_multiplier(
+        run_v1_content_multiplier(
             body.research_report, body.brand_voice_profile, body.target_platforms,
             high_performers=body.high_performers,
         )

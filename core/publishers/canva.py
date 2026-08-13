@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Canva Connect API client — Autofill + Export only.
 
 Fills existing Brand Templates with data (text/image fields), polls the

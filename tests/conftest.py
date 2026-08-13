@@ -9,10 +9,8 @@ Stub order matters: register parent packages before sub-packages.
 """
 
 import sys
-import os
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest

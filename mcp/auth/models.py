@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 CallerIdentity — the resolved identity attached to every MCP request.
 
 Built by the auth middleware from either an OAuth 2.1 JWT or an API key.

@@ -12,6 +12,8 @@ This agent does NOT write the content. It defines the strategy:
 hook angle, key message, tone, format, and what to avoid.
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

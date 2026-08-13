@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 LinkedIn Asset Vault — post_formatter.py
 
 # INTEGRATION: MKT-LI1 raw output -> post_formatter.py -> formatted post
@@ -80,7 +78,7 @@ def _split_hashtags(text: str) -> tuple[str, list[str]]:
 
 
 def _split_into_lines(body: str) -> list[str]:
-    raw_lines = [l.strip() for l in body.splitlines() if l.strip()]
+    raw_lines = [line.strip() for line in body.splitlines() if line.strip()]
     if not raw_lines:
         raw_lines = [body.strip()] if body.strip() else []
 

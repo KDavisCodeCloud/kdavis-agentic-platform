@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Single FastMCP instance — imported by tools/read.py and tools/write.py
 to register their @mcp.tool() decorators.
 

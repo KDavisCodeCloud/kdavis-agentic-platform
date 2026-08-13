@@ -12,7 +12,6 @@ import yaml
 import time
 import logging
 from pathlib import Path
-from typing import Optional
 
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
 PROVIDERS_PATH = Path(__file__).parent / "providers"

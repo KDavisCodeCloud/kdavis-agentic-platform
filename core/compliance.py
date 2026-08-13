@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 WorkspaceComplianceGuard — validates workspace subscription before every agent invocation.
 
 Governance: Rule 10 (fail safe not fail open). If subscription check fails,

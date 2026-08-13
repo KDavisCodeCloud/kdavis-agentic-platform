@@ -416,7 +416,7 @@ class TestGetGCPCostData:
         ctx.get = AsyncMock(return_value=resp)
 
         with patch("agents.agent_06_finops.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.get_gcp_cost_data("billing-123", "2026-06-01", "2026-06-30")
+            await tools.get_gcp_cost_data("billing-123", "2026-06-01", "2026-06-30")
 
         call_url = ctx.get.call_args.args[0]
         assert "billing-123" in call_url
@@ -972,7 +972,7 @@ class TestHITLGateNode:
 
         with patch.object(wf, "record_token_usage", new=AsyncMock()), \
              patch("agents.agent_06_finops.workflow.interrupt", return_value={"id": "hold"}):
-            result = await wf._hitl_gate_node(state)
+            await wf._hitl_gate_node(state)
 
         call_kwargs = mock_hitl.create_incident.call_args.kwargs
         assert call_kwargs["agent_id"] == "agent_06_finops"

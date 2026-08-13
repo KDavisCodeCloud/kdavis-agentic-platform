@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 dispatch_scheduled_posts.py — the "approve once, it runs itself the rest
 of the month" half of the monthly batch cadence.
 

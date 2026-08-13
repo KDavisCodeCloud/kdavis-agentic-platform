@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 WorkspaceTierMiddleware
 
 Sets request.state.workspace_tier before the route handler runs.

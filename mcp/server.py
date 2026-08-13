@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Cloud Decoded MCP Server — entry point.
 
 This is a separate FastAPI application from the main backend.

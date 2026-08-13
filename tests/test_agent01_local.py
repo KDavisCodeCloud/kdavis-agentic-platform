@@ -35,13 +35,12 @@ What each test proves:
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-import pytest
 
 # conftest.py stubs langgraph before these imports run
-from core.security import DataSanitizationShield, shield
+from core.security import shield
 from agents.agent_01_cicd_triage.tools import CICDTools
 from tests.mocks.aws_fixtures import (
     MOCK_GITHUB_ACTIONS_LOG,
@@ -93,7 +92,6 @@ def _make_workflow(mock_db, workspace_id, mock_router):
 
 
 def _github_state(workspace_id):
-    from agents.agent_01_cicd_triage.workflow import CICDTriageState
     return {
         "workspace_id": workspace_id,
         "cloud_provider": "github",
@@ -182,7 +180,6 @@ async def test_ingest_node_sanitizes_log_excerpt(mock_db, workspace_id, mock_rou
         "message": "ci: deploy AKIAIOSFODNN7EXAMPLE to prod"
     }
 
-    from agents.agent_01_cicd_triage.workflow import CICDTriageState
     state = _github_state(workspace_id)
     state["webhook_payload"] = payload
 

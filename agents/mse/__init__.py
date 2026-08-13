@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Micro SaaS Engine (MSE) research pipeline — discovers and validates
 micro-SaaS opportunities for CEO dashboard review. Session 8.
 

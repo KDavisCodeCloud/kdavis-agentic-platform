@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 LinkedIn Asset Vault — image_indexer.py
 
 Scans assets_library/ for image files not yet in index.json, tags each
@@ -25,7 +23,6 @@ import base64
 import json
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Optional
 

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 revenue_intelligence_agent — finds money already within reach that the
 platform isn't capturing. Not forecasting, not general advice: specific,
 ranked, actionable opportunities with an estimated MRR impact behind
@@ -102,7 +100,7 @@ def _conversion_rate(trials: int, conversions: int) -> float:
 
 
 def _leads_for_product(leads: list[Lead], product_id: str) -> list[Lead]:
-    return [l for l in leads if l.product_id == product_id]
+    return [lead for lead in leads if lead.product_id == product_id]
 
 
 def detect_expired_trials_reengaging(leads: list[Lead], products: dict[str, Product], as_of: date, reengagement_window_days: int = 14) -> list[RevenueOpportunity]:
@@ -117,7 +115,7 @@ def detect_expired_trials_reengaging(leads: list[Lead], products: dict[str, Prod
         product = products.get(product_id)
         if not product:
             continue
-        avg_days_since = sum(_days_between(as_of, l.trial_end_date) for l in matched) / len(matched)
+        avg_days_since = sum(_days_between(as_of, lead.trial_end_date) for lead in matched) / len(matched)
         estimated_conversions = max(1, round(len(matched) * 0.3))
         estimated_mrr = round(estimated_conversions * product.price * 0.7, 2)
         opportunities.append(RevenueOpportunity(
@@ -139,9 +137,9 @@ def detect_low_conversion_gap(leads: list[Lead], products: dict[str, Product], w
     opportunities = []
     stats: dict[str, tuple[int, int]] = {}
     for product_id, product in products.items():
-        window_leads = [l for l in _leads_for_product(leads, product_id) if window_start <= l.signup_date <= window_end and l.signup_type == "trial"]
+        window_leads = [lead for lead in _leads_for_product(leads, product_id) if window_start <= lead.signup_date <= window_end and lead.signup_type == "trial"]
         trials = len(window_leads)
-        conversions = sum(1 for l in window_leads if l.converted_to_paid)
+        conversions = sum(1 for lead in window_leads if lead.converted_to_paid)
         stats[product_id] = (trials, conversions)
 
     total_trials = sum(t for t, _ in stats.values())
@@ -170,13 +168,13 @@ def detect_low_conversion_gap(leads: list[Lead], products: dict[str, Product], w
 def detect_underpriced_products(leads: list[Lead], products: dict[str, Product], as_of: date, min_days_observed: int = 60, churn_ceiling: float = 0.05, reprice_multiplier: float = 1.5) -> list[RevenueOpportunity]:
     opportunities = []
     for product_id, product in products.items():
-        product_leads = [l for l in _leads_for_product(leads, product_id) if l.converted_to_paid]
+        product_leads = [lead for lead in _leads_for_product(leads, product_id) if lead.converted_to_paid]
         if not product_leads:
             continue
-        earliest = min(l.signup_date for l in product_leads)
+        earliest = min(lead.signup_date for lead in product_leads)
         if _days_between(as_of, earliest) < min_days_observed:
             continue
-        churned = sum(1 for l in product_leads if l.cancelled)
+        churned = sum(1 for lead in product_leads if lead.cancelled)
         churn_rate = _conversion_rate(len(product_leads), churned)
         if churn_rate < churn_ceiling:
             new_price = round(product.price * reprice_multiplier, 2)
@@ -203,12 +201,12 @@ def detect_ad_readiness(
 ) -> list[RevenueOpportunity]:
     opportunities = []
     for product_id, product in products.items():
-        product_leads = [l for l in _leads_for_product(leads, product_id) if l.signup_type == "trial"]
+        product_leads = [lead for lead in _leads_for_product(leads, product_id) if lead.signup_type == "trial"]
         trials = len(product_leads)
-        conversions = sum(1 for l in product_leads if l.converted_to_paid)
+        conversions = sum(1 for lead in product_leads if lead.converted_to_paid)
         conversion_rate = _conversion_rate(trials, conversions)
-        paying = [l for l in product_leads if l.converted_to_paid]
-        churn_rate = _conversion_rate(len(paying), sum(1 for l in paying if l.cancelled)) if paying else 1.0
+        paying = [lead for lead in product_leads if lead.converted_to_paid]
+        churn_rate = _conversion_rate(len(paying), sum(1 for lead in paying if lead.cancelled)) if paying else 1.0
 
         gates = {
             "conversion": conversion_rate > conversion_gate,
@@ -216,9 +214,9 @@ def detect_ad_readiness(
             "retention": churn_rate < churn_gate,
         }
         source_counts: dict[str, int] = defaultdict(int)
-        for l in product_leads:
-            if l.converted_to_paid:
-                source_counts[l.source] += 1
+        for lead in product_leads:
+            if lead.converted_to_paid:
+                source_counts[lead.source] += 1
         best_channel = max(source_counts, key=source_counts.get) if source_counts else "organic"
 
         if all(gates.values()):
@@ -291,8 +289,8 @@ def detect_cross_sell_opportunities(
     leads: list[Lead], products: dict[str, Product], source_product_id: str, target_product_id: str,
     icp_roles: list[str], min_matches: int = 10, conversion_low: float = 0.20, conversion_high: float = 0.30,
 ) -> Optional[RevenueOpportunity]:
-    source_customers = [l for l in _leads_for_product(leads, source_product_id) if l.converted_to_paid]
-    matches = [l for l in source_customers if l.role in icp_roles]
+    source_customers = [lead for lead in _leads_for_product(leads, source_product_id) if lead.converted_to_paid]
+    matches = [lead for lead in source_customers if lead.role in icp_roles]
     if len(matches) < min_matches:
         return None
 
@@ -321,14 +319,14 @@ def detect_seasonal_patterns(leads: list[Lead], product_id: str, min_days_observ
     product_leads = _leads_for_product(leads, product_id)
     if len(product_leads) < 10:
         return None
-    span_days = (max(l.signup_date for l in product_leads) - min(l.signup_date for l in product_leads)).days
+    span_days = (max(lead.signup_date for lead in product_leads) - min(lead.signup_date for lead in product_leads)).days
     if span_days < min_days_observed:
         return None
 
-    conversions = [l for l in product_leads if l.converted_to_paid]
+    conversions = [lead for lead in product_leads if lead.converted_to_paid]
     weekday_counts: dict[int, int] = defaultdict(int)
-    for l in conversions:
-        weekday_counts[l.signup_date.weekday()] += 1
+    for lead in conversions:
+        weekday_counts[lead.signup_date.weekday()] += 1
     total_conversions = sum(weekday_counts.values())
     tue_thu = sum(weekday_counts.get(d, 0) for d in (1, 2, 3))
     tue_thu_pct = _conversion_rate(total_conversions, tue_thu)
@@ -398,7 +396,7 @@ class RevenueIntelligenceAgent:
         window_days: int = 30,
     ) -> list[RevenueOpportunity]:
         window_start = date.fromordinal(as_of.toordinal() - window_days)
-        leads_by_email = {l.email: l for l in leads}
+        leads_by_email = {lead.email: lead for lead in leads}
 
         opportunities: list[RevenueOpportunity] = []
         opportunities += detect_expired_trials_reengaging(leads, products, as_of)

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Cloud Decoded — FastAPI application entry point.
 
 Run locally:
@@ -18,6 +16,8 @@ Run locally:
 Production:
     uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
 """
+
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
 
 import logging
 import os

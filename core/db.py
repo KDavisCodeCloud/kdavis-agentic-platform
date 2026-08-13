@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 core/db.py — shared asyncpg connection setup.
 
 asyncpg has no built-in jsonb/json decoding: without a codec registered,

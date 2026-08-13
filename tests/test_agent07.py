@@ -68,7 +68,7 @@ What this file validates:
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -76,7 +76,6 @@ import pytest
 from agents.agent_07_runbook.tools import (
     RunbookTools,
     _substitute,
-    _summarize_step_results,
 )
 from agents.agent_07_runbook.workflow import (
     RunbookWorkflow,

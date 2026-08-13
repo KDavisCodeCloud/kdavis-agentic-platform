@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 sop_agent — turns a completed agent_run record into an Obsidian-compatible
 SOP markdown file and pushes it to the vault via obsidian/vault_sync.py.
 
@@ -23,7 +21,6 @@ session.
 """
 
 from datetime import datetime, timezone
-from typing import Optional
 
 from obsidian.vault_sync import push_sop
 

@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 04 — Legacy Code & Infrastructure Migration execution tools.
 
 These tools are called ONLY after operator approval via POST /incidents/{id}/approve.

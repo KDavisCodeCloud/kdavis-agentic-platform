@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Copy-quality rules shared by every agent that drafts customer-facing prose
 (content_agent, email_sequence_agent). Kept in one place — duplicating a
 buzzword list or a word-count check in two agents is exactly the kind of

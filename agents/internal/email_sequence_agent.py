@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 email_sequence_agent — drafts the three nurture sequences CLAUDE.md
 specifies for every product (Phase 2 lead-capture section): trial
 nurture (14 emails), email-only nurture (5 emails), and post-churn

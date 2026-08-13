@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 expense_categorizer — maps a vendor/description to an IRS Schedule C
 category using keyword matching. Confidence-scored, never auto-final:
 anything below LOW_CONFIDENCE_THRESHOLD is expected to be routed to a

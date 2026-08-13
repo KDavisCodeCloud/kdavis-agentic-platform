@@ -13,6 +13,8 @@ direct, practitioner-first, no hype, earned credibility.
 All drafts go through review-agent before publishing.
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

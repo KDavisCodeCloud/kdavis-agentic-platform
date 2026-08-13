@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 LinkedIn Asset Vault — asset_logger.py
 
 # INTEGRATION: MKT-LI1 calls asset_selector.py after generating post text,

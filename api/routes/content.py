@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 Content pipeline routes.
 
 POST /content/generate                    — start brief→draft→review pipeline
@@ -34,7 +32,7 @@ from uuid import UUID
 
 import httpx
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from api.middleware.auth import get_workspace
@@ -670,7 +668,8 @@ async def connect_x(
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
 
-    import hashlib, base64
+    import hashlib
+    import base64
     code_challenge = base64.urlsafe_b64encode(
         hashlib.sha256(code_verifier.encode()).digest()
     ).rstrip(b"=").decode()

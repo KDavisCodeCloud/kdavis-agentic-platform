@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 08 — Drift Detection & Auto-Correction execution tools.
 
 All write operations execute ONLY after operator approval via POST /incidents/{id}/approve.
@@ -88,7 +86,7 @@ class DriftTools:
                 proc.communicate(), timeout=30
             )
         except asyncio.TimeoutError:
-            return {"error": f"kubectl get timed out after 30s"}
+            return {"error": "kubectl get timed out after 30s"}
         except (OSError, ValueError) as exc:
             return {"error": str(exc)}
 

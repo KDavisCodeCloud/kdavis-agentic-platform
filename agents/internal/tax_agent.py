@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 tax_agent — tracks potential deductions, estimates quarterly liability,
 packages year-end documents. Never files anything. Every output carries
 the CPA/advisor disclaimer.

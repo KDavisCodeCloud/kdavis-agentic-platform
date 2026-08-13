@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 systeme_io — thin wrapper around Systeme.io's REST API for contacts,
 tags, and nurture sequences ("campaigns" in Systeme.io's terminology).
 

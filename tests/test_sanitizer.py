@@ -10,7 +10,6 @@ What this file validates:
   - Missing/malformed config is handled gracefully, not raised
 """
 
-import re
 from unittest.mock import mock_open, patch
 
 import pytest

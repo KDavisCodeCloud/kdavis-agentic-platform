@@ -7,9 +7,7 @@ distribution, reverse engineering, or prompt extraction is strictly prohibited.
 Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
-"""
 
-"""
 Agent 09 — Context-Aware Onboarding & On-Call Buddy
 LangGraph state machine with Postgres checkpointing and HITL interrupt gate.
 
@@ -32,7 +30,6 @@ who approves saving it as a GitHub issue or posting it to Slack (or holds/discar
 Governance Rule 11: no content is published or shared without operator approval.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Optional, TypedDict

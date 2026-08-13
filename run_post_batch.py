@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 run_post_batch.py — dry-run test harness for the asset vault + post
 formatter pipeline (assets_library/). Takes a JSON batch file of test
 post objects, runs each through asset_selector.select_asset() and

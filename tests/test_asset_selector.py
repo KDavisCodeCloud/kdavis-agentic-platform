@@ -6,7 +6,6 @@ prefer is_original -> sort by times_used then last_used_date.
 import json
 from datetime import date, timedelta
 
-import pytest
 
 import assets_library.asset_selector as selector
 

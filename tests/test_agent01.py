@@ -53,9 +53,8 @@ What this file validates:
 
 import json
 import os
-import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -64,7 +63,7 @@ import pytest
 from agents.base_agent import BaseAgent, _byok_env_override
 from agents.agent_01_cicd_triage.tools import CICDTools
 from agents.agent_01_cicd_triage.workflow import CICDTriageWorkflow, CICDTriageState
-from core.hitl import HITLGate, STATUS_PENDING, STATUS_EXECUTING, STATUS_EXECUTED, STATUS_HELD
+from core.hitl import HITLGate, STATUS_EXECUTING, STATUS_HELD
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -289,7 +288,6 @@ class TestWriteAudit:
             agent = ConcreteAgent(mock_db, workspace_id)
 
         # Patch Path inside base_agent to use our tmp file
-        real_parent_parent = Path("agents/base_agent.py").parent.parent
         with patch(
             "agents.base_agent.Path",
             side_effect=lambda *args: audit_file if "knowledge" in str(args) else Path(*args),
@@ -504,7 +502,7 @@ class TestCICDTools:
     async def test_execute_option_dispatches_azure_retry(self, tools):
         mock_resp = {"status": "queued", "new_build_id": 999}
         with patch.object(tools, "retry_azure_pipeline", return_value=mock_resp) as mock_retry:
-            result = await tools.execute_option(
+            await tools.execute_option(
                 {"id": "opt_1", "title": "Retry pipeline"},
                 {
                     "cloud_provider": "azure_devops",

@@ -17,6 +17,8 @@ Ideal client profile:
   - NOT: solo devs, pure frontend teams, no cloud infra, or pre-revenue startups
 """
 
+# ruff: noqa: E402  -- sys.path/env setup must run before these imports
+
 import sys
 import json
 from pathlib import Path

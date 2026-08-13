@@ -1,9 +1,7 @@
 """
 PROPRIETARY AND CONFIDENTIAL
 Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
-"""
 
-"""
 LinkedIn publisher — official Posts API + Images API only.
 
 Uses the LinkedIn Posts API (v2) with OAuth 2.0 access tokens. Posts
