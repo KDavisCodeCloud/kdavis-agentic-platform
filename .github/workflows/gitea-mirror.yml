@@ -1,12 +1,19 @@
 name: Gitea Mirror
 
 # Mirrors every push to the internal Gitea server.
-# Trigger: push to any branch.
 # CLAUDE.md Phase 1, step 16.
+#
+# Disabled from auto-triggering as of 2026-08-13: GITEA_SSH_PRIVATE_KEY,
+# GITEA_HOST, and GITEA_REMOTE_URL were never added as repo secrets, so
+# every push-triggered run failed at "Set up SSH for Gitea" -- and its
+# own failure-notification step then failed too, since DASHBOARD_WEBHOOK_URL/
+# DASHBOARD_WEBHOOK_TOKEN are also unconfigured. Re-add the `push:`
+# trigger once a real internal Gitea server and its secrets exist --
+# until then this is workflow_dispatch-only so it stops failing noisily
+# on every commit.
 
 on:
-  push:
-    branches: ["**"]
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -1,16 +1,20 @@
 name: Deploy
 
 # Main CI/CD pipeline: test -> build -> Fargate -> notify.
-# Trigger: push to master.
 # CLAUDE.md Phase 1, step 15.
 #
-# Never fired since this workflow was written: it triggered on `main`, but
-# this repo's actual default branch is `master` -- confirmed live 2026-08-04
-# via `gh repo view --json defaultBranchRef`. Fixed to match the real branch.
+# Disabled from auto-triggering as of 2026-08-13: this targets AWS
+# Fargate/ECR/ECS infra and DASHBOARD_WEBHOOK_* secrets that were never
+# actually provisioned (only DATABASE_URL/ENCRYPTION_KEY/SUPABASE_KEY/
+# SUPABASE_URL exist as repo secrets). The real deploy path for
+# ceo-dashboard is Vercel auto-deploy on push, which is unaffected by
+# this file. Every push-triggered run failed at the ruff lint step
+# before ever reaching the AWS steps. Re-add the `push:` trigger once
+# AWS/ECS infra and its secrets actually exist -- until then this is
+# workflow_dispatch-only so it stops failing noisily on every commit.
 
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: read
