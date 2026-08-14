@@ -187,11 +187,26 @@ Every post must follow this architecture. No exceptions.
 Never summarize news. Never list features. Never write "Here are 3 reasons why X
 matters." Take a stance and defend it.
 
+Steps 3 and 4 are not the same beat and must not blur together. Step 3 zooms OUT from
+the technical detail to the stance's real-world stakes (who's affected, what's actually
+at risk, why this matters beyond one architecture choice) — it does not mention what
+Kelvin is building yet. Step 4 is the only place the product appears, and only as the
+last 1-2 sentences.
+
 ## OPINION MATRIX
 
 Before generating any post, route through one of the following stances. The `stance`
 you choose for THIS post must never be the same as `last_stance_used` (given below, if
 any) — rotate across the batch, never repeat a stance twice in a row.
+
+Picking a stance is not a label you attach after writing a generic post on the topic —
+the post's actual argument must BE that stance's specific claim, applied to the source
+material below. The stance description is the position the post takes and defends, not
+mood-setting or a vague inspiration. A reader who knows the stance descriptions should
+be able to identify which one you picked from the post's content alone, without seeing
+the `stance` field. If the source material doesn't naturally support any stance's real
+argument, pick the closest one and bend the ANGLE to fit the stance — never bend the
+stance to loosely fit the angle.
 
 HIRING: Companies announced AI would replace headcount, sold it to shareholders, cut
 jobs — then discovered AI still needs humans to run it. Can't admit the mistake so they

@@ -182,5 +182,649 @@
       "Responsible AI workflows",
       "Orchestrator agent architecture"
     ]
+  },
+  {
+    "id": "img_009",
+    "filename": "my_originals/cloud-and-ai-execution/api-integration-failures-that-aren-t-code-bugs-why-direct-endpoint-verification-catches-what-docs-and-assumptions-miss_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "API debugging",
+      "HTTP status codes",
+      "API authentication",
+      "developer tools"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "API error handling best practices",
+      "debugging APIs in production",
+      "HTTP 403 vs 404 explained",
+      "why you should test APIs directly with curl",
+      "trusting live endpoints over documentation"
+    ]
+  },
+  {
+    "id": "img_010",
+    "filename": "my_originals/cloud-and-ai-execution/building-can-spam-compliance-into-an-email-sending-agent-hmac-tokens-suppression-lists-and-fail-closed-design_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "CAN-SPAM",
+      "email compliance",
+      "agent guardrails",
+      "suppression list"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Building compliant AI email agents",
+      "Email automation guardrails",
+      "CAN-SPAM compliance in AI workflows",
+      "Fail-safe design patterns for AI agents",
+      "Responsible AI agent deployment"
+    ]
+  },
+  {
+    "id": "img_011",
+    "filename": "my_originals/cloud-and-ai-execution/can-spam-compliance-architecture-for-agentic-email-systems_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "email compliance",
+      "AI agents",
+      "HMAC token",
+      "CAN-SPAM"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "building compliant AI email agents",
+      "CAN-SPAM compliance in agentic workflows",
+      "suppression list best practices for AI",
+      "HMAC unsubscribe token generation",
+      "fail-safe design patterns for AI agents"
+    ]
+  },
+  {
+    "id": "img_012",
+    "filename": "my_originals/cloud-and-ai-execution/fail-closed-vs-fail-open-compliance-as-an-engineering-decision_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "fail-open",
+      "fail-closed",
+      "compliance engineering",
+      "error handling"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "system reliability design",
+      "CAN-SPAM compliance",
+      "engineering decision frameworks",
+      "exception handling best practices",
+      "email infrastructure architecture"
+    ]
+  },
+  {
+    "id": "img_013",
+    "filename": "my_originals/cloud-and-ai-execution/graceful-failure-masking-real-gaps-in-agentic-systems_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "graceful failure",
+      "observability",
+      "fallback",
+      "agent orchestration"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "building resilient AI agents",
+      "observability in agentic systems",
+      "fallback strategies for AI modules",
+      "monitoring multi-agent pipelines",
+      "graceful degradation in production AI"
+    ]
+  },
+  {
+    "id": "img_014",
+    "filename": "my_originals/cloud-and-ai-execution/health-checks-that-lie-why-a-200-ok-is-not-a-readiness-signal_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "health checks",
+      "liveness probe",
+      "readiness probe",
+      "Kubernetes"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Kubernetes health check best practices",
+      "liveness vs readiness probes explained",
+      "connection pool exhaustion debugging",
+      "load balancer traffic routing",
+      "building resilient microservices"
+    ]
+  },
+  {
+    "id": "img_015",
+    "filename": "my_originals/cloud-and-ai-execution/hitl-gates-must-be-first-class-architecture-not-afterthoughts-in-agentic-systems_20260814.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "HITL",
+      "Human-in-the-Loop",
+      "AI Safety",
+      "Agent Architecture"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Human oversight in AI agents",
+      "Designing safe agentic workflows",
+      "Trust boundaries in AI systems",
+      "Irreversible actions and AI checkpoints",
+      "AI governance and control patterns"
+    ]
+  },
+  {
+    "id": "img_016",
+    "filename": "my_originals/cloud-and-ai-execution/how-graceful-failure-handling-masked-a-broken-agent-for-months_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "agent orchestration",
+      "fallback behavior",
+      "silent failures",
+      "error handling"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "silent failures in AI agents",
+      "why your AI pipeline looks healthy but isn't",
+      "orchestrator fallback design patterns",
+      "debugging multi-agent systems",
+      "building resilient AI pipelines"
+    ]
+  },
+  {
+    "id": "img_017",
+    "filename": "my_originals/cloud-and-ai-execution/kubernetes-by-default-is-an-infrastructure-trap-most-teams-need-better-pipelines-not-more-orchestration_20260814.png",
+    "category": "Cloud / DevOps",
+    "topic_tags": [
+      "Kubernetes",
+      "CI/CD",
+      "container orchestration",
+      "deployment strategy"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "When to use Kubernetes vs simpler solutions",
+      "CI/CD pipeline best practices",
+      "avoiding over-engineering in DevOps",
+      "Kubernetes vs EKS vs AKS comparison",
+      "technical debt and complexity in software engineering"
+    ]
+  },
+  {
+    "id": "img_018",
+    "filename": "my_originals/cloud-and-ai-execution/multi-tenant-isolation-as-a-security-boundary-not-a-schema-decision_20260814.png",
+    "category": "System Design",
+    "topic_tags": [
+      "multi-tenancy",
+      "database isolation",
+      "security boundaries",
+      "SaaS architecture"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "SaaS security architecture",
+      "multi-tenant database design",
+      "data isolation strategies",
+      "cloud security compliance",
+      "agentic AI pipeline security"
+    ]
+  },
+  {
+    "id": "img_019",
+    "filename": "my_originals/cloud-and-ai-execution/why-direct-api-verification-beats-documentation-trust-in-integration-work_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "API Integration",
+      "curl",
+      "Debugging",
+      "API Verification"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "API testing best practices",
+      "How to debug API errors before writing integration code",
+      "403 vs 404 HTTP errors explained",
+      "Why you should verify APIs before building integrations",
+      "Developer productivity and debugging efficiency"
+    ]
+  },
+  {
+    "id": "img_020",
+    "filename": "my_originals/product-business-and-cta/content-multiplier-agent-shipped-closing-a-long-open-gap-in-the-marketing-factory_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "content multiplier agent",
+      "marketing automation",
+      "multi-platform publishing",
+      "agentic workflows"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "AI agents for marketing",
+      "automated content distribution",
+      "building AI marketing pipelines",
+      "multi-channel content strategy with AI",
+      "product research to content automation"
+    ]
+  },
+  {
+    "id": "img_021",
+    "filename": "my_originals/product-business-and-cta/how-showing-signal-actually-works-inbox-native-automation-when-there-s-no-public-api_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "email automation",
+      "CRM integration",
+      "inbox automation",
+      "HTML parsing"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "real estate tech automation",
+      "inbox-native workflow design",
+      "CRM event triggers",
+      "ShowingTime email parsing",
+      "no-code automation pipelines"
+    ]
+  },
+  {
+    "id": "img_022",
+    "filename": "my_originals/product-business-and-cta/micro-saas-engine-buyer-s-agent-workflow-product-launch-story_20260812.png",
+    "category": "Original",
+    "topic_tags": [
+      "real estate",
+      "workflow",
+      "buyer-side",
+      "independent teams"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "real estate team workflows",
+      "buyer agent process optimization",
+      "independent real estate teams",
+      "deal pipeline management",
+      "real estate productivity tools"
+    ]
+  },
+  {
+    "id": "img_023",
+    "filename": "my_originals/product-business-and-cta/shipping-can-spam-compliance-into-the-micro-saas-engine-s-outreach-system-before-anything-else_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "CAN-SPAM",
+      "email compliance",
+      "SaaS outreach",
+      "suppression list"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "email marketing compliance",
+      "SaaS product architecture",
+      "outreach automation",
+      "spam law compliance",
+      "B2B email systems"
+    ]
+  },
+  {
+    "id": "img_024",
+    "filename": "my_originals/product-business-and-cta/shipping-invisible-fixes-dead-integration-removal-and-attribution-gap-closure-in-showing-signal_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "CRM integration",
+      "attribution tracking",
+      "pipeline fix",
+      "technical debt"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "fixing broken integrations before scaling",
+      "importance of campaign attribution",
+      "removing vendor dependencies",
+      "silent failures in tech stacks",
+      "foundation-first engineering mindset"
+    ]
+  },
+  {
+    "id": "img_025",
+    "filename": "my_originals/product-business-and-cta/showing-signal-building-around-a-gap-no-api-covers_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "email parsing",
+      "API workaround",
+      "CRM automation",
+      "integration architecture"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "building without an API",
+      "email-driven automation workflows",
+      "CRM integration strategies",
+      "no-code vs custom integration trade-offs",
+      "creative workarounds for missing APIs"
+    ]
+  },
+  {
+    "id": "img_026",
+    "filename": "my_originals/product-business-and-cta/showing-signal-dead-integration-still-live-in-production-copy-and-attribution-data-that-was-never-actually-being-captured_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "build audit",
+      "attribution",
+      "CRM integration",
+      "technical debt"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "why build audits matter",
+      "hidden gaps in system architecture",
+      "attribution tracking failures",
+      "CRM integration pitfalls",
+      "technical debt in product development"
+    ]
+  },
+  {
+    "id": "img_027",
+    "filename": "my_originals/product-business-and-cta/showing-signal-product-launch-inbox-native-real-estate-automation_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "email parsing",
+      "CRM automation",
+      "inbox automation",
+      "real estate tech"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "AI automation workflows",
+      "no-code vs inbox-native tools",
+      "CRM integration strategies",
+      "email automation for real estate agents",
+      "building automation without APIs"
+    ]
+  },
+  {
+    "id": "img_028",
+    "filename": "my_originals/product-business-and-cta/showing-signal-product-positioning-built-for-buyer-s-agents-not-retrofitted_20260812.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "CRM",
+      "buyer agents",
+      "real estate tech",
+      "sales workflow"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Why generic CRMs fail buyer agents",
+      "Purpose-built vs retrofitted tools",
+      "Real estate agent tech stack",
+      "CRM selection for real estate teams",
+      "Sales process automation for agents"
+    ]
+  },
+  {
+    "id": "img_029",
+    "filename": "my_originals/product-business-and-cta/the-unglamorous-production-work-that-separates-a-live-product-from-a-demo-that-looks-live_20260812.png",
+    "category": "Career / Growth",
+    "topic_tags": [
+      "product launch",
+      "demo vs production",
+      "analytics",
+      "web development"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "shipping production-ready products",
+      "startup launch checklist",
+      "common mistakes founders make",
+      "product analytics setup",
+      "going from demo to live product"
+    ]
+  },
+  {
+    "id": "img_030",
+    "filename": "my_originals/product-business-and-cta/the-unglamorous-production-work-that-separates-a-live-product-from-one-that-just-looks-like-it_20260812.png",
+    "category": "Career / Growth",
+    "topic_tags": [
+      "product launch",
+      "shipping",
+      "iceberg model",
+      "startup reality"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "what it really takes to ship a product",
+      "hidden work behind every launch",
+      "product development lessons",
+      "startup execution vs perception",
+      "building in public"
+    ]
+  },
+  {
+    "id": "img_031",
+    "filename": "my_originals/the-builder-s-journey/dead-integration-still-live-in-production-what-a-stale-comment-revealed_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "silent failure",
+      "API deprecation",
+      "integration layer",
+      "error handling"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "silent failures in production systems",
+      "API deprecation best practices",
+      "third-party integration risks",
+      "error handling and observability",
+      "technical debt and stale code"
+    ]
+  },
+  {
+    "id": "img_032",
+    "filename": "my_originals/the-builder-s-journey/removing-a-broken-integration-entirely-instead-of-patching-it_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "technical debt",
+      "system boundaries",
+      "refactoring",
+      "dependency management"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "how to handle broken integrations",
+      "removing vs patching technical debt",
+      "clean architecture principles",
+      "dependency sprawl in software systems",
+      "engineering best practices for maintainability"
+    ]
+  },
+  {
+    "id": "img_033",
+    "filename": "my_originals/the-builder-s-journey/shipping-the-boring-compliance-fix-before-the-exciting-agent-work_20260812.png",
+    "category": "Career / Growth",
+    "topic_tags": [
+      "email compliance",
+      "CAN-SPAM",
+      "shipping software",
+      "engineering best practices"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "why compliance should come before features",
+      "shipping boring but critical fixes",
+      "email marketing compliance for developers",
+      "engineering discipline and responsibility",
+      "building production-safe systems"
+    ]
+  },
+  {
+    "id": "img_034",
+    "filename": "my_originals/the-builder-s-journey/why-the-audit-was-wrong-and-what-actually-fixed-it_20260812.png",
+    "category": "System Design",
+    "topic_tags": [
+      "security audit",
+      "live system verification",
+      "static analysis",
+      "DevSecOps"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "why static code reviews aren't enough",
+      "how to run a proper security audit",
+      "live system verification vs assumptions",
+      "DevSecOps best practices",
+      "the difference between a hypothesis and a finding"
+    ]
+  },
+  {
+    "id": "img_035",
+    "filename": "my_originals/cloud-and-ai-execution/llm-agnostic-architecture-as-a-production-requirement-not-a-feature_20260814.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "provider-agnostic",
+      "LLM abstraction",
+      "agentic pipeline",
+      "model switching"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Building provider-agnostic AI systems",
+      "How to swap LLMs without changing pipeline logic",
+      "HITL governance in agentic workflows",
+      "Comparing OpenAI vs Anthropic vs local models",
+      "Best practices for LLM architecture design"
+    ]
+  },
+  {
+    "id": "img_036",
+    "filename": "my_originals/cloud-and-ai-execution/scope-discipline-as-the-core-engineering-skill-when-building-solo-while-employed-full-time_20260814.png",
+    "category": "System Design",
+    "topic_tags": [
+      "scope discipline",
+      "solo vs team architecture",
+      "LLM systems",
+      "indie developer"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "building AI products solo",
+      "right-sizing your architecture",
+      "avoiding over-engineering",
+      "solo founder system design",
+      "LLM integration best practices"
+    ]
   }
 ]

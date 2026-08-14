@@ -1,0 +1,8 @@
+{
+  "original_creator": "Kelvin Davis",
+  "creator_linkedin": "linkedin.com/in/kelvin-davis",
+  "generated_by": "gemini",
+  "generation_date": "2026-08-14",
+  "post_topic": "LLM-agnostic architecture as a production requirement, not a feature",
+  "image_description": "Single standalone diagram. One concept only. No panels, no grids, no collages. Full bleed 1080x1080px white background. A left-to-right architecture flow diagram showing the correct LLM-agnostic pipeline structure. On the far left, a box labeled 'Application / Agentic Pipeline'. An arrow points right into a central box labeled 'Provider-Agnostic Interface Layer' with a sub-label 'Model selection = config, not code'. From that central box, three arrows fan out to the right pointing to three provider boxes stacked vertically: top box labeled 'OpenAI (GPT-4o)' with the OpenAI logo, middle box labeled 'Anthropic (Claude)' with the Anthropic logo, bottom box labeled 'Local / Ollama (Llama 3)' with a generic server icon. Above the central interface layer box, a separate box labeled 'HITL Gates + Evaluation' connects downward with a dashed arrow, with a small label 'Governance sits above model layer'. Below the central interface layer box, a small amber callout box reads 'Swap models via config \u2014 zero pipeline logic changes'. Navy #0A0F1E primary elements, blue #5a96ff highlights, amber #F5A623 callouts and important labels. Clean sans-serif font. Real cloud provider logos where relevant. Small text 'Kelvin Davis' bottom right corner. Professional LinkedIn infographic style similar to ByteByteGo. White background. No dark backgrounds."
+}
