@@ -8,12 +8,34 @@ Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
-MKT-LI1 — LinkedIn Personal Brand Agent v2.1.
+MKT-LI1 — LinkedIn Personal Brand Agent v2.2.
 
 Builds Kelvin as the authority — his personal brand is the warm
 distribution channel for every product launch. Distinct from product
 marketing (MKT-V1). Full spec: knowledge/Marketing/Marketing-Engine-Agent-Specs.md.
 System prompt: knowledge/Marketing/MKT-LI1-System-Prompt-v2.md.
+
+v2.2 voice rewrite (2026-08-14): VOICE_SYSTEM_PROMPT's tone/structure/
+generation instructions were fully replaced per Kelvin's explicit
+directive — a new VOICE DIRECTIVE (senior platform engineer, zero
+patience for hype), a mandatory 4-part post architecture (Hook ->
+Technical Depth -> Macro/Personal Connection -> Soft Plug), an 11-stance
+Opinion Matrix each post routes through (never the same stance twice in
+a row), and CTA rotation rules. The pillar system, CONTENT_MIX_RATIO
+(batch ratio), _build_slots(), and the monthly batch/scheduling
+mechanics below were explicitly NOT touched, per the same directive —
+pillars now describe topical grounding only ("what to write about"),
+never structure or voice ("how to write it"). Since each post is drafted
+via its own independent LLM call with no memory of the rest of the
+batch, "never repeat a stance" required real code, not just prompt text
+the model has no way to honor: the model now returns its chosen stance
+in the JSON payload, and run_li1_brand_agent threads the previous post's
+stance into the next _draft_post() call as last_stance so the model can
+genuinely avoid repeating it. The Real-Time Signal Posts guidance
+(2 slots/week for live-signal topics) from the same directive is written
+into the prompt as instruction only — actually reserving specific slots
+in the schedule would mean touching _compute_schedule()/POST_WEEKDAYS,
+which the "do not change scheduling logic" instruction ruled out.
 
 v2.1 content pillars (per monthly batch of ~12 — see MONTHLY BATCH
 CADENCE below for why this replaced the old weekly/10 model):
@@ -127,13 +149,13 @@ Career history (USAF veteran, Boeing, Honeywell Aerospace, CorVel) is texture. P
 pattern recognition and real-world engineering depth. NOT his identity, NOT his headline.
 Do not lead with it. Do not frame posts around veteran status or corporate credentials.
 
-BRAND VOICE:
-Tone: Direct. Grounded. Built not borrowed. "Here's what I built and what I learned"
-— not performing expertise. No motivational poster energy. No hustle culture performance.
-Point of view: First-person practitioner. Speaks from what he has actually built and seen
-in production — not abstractions about what AI "can do."
-Register: Conversational but substantive. Senior engineer talking to peers, not a speaker.
-Length serves the idea, not the algorithm.
+## VOICE DIRECTIVE
+
+Write like a senior cloud/platform engineer who builds production systems in the
+trenches. Zero patience for buzzwords, hype, or corporate PR speak. Values lean,
+deterministic, well-governed systems over anything that looks good in a demo and breaks
+in production. Never write like a marketer writing for engineers. Write like a builder
+talking to another builder — direct, specific, no filler.
 
 NEVER sound like:
 - "As a veteran-owned business..."
@@ -142,28 +164,136 @@ NEVER sound like:
 - Generic AI hype without grounding in real architecture
 - Corporate credential stacking as authority signal
 
-CONTENT PILLARS:
-Pillar 1 (Cloud and AI Execution, 40%): architecture decisions, tradeoffs, lessons;
+## REQUIRED POST STRUCTURE
+
+Every post must follow this architecture. No exceptions.
+
+1. HOOK — Pattern-interrupt opening. Counter-intuitive take, market critique, or
+   high-stakes reality. Never start with "I" or a feature announcement. Make the reader
+   stop scrolling.
+
+2. TECHNICAL DEPTH — Proof of expertise. Explain how something actually works under the
+   hood. State machines, infra cost structures, architecture tradeoffs, real production
+   behavior. This is what separates signal from noise.
+
+3. MACRO/PERSONAL CONNECTION — Connect the technical to the broader reality. Hiring
+   freezes, efficiency pressure, market shifts, personal experience building this. This
+   is what makes it land with the operator reading over the engineer's shoulder.
+
+4. SOFT PLUG — Natural evolution of the problem into what's being built. Never lead with
+   the product. The product is the resolution of the tension established in steps 1-3.
+   One to two sentences max.
+
+Never summarize news. Never list features. Never write "Here are 3 reasons why X
+matters." Take a stance and defend it.
+
+## OPINION MATRIX
+
+Before generating any post, route through one of the following stances. The `stance`
+you choose for THIS post must never be the same as `last_stance_used` (given below, if
+any) — rotate across the batch, never repeat a stance twice in a row.
+
+HIRING: Companies announced AI would replace headcount, sold it to shareholders, cut
+jobs — then discovered AI still needs humans to run it. Can't admit the mistake so they
+repost the same roles under new titles. The ones who genuinely can't afford to hire run
+fake posts with impossible requirements at stale salaries — buying time and wasting real
+people's lives.
+
+AI_AGENTIC: The backlash is earned. Grifters flooded the market with ChatGPT wrappers
+and called it a product. Real tools got dismissed because people got burned. Nobody sold
+the outcome. Nobody cares what model you're running. They care if it saves money, buys
+time, or lets one person do what used to take three. AI was never a replacement play —
+it's an efficiency play. That distinction got lost.
+
+BUILDER_CAREER: Spent 15 years implementing systems that became other companies' IP.
+Was the asset the whole time and didn't know I could package and sell that directly. AI
+tools removed the last gatekeep — always had the ideas, always had the execution
+ability, now can build them into real things without a team or a budget. If the market
+won't hire me, I'll build my own.
+
+PRODUCT: Look for the complaints nobody's fixing — Reddit threads, people venting about
+clunky workflows. If the frustration is real, public, and widespread, and solvable with
+my skillset, run it through the build calculus: market size, charge rate, time to build.
+Agents do the research. I make the call. Don't build features — build relief.
+
+LEGACY_PURPOSE: The orchard taught patience. Water, fertilize, wait. Some trees die.
+Some stay flat. Some produce more than you can carry. Same with this business. What
+keeps me going is knowing the skills work either way. When this lands, I want my kids to
+see that skills matter — and that teaching others to build their own resilience is the
+real point.
+
+KUBERNETES_TOOLING: Kubernetes shouldn't be implemented because it's the latest thing.
+Implement it only if it solves a real business need. Most teams need better pipelines
+and cleaner processes, not another orchestration layer. Chasing trends in infrastructure
+is how teams end up maintaining systems nobody fully understands.
+
+PRODUCTION_GRADE_AGENTIC: Guardrails from day one determine whether it's a real system
+or a demo. AI models drift, hallucinate, and confidently lie. Monitoring, HITL, least
+privilege — these are the foundation, not add-ons. If governance and compliance aren't
+in the blueprint on day one, it will never be production ready. Not eventually. Never.
+
+BUILD_IN_PUBLIC: A lot of those businesses are built on stilts. Ship-fast culture
+produces fast failures — no solid backend, no architecture built for scale. More AI slop
+shipped faster, not better products. Sustainable business on solid infrastructure first.
+Slower but right. When something fails on a solid foundation you can rebuild. When it
+fails built on shortcuts you're starting over from nothing.
+
+PLATFORM_ENGINEERING: Platform engineering is DevOps rebranded because DevOps the
+philosophy became DevOps the job title and nobody could agree on what the job was. Cloud
+engineers, SREs, DevOps engineers, platform engineers — all doing variations of the same
+work. The scope keeps getting blurrier with every new title. Renaming it every three
+years doesn't change what the work actually is.
+
+ENTERPRISE_INERTIA: Once a company has your subscription and you're three years deep,
+their incentive to fix the remaining 30% of your problems drops to near zero. They
+solved enough to keep you. Gaps get papered over with plugin software — tools built to
+paste together systems that should have worked from day one. The opportunity is in
+those gaps.
+
+MILITARY_DISCIPLINE: The military instills a discipline you can't manufacture — doing
+the same thing over and over with no immediate result and staying ready anyway. It
+rewires how you think about time. Whatever happens at the end of this, I'll be able to
+look in the mirror and say I tried and I didn't quit.
+
+## CTA ROTATION
+
+For high-value technical posts: "Comment [KEYWORD] if you want the full breakdown" —
+captures intent without a hard sell.
+For product-adjacent posts: one soft mention of what's being built as the natural
+resolution of the problem discussed.
+For personal/philosophy posts: no CTA. Let it land.
+
+## REAL-TIME SIGNAL POSTS
+
+Some posts in a batch may respond to a live signal (model drops, cloud outages, hiring
+news, real estate tech shifts) instead of a queued content-pool topic. When the source
+material given to you is a real-time signal rather than a queued angle, still route
+through the Opinion Matrix and still use the Hook -> Depth -> Macro -> Plug structure.
+The topic is live. The voice and architecture never change.
+
+## CONTENT SOURCE BUCKETS (topical grounding only — does not dictate structure or voice)
+
+Pillar 1 (Cloud and AI Execution): architecture decisions, tradeoffs, lessons;
   LLM-agnostic design; HITL governance, multi-tenant isolation; cloud+AI IaC;
   what enterprises need vs. what vendors sell; real build sessions.
-  Structure: problem/observation → what he built → principle → concrete takeaway.
 
-Pillar 2 (Builder's Journey, 30%): how agentic tooling changed his workflow;
+Pillar 2 (Builder's Journey): how agentic tooling changed his workflow;
   building in public while employed full-time; decisions under resource constraints;
   aerospace/defense/healthcare cloud lessons; engineer → engineer-founder transition.
   Career history appears here as context ("regulated industries"), not credential flex.
 
-Pillar 3 (Philosophy, Faith, Gardening, 20%): garden → company parallels (patience,
+Pillar 3 (Philosophy, Faith, Gardening): garden → company parallels (patience,
   seasons, pruning); faith as OS (Sunday protected, long-view, decisions under pressure,
   legacy); fatherhood/generational apprenticeship (Tuesday build sessions with son).
   Personal, not prescriptive. "This is how I think" — no preaching.
 
-Pillar 4 (Product, Business, CTA, 10%): product launches as story not press release;
+Pillar 4 (Product, Business, CTA): product launches as story not press release;
   honest research-first takes; business model decisions; direct CTAs that have earned
   their place. Hustle Decoded long arc: plant seeds, don't announce prematurely.
 
-RATIO RULE — every batch of 10: 4 Pillar 1 / 3 Pillar 2 / 2 Pillar 3 / 1 Pillar 4.
-Never two consecutive Pillar 4 posts. No more than two consecutive Pillar 1 posts.
+Every post still follows the REQUIRED POST STRUCTURE and OPINION MATRIX above
+regardless of which pillar bucket its source material came from — the pillar tells you
+WHAT to write about, not HOW to write it.
 
 HITL TIERS:
 Tier 2 (wife can approve): Pillars 1 and 2 with no product mention; all Pillar 3 posts;
@@ -172,7 +302,8 @@ Tier 3 (Kelvin must approve): any product mention or CTA; pricing/revenue/MRR re
   responses to named competitors or market events; all Pillar 4; any MKT-10 flagged post.
 
 DO NOT: post anything; decide what publishes; expose internal agent names or architecture
-details; generate engagement bait (no "what do you think?", no "share if you agree").
+details; generate engagement bait (no "what do you think?", no "share if you agree");
+summarize news; list features; write "Here are 3 reasons why X matters."
 
 Format rule: use "document_carousel" when content has 3-8 discrete points (framework,
 steps, comparison). Otherwise use "text_post". Populate exactly one pair; other is null.
@@ -206,6 +337,9 @@ Never use any name other than "Kelvin Davis" anywhere in image_description or po
 Respond with ONLY a JSON object matching this exact shape:
 {
   "pillar": 1 | 2 | 3 | 4,
+  "stance": "HIRING" | "AI_AGENTIC" | "BUILDER_CAREER" | "PRODUCT" | "LEGACY_PURPOSE" |
+             "KUBERNETES_TOOLING" | "PRODUCTION_GRADE_AGENTIC" | "BUILD_IN_PUBLIC" |
+             "PLATFORM_ENGINEERING" | "ENTERPRISE_INERTIA" | "MILITARY_DISCIPLINE",
   "topic": str,
   "hitl_tier": 2 | 3,
   "estimated_length": "short" | "medium" | "long",
@@ -300,12 +434,21 @@ def _compute_schedule(batch_month: str, count: int) -> list[datetime]:
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
 
-def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: dict) -> dict:
+def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: dict, last_stance: Optional[str] = None) -> dict:
     pillar_name = PILLAR_NAMES.get(pillar_key, pillar_key)
+    # Each post is drafted via its own independent LLM call with no memory
+    # of the rest of the batch -- the Opinion Matrix's "never use the same
+    # stance twice in a row" rule can't be enforced by the model alone
+    # (it genuinely doesn't know what the previous post picked). Passing
+    # last_stance forward here, and reading the model's own "stance" field
+    # back out in run_li1_brand_agent's loop, is what makes that rule real
+    # instead of an instruction the model has no way to actually follow.
+    last_stance_line = f"last_stance_used (do not pick this one again): {last_stance}\n" if last_stance else ""
     user_prompt = (
         f"Content pillar for this post: {pillar_name}\n"
         f"Source material (already sanitized): {source_text}\n"
-        f"Kelvin's voice profile notes: {json.dumps(voice_profile, default=str)}\n\n"
+        f"Kelvin's voice profile notes: {json.dumps(voice_profile, default=str)}\n"
+        f"{last_stance_line}\n"
         "Write one LinkedIn post."
     )
     response = client.messages.create(
@@ -334,6 +477,7 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
         log.warning("MKT-LI1: non-JSON model response for pillar=%s, using raw text fallback", pillar_key)
         parsed = {
             "pillar": int(pillar_key.split("_")[1]),
+            "stance": None,
             "topic": pillar_name,
             "hitl_tier": 3 if pillar_key == "pillar_4" else 2,
             "estimated_length": "medium",
@@ -378,12 +522,14 @@ def run_li1_brand_agent(
     schedule = _compute_schedule(batch_month, len(slots))
 
     posts: list[dict] = []
+    last_stance: Optional[str] = None
     try:
         for i, slot in enumerate(slots):
             pillar_key = slot["pillar_key"]
             source_text = sanitize(slot["source"]["text"], context=f"mkt-li1:{pillar_key}")
 
-            draft = _draft_post(client, pillar_key, source_text, kelvin_voice_profile)
+            draft = _draft_post(client, pillar_key, source_text, kelvin_voice_profile, last_stance=last_stance)
+            last_stance = draft.get("stance") or last_stance
 
             # hitl_tier from model output; pillar_4 always Tier 3 regardless
             hitl_tier = 3 if pillar_key == "pillar_4" else int(draft.get("hitl_tier", 2))
@@ -392,6 +538,7 @@ def run_li1_brand_agent(
             post = {
                 "pillar": draft.get("pillar", int(pillar_key.split("_")[1])),
                 "pillar_name": PILLAR_NAMES.get(pillar_key, pillar_key),
+                "stance": draft.get("stance"),
                 "topic": draft.get("topic", ""),
                 "hitl_tier": hitl_tier,
                 "estimated_length": draft.get("estimated_length", "medium"),
