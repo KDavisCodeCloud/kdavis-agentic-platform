@@ -8,12 +8,24 @@ Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
-MKT-LI1 — LinkedIn Personal Brand Agent v2.2.
+MKT-LI1 — LinkedIn Personal Brand Agent v2.3.
 
 Builds Kelvin as the authority — his personal brand is the warm
 distribution channel for every product launch. Distinct from product
 marketing (MKT-V1). Full spec: knowledge/Marketing/Marketing-Engine-Agent-Specs.md.
 System prompt: knowledge/Marketing/MKT-LI1-System-Prompt-v2.md.
+
+v2.3 (2026-08-14): two new manually-triggered post types,
+generate_builder_post(session_notes) and generate_product_launch_post(
+product_name, problem, audience, outcome, url) — see their own
+docstrings below. Neither draws from the evergreen batch pool
+(_content_pool/_build_slots/_compute_schedule/CONTENT_MIX_RATIO) or
+routes through the Opinion Matrix; each has its own dedicated system
+prompt (BUILDER_POST_SYSTEM_PROMPT / PRODUCT_LAUNCH_SYSTEM_PROMPT) that
+reuses the Voice Directive tone without touching VOICE_SYSTEM_PROMPT
+itself. Everything below this paragraph — the evergreen batch flow,
+VOICE_SYSTEM_PROMPT, the Opinion Matrix, CONTENT_MIX_RATIO, the
+scheduling mechanics — is unchanged, per explicit instruction.
 
 v2.2 voice rewrite (2026-08-14): VOICE_SYSTEM_PROMPT's tone/structure/
 generation instructions were fully replaced per Kelvin's explicit
@@ -369,6 +381,98 @@ Respond with ONLY a JSON object matching this exact shape:
 }"""
 
 
+# Two new post types (added 2026-08-14, generate_builder_post/
+# generate_product_launch_post below) -- manually triggered, separate
+# entry points that do NOT draw from the evergreen batch pool
+# (_content_pool/_build_slots/_compute_schedule/CONTENT_MIX_RATIO), do
+# NOT route through the Opinion Matrix, and do not touch
+# VOICE_SYSTEM_PROMPT above at all, per explicit instruction. Each gets
+# its own dedicated system prompt below rather than a fragment spliced
+# out of VOICE_SYSTEM_PROMPT, specifically so nothing here can change
+# the evergreen batch's behavior.
+
+BUILDER_POST_SYSTEM_PROMPT = """You are MKT-LI1, drafting a "Builder Post" for Kelvin Davis, founder of
+THD Agentic Systems LLC and the Decoded Empire portfolio. Your sole function here is to turn Kelvin's own
+raw session notes into one LinkedIn post. You do not publish.
+
+WHO KELVIN IS:
+Kelvin is a Senior Cloud/DevOps Engineer with 7+ years of multi-cloud experience simultaneously building
+a portfolio of agentic software products. Not a consultant — a builder documenting the build in public.
+
+## VOICE DIRECTIVE
+
+Write like a senior cloud/platform engineer who builds production systems in the trenches. Zero patience
+for buzzwords, hype, or corporate PR speak. Never write like a marketer writing for engineers. Write like
+a builder talking to another builder — direct, specific, no filler.
+
+NEVER sound like:
+- "Proud to share that..." / "Excited to announce..."
+- "Thoughts? Drop them below!"
+- Generic AI hype without grounding in real architecture
+
+## SOURCE-OF-TRUTH RULE — read this before writing anything
+
+Every claim, detail, decision, number, and outcome in this post MUST come directly from the session notes
+given below. Never invent a detail, a metric, a business impact, or an outcome that isn't stated in the
+notes. If the notes describe something that broke, failed, or didn't work, the post says so plainly —
+never soften it, never spin it into a success, never imply an outcome the notes don't state. If the notes
+are thin on a particular beat below, keep that beat thin rather than filling the gap with something
+invented.
+
+## STRUCTURE
+
+Same four-beat architecture as Kelvin's other posts, sourced entirely from the notes:
+
+1. HOOK — Pattern-interrupt opening drawn from the single most specific, concrete detail in the notes.
+   Never start with "I". Never a feature announcement.
+2. TECHNICAL DEPTH — What actually happened this session: what was built, what broke, what decision was
+   made and why — grounded only in the notes.
+3. MACRO/PERSONAL CONNECTION — What this session's work says about building solo, under real constraints
+   — still grounded in the notes' own content, never invented context.
+4. CLOSE — Never a product pitch. Either end with nothing further, or exactly one soft, genuine question
+   to the reader (e.g. "Anyone else hit this building solo?"). No CTA driving to a product, a link, or a
+   comment-this-keyword prompt.
+
+Respond with ONLY a JSON object matching this exact shape:
+{
+  "post_copy": str,
+  "hook_variants": [str, str, str],
+  "notes": str
+}"""
+
+PRODUCT_LAUNCH_SYSTEM_PROMPT = """You are MKT-LI1, drafting a "Product Launch Post" for Kelvin Davis,
+founder of THD Agentic Systems LLC and the Decoded Empire portfolio, announcing that a new MSE product has
+shipped. You do not publish.
+
+## VOICE DIRECTIVE
+
+Write like a senior cloud/platform engineer who builds production systems in the trenches. Zero patience
+for buzzwords, hype, or corporate PR speak. Never write like a marketer writing for engineers. Write like
+a builder talking to another builder — direct, specific, no filler.
+
+NEVER sound like:
+- "I'm excited to announce..."
+- Launch-day corporate energy, hype, or apologizing for the pitch
+- A feature list
+
+## STRUCTURE — exactly four parts, in this order, no exceptions
+
+1. THE PROBLEM IT SOLVES — one sentence, in the buyer's own language, no technical architecture, no
+   jargon.
+2. WHO IT'S FOR — specific. Never "businesses" or "teams" generically — name the actual role or person
+   given below.
+3. WHAT IT DOES — one to three sentences max, outcome-focused. Never a feature list.
+4. THE DOOR — a direct call to action that includes the URL given below verbatim. No apology for the
+   pitch, no soft plug, no "check it out if you're curious" hedging.
+
+Respond with ONLY a JSON object matching this exact shape:
+{
+  "post_copy": str,
+  "hook_variants": [str, str, str],
+  "notes": str
+}"""
+
+
 def _content_pool(research_report: dict, idea_reservoir: list, build_updates: list) -> dict[str, list[dict]]:
     """Buckets source material by pillar key. Never fabricates — a pillar with
     no source material simply yields no post that week."""
@@ -601,4 +705,140 @@ def run_li1_brand_agent(
     except Exception as exc:
         write_audit_log(AGENT_ID, "monthly_batch_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
         emit_event(AGENT_ID, "monthly_batch_failed", {"error": str(exc)})
+        raise
+
+
+def generate_builder_post(
+    session_notes: str,
+    anthropic_client: Optional[Any] = None,
+    supabase_client: Optional[Any] = None,
+) -> dict:
+    """
+    Manually triggered entry point for a "Builder Post" — built entirely
+    from Kelvin's own raw session notes, never from the evergreen batch
+    pool (no pillar, no Opinion Matrix stance, no scheduled_for; this
+    doesn't touch POSTS_PER_BATCH/CONTENT_MIX_RATIO/_compute_schedule at
+    all). Deliberately does not route through the Opinion Matrix — that
+    matrix's own instruction ("bend the ANGLE to fit the stance") would
+    directly violate this post type's source-of-truth requirement, and
+    Kelvin's task spec for this post type never asked for a stance.
+    Always Tier 2 unless MKT-10 flags something, matching the existing
+    "purely educational/personal post with no CTA" Tier 2 criterion —
+    a Builder Post is never a product mention by design.
+    """
+    client = get_anthropic_client(anthropic_client)
+    sanitized_notes = sanitize(session_notes, context="mkt-li1:builder_post")
+    user_prompt = f"Kelvin's raw session notes (already sanitized):\n{sanitized_notes}\n\nWrite one Builder Post."
+
+    response = client.messages.create(
+        model=MODEL, max_tokens=2000, system=BUILDER_POST_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    raw_text = response.content[0].text if hasattr(response, "content") else str(response)
+    cleaned_text = _JSON_FENCE_RE.sub("", raw_text.strip()).strip()
+    try:
+        parsed = json.loads(cleaned_text, strict=False)
+    except (json.JSONDecodeError, TypeError):
+        log.warning("MKT-LI1: non-JSON model response for generate_builder_post, using raw text fallback")
+        parsed = {"post_copy": raw_text, "hook_variants": [], "notes": ""}
+
+    post_copy = parsed.get("post_copy", "")
+    compliance = run_compliance_guard(post_copy, platform="linkedin", product_id=MARKETING_PRODUCT_ID)
+    if compliance["revised_content"]:
+        post_copy = compliance["revised_content"]
+
+    hitl_tier = 2
+    post = {
+        "post_copy": post_copy,
+        "hook_variants": parsed.get("hook_variants", []) or [],
+        "format": "text_post",
+        "topic": "Builder Post",
+        "notes": parsed.get("notes", ""),
+    }
+    if compliance["flags"]:
+        post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+        hitl_tier = 3  # MKT-10 flag always escalates to Tier 3, same rule as the evergreen batch
+
+    try:
+        content_item = {**post, "agent_id": AGENT_ID}
+        queued = queue_for_review(content_item, tier=hitl_tier, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
+        post["id"] = queued.get("id")
+        post["hitl_tier"] = hitl_tier
+        write_audit_log(AGENT_ID, "builder_post_generated", resource=str(post.get("id") or "unknown"), outcome="success")
+        emit_event(AGENT_ID, "builder_post_generated", {"post_id": post.get("id")})
+        return post
+    except Exception as exc:
+        write_audit_log(AGENT_ID, "builder_post_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
+        emit_event(AGENT_ID, "builder_post_failed", {"error": str(exc)})
+        raise
+
+
+def generate_product_launch_post(
+    product_name: str,
+    problem: str,
+    audience: str,
+    outcome: str,
+    url: str,
+    anthropic_client: Optional[Any] = None,
+    supabase_client: Optional[Any] = None,
+) -> dict:
+    """
+    Manually triggered entry point for a "Product Launch Post" — fired
+    when a new MSE product ships. Not part of the evergreen batch pool
+    (no pillar, no Opinion Matrix stance, no scheduled_for). Always Tier
+    3, same rule that makes every Pillar 4 post Tier 3 in the evergreen
+    batch: a direct product mention + CTA + URL always needs Kelvin's
+    own approval.
+    """
+    client = get_anthropic_client(anthropic_client)
+    safe = sanitize(
+        json.dumps({"product_name": product_name, "problem": problem, "audience": audience, "outcome": outcome, "url": url}),
+        context="mkt-li1:product_launch_post",
+    )
+    user_prompt = f"Product launch details (already sanitized):\n{safe}\n\nWrite one Product Launch Post."
+
+    response = client.messages.create(
+        model=MODEL, max_tokens=1500, system=PRODUCT_LAUNCH_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    raw_text = response.content[0].text if hasattr(response, "content") else str(response)
+    cleaned_text = _JSON_FENCE_RE.sub("", raw_text.strip()).strip()
+    try:
+        parsed = json.loads(cleaned_text, strict=False)
+    except (json.JSONDecodeError, TypeError):
+        log.warning("MKT-LI1: non-JSON model response for generate_product_launch_post, using raw text fallback")
+        parsed = {"post_copy": f"{outcome}\n\n{url}", "hook_variants": [], "notes": ""}
+
+    post_copy = parsed.get("post_copy", "")
+    compliance = run_compliance_guard(post_copy, platform="linkedin", product_id=MARKETING_PRODUCT_ID)
+    if compliance["revised_content"]:
+        post_copy = compliance["revised_content"]
+
+    # THE DOOR (structure step 4) is a hard requirement, not a suggestion
+    # — if the model paraphrased or dropped the literal URL, append it
+    # rather than silently ship a launch post with no way to reach the product.
+    if url not in post_copy:
+        post_copy = post_copy.rstrip() + f"\n\n{url}"
+
+    post = {
+        "post_copy": post_copy,
+        "hook_variants": parsed.get("hook_variants", []) or [],
+        "format": "text_post",
+        "topic": f"Product Launch: {product_name}",
+        "notes": parsed.get("notes", ""),
+    }
+    if compliance["flags"]:
+        post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+
+    try:
+        content_item = {**post, "agent_id": AGENT_ID}
+        queued = queue_for_review(content_item, tier=3, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
+        post["id"] = queued.get("id")
+        post["hitl_tier"] = 3
+        write_audit_log(AGENT_ID, "product_launch_post_generated", resource=str(post.get("id") or "unknown"), outcome="success")
+        emit_event(AGENT_ID, "product_launch_post_generated", {"post_id": post.get("id"), "product_name": product_name})
+        return post
+    except Exception as exc:
+        write_audit_log(AGENT_ID, "product_launch_post_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
+        emit_event(AGENT_ID, "product_launch_post_failed", {"error": str(exc)})
         raise
