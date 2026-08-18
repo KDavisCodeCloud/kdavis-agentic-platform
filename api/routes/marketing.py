@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from agents.marketing.mkt_cn1_image_brief import run_cn1_image_brief
-from agents.marketing.mkt_li1_linkedin_brand import run_li1_brand_agent
+from agents.marketing.mkt_li1_linkedin_brand import generate_on_demand_posts, run_li1_brand_agent
 from agents.marketing.mkt_n1_newsletter import run_n1_newsletter
 from agents.marketing.mkt_v1_content_multiplier import run_v1_content_multiplier
 
@@ -55,6 +55,11 @@ class LinkedInBrandRequest(BaseModel):
     kelvin_voice_profile: dict
     build_updates: list = Field(default_factory=list)
     batch_month: Optional[str] = None
+
+
+class LinkedInOnDemandRequest(BaseModel):
+    count: int = Field(gt=0, le=30)
+    pillar_focus: Optional[str] = None  # None/"balanced" or "pillar_1".."pillar_4"
 
 
 class ContentMultiplyRequest(BaseModel):
@@ -95,6 +100,29 @@ def linkedin_brand(body: LinkedInBrandRequest, _: None = Depends(require_marketi
         # scripts/monthly_batch.sh saves this response and pipes it into
         # assets_library/extract_image_briefs.py, which needs more than
         # just queue_ids to build Gemini's per-post image briefs.
+        "posts": posts,
+    }
+
+
+@router.post("/linkedin-on-demand")
+def linkedin_on_demand(body: LinkedInOnDemandRequest, _: None = Depends(require_marketing_api_key)) -> dict:
+    """
+    CEO dashboard "fire posts now" button — POST /api/linkedin-queue/generate
+    in ceo-dashboard proxies here server-side. Unlike /linkedin-brand, this
+    needs no research_report/idea_reservoir/kelvin_voice_profile — see
+    generate_on_demand_posts' docstring for what stands in for them.
+    """
+    try:
+        posts = generate_on_demand_posts(body.count, pillar_focus=body.pillar_focus)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"MKT-LI1 failed: {exc}") from exc
+
+    return {
+        "success": True,
+        "post_count": len(posts),
+        "queue_ids": [post["id"] for post in posts if post.get("id")],
         "posts": posts,
     }
 

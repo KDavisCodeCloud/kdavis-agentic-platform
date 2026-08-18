@@ -137,6 +137,26 @@ PILLAR_NAMES = {
     "pillar_3": "Philosophy, Faith, and Gardening",
     "pillar_4": "Product, Business, and CTA",
 }
+# Fallback topical grounding for generate_on_demand_posts (below) -- an
+# on-demand fire has no curated research_report/idea_reservoir pool to draw
+# from (that's Kelvin's own monthly input, see MONTHLY BATCH CADENCE), so
+# each slot's source_text comes from the pillar's own CONTENT SOURCE
+# BUCKETS description in VOICE_SYSTEM_PROMPT instead of a specific angle.
+# Same "topical grounding only, never structure or voice" rule applies.
+PILLAR_TOPIC_SEEDS = {
+    "pillar_1": "Architecture decisions, tradeoffs, and lessons from building LLM-agnostic, "
+                "HITL-governed, multi-tenant cloud+AI systems -- what enterprises actually need "
+                "vs. what vendors sell. Ground it in a real, recent build decision.",
+    "pillar_2": "The builder's journey: how agentic tooling changed the daily workflow, building "
+                "in public while employed full-time, a decision made under a real resource "
+                "constraint, or the engineer-to-engineer-founder transition.",
+    "pillar_3": "Garden-to-company parallels (patience, seasons, pruning), faith as an operating "
+                "system for decisions under pressure and the long view, or fatherhood and "
+                "generational apprenticeship from a build session with his son.",
+    "pillar_4": "A product update told as a story rather than a press release, an honest "
+                "research-first take on a business decision, or a direct CTA that has earned its "
+                "place after the problem was established.",
+}
 POSTS_PER_BATCH = 12
 POST_WEEKDAYS = [1, 2, 3]  # Tue, Wed, Thu (Monday=0) — same cadence feel as the old weekly rotation
 POST_HOUR_ET = 9
@@ -550,6 +570,30 @@ def _compute_schedule(batch_month: str, count: int) -> list[datetime]:
     ]
 
 
+def _compute_ondemand_schedule(count: int, start_from: Optional[date] = None) -> list[datetime]:
+    """
+    Same POST_WEEKDAYS/POST_HOUR_ET cadence as _compute_schedule, but walks
+    forward from `start_from` (tomorrow, if not given) instead of a
+    batch_month's first day -- an on-demand fire slots into whatever days
+    are next available rather than back-filling the current month's start,
+    and rolls into following months automatically for a large count (never
+    drops a post to make it fit, same rule as _compute_schedule). Starting
+    from tomorrow rather than today avoids ever scheduling a post for a
+    time that's already in the past by the time it clears HITL review.
+    """
+    d = start_from or (datetime.now(_ET).date() + timedelta(days=1))
+    candidate_dates: list[date] = []
+    while len(candidate_dates) < count:
+        if d.weekday() in POST_WEEKDAYS:
+            candidate_dates.append(d)
+        d += timedelta(days=1)
+
+    return [
+        datetime(cd.year, cd.month, cd.day, POST_HOUR_ET, 0, tzinfo=_ET)
+        for cd in candidate_dates
+    ]
+
+
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
 
@@ -690,11 +734,12 @@ def run_li1_brand_agent(
                 if format_warnings:
                     post["notes"] = (post["notes"] + " | " if post["notes"] else "") + "post_formatter: " + "; ".join(format_warnings)
 
-            content_item = {**post, "agent_id": AGENT_ID}
             if compliance["flags"]:
-                content_item["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+                post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
                 hitl_tier = 3  # MKT-10 flag always escalates to Tier 3
+                post["hitl_tier"] = hitl_tier  # keep the returned/queued row's own field in sync with the escalation
 
+            content_item = {**post, "agent_id": AGENT_ID}
             queued = queue_for_review(content_item, tier=hitl_tier, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
             post["id"] = queued.get("id")
             posts.append(post)
@@ -705,6 +750,123 @@ def run_li1_brand_agent(
     except Exception as exc:
         write_audit_log(AGENT_ID, "monthly_batch_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
         emit_event(AGENT_ID, "monthly_batch_failed", {"error": str(exc)})
+        raise
+
+
+def generate_on_demand_posts(
+    count: int,
+    pillar_focus: Optional[str] = None,
+    supabase_client: Optional[Any] = None,
+    anthropic_client: Optional[Any] = None,
+) -> list[dict]:
+    """
+    Manually triggered "fire posts now" entry point -- the CEO dashboard's
+    fire button, not the monthly cadence. Unlike generate_builder_post/
+    generate_product_launch_post below, this DOES reuse the evergreen
+    pillar/Opinion Matrix/stance-rotation machinery (_draft_post,
+    CONTENT_MIX_RATIO, PILLAR_NAMES), since the whole point is "give me N
+    posts in the usual pillar voice" -- it just has no curated
+    research_report/idea_reservoir pool to draw slots from (that's Kelvin's
+    own monthly input), so each slot's source_text comes from
+    PILLAR_TOPIC_SEEDS instead of a specific angle.
+
+    pillar_focus=None or "balanced" apportions `count` across
+    CONTENT_MIX_RATIO exactly like the evergreen monthly batch (_build_slots).
+    A specific pillar_key (e.g. "pillar_2") routes every post in this fire
+    into that one pillar instead -- pillar_4 is still always Tier 3
+    regardless, same rule as the monthly batch.
+
+    Scheduling uses _compute_ondemand_schedule (starts from tomorrow's next
+    POST_WEEKDAYS slot) rather than _compute_schedule's batch_month start,
+    so an on-demand fire never collides with slots the monthly batch already
+    claimed for the current month. Each post's own batch_month is stamped
+    from its own scheduled date, and every row is tagged source="on_demand"
+    so the dashboard/queue can tell on-demand fires apart from the monthly
+    batch (db/migrations/017_linkedin_queue_source_column.sql).
+    """
+    if count < 1:
+        raise ValueError("count must be at least 1")
+    if pillar_focus not in (None, "balanced") and pillar_focus not in CONTENT_MIX_RATIO:
+        raise ValueError(f"pillar_focus must be 'balanced', one of {list(CONTENT_MIX_RATIO)}, or None")
+
+    client = get_anthropic_client(anthropic_client)
+
+    if pillar_focus and pillar_focus != "balanced":
+        pillar_sequence = [pillar_focus] * count
+    else:
+        quota = apportion(CONTENT_MIX_RATIO, count)
+        pillar_sequence = [key for key in CONTENT_MIX_RATIO for _ in range(quota[key])]
+
+    schedule = _compute_ondemand_schedule(len(pillar_sequence))
+
+    posts: list[dict] = []
+    last_stance: Optional[str] = None
+    try:
+        for i, pillar_key in enumerate(pillar_sequence):
+            source_text = PILLAR_TOPIC_SEEDS[pillar_key]
+
+            draft = _draft_post(client, pillar_key, source_text, {}, last_stance=last_stance)
+            last_stance = draft.get("stance") or last_stance
+
+            hitl_tier = 3 if pillar_key == "pillar_4" else int(draft.get("hitl_tier", 2))
+
+            scheduled_for = schedule[i]
+            post = {
+                "pillar": draft.get("pillar", int(pillar_key.split("_")[1])),
+                "pillar_name": PILLAR_NAMES.get(pillar_key, pillar_key),
+                "stance": draft.get("stance"),
+                "topic": draft.get("topic", ""),
+                "hitl_tier": hitl_tier,
+                "estimated_length": draft.get("estimated_length", "medium"),
+                "post_copy": draft.get("post_copy", ""),
+                "hook_variants": draft.get("hook_variants", []) or [],
+                "batch_month": scheduled_for.strftime("%Y-%m"),
+                "scheduled_for": scheduled_for.isoformat(),
+                "suggested_post_time": scheduled_for.strftime("%A %-I%p ET"),
+                "format": draft.get("format", "text_post"),
+                "image_brief": draft.get("image_brief"),
+                "image_description": draft.get("image_description"),
+                "carousel_slides": draft.get("carousel_slides"),
+                "carousel_pdf_brief": draft.get("carousel_pdf_brief"),
+                "notes": draft.get("notes", ""),
+                "source": "on_demand",
+            }
+
+            compliance = run_compliance_guard(post["post_copy"], platform="linkedin", product_id=MARKETING_PRODUCT_ID)
+            if compliance["revised_content"]:
+                post["post_copy"] = compliance["revised_content"]
+
+            if post["format"] == "text_post":
+                asset = _select_image_for_post(post["topic"], image_description=post["image_description"])
+                post["image_brief"] = asset
+                formatted_copy, format_warnings = format_post(
+                    post["post_copy"],
+                    credit_line=asset["credit_line"] if asset else None,
+                    is_original=asset["is_original"] if asset else False,
+                )
+                post["post_copy"] = formatted_copy
+                if format_warnings:
+                    post["notes"] = (post["notes"] + " | " if post["notes"] else "") + "post_formatter: " + "; ".join(format_warnings)
+
+            if compliance["flags"]:
+                post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+                hitl_tier = 3  # MKT-10 flag always escalates to Tier 3, same rule as the evergreen batch
+                post["hitl_tier"] = hitl_tier  # keep the returned/queued row's own field in sync with the escalation
+
+            content_item = {**post, "agent_id": AGENT_ID}
+            queued = queue_for_review(content_item, tier=hitl_tier, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
+            post["id"] = queued.get("id")
+            posts.append(post)
+
+        write_audit_log(
+            AGENT_ID, "on_demand_batch_generated",
+            resource=f"{len(posts)} posts, pillar_focus={pillar_focus or 'balanced'}", outcome="success",
+        )
+        emit_event(AGENT_ID, "on_demand_batch_generated", {"post_count": len(posts), "pillar_focus": pillar_focus or "balanced"})
+        return posts
+    except Exception as exc:
+        write_audit_log(AGENT_ID, "on_demand_batch_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
+        emit_event(AGENT_ID, "on_demand_batch_failed", {"error": str(exc)})
         raise
 
 

@@ -50,7 +50,12 @@ function imageStatusLabel(post: LinkedInQueuePost): string {
   return "no image match";
 }
 
-export function LinkedInBatchReview() {
+// refreshSignal: set by a sibling FireLinkedInPosts button after a
+// successful on-demand fire so this panel re-fetches and jumps to the
+// batch_month the newly generated posts landed in (which may be the
+// currently-displayed month, hence `nonce` -- setting batchMonth to an
+// unchanged value wouldn't otherwise trigger a re-fetch).
+export function LinkedInBatchReview({ refreshSignal }: { refreshSignal?: { batchMonth: string; nonce: number } } = {}) {
   const [batchMonth, setBatchMonth] = useState(currentBatchMonth());
   const [posts, setPosts] = useState<LinkedInQueuePost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,8 +79,14 @@ export function LinkedInBatchReview() {
   }, [batchMonth]);
 
   useEffect(() => {
+    if (refreshSignal) setBatchMonth(refreshSignal.batchMonth);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal?.nonce]);
+
+  useEffect(() => {
     load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, refreshSignal?.nonce]);
 
   async function review(queueId: string, status: "approved" | "rejected") {
     setActionError(null);

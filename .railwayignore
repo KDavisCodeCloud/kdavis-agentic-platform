@@ -1,0 +1,21 @@
+# Deploy target is api/main.py only. Exclude the separate Next.js apps in
+# this monorepo (each has its own node_modules/.next build output) and
+# local dev artifacts -- none of it is imported by the FastAPI backend.
+node_modules/
+.next/
+.venv/
+venv/
+.git/
+__pycache__/
+*.pyc
+
+ceo-dashboard/
+empire-dashboard/
+team-dashboard/
+frontend/
+
+dashboard_extracted/
+files_extracted/
+files_extracted_6/
+design_handoff/
+knowledge/

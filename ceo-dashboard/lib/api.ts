@@ -202,6 +202,34 @@ export async function fetchAssetBlobUrl(assetPath: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
+export interface GeneratedLinkedInPost {
+  id: string;
+  pillar_name: string;
+  topic: string;
+  scheduled_for: string;
+}
+
+// "Fire posts now" — hits app/api/linkedin-queue/generate/route.ts, which
+// proxies server-side to the Cloud Decoded FastAPI backend (real MKT-LI1
+// drafting, not a Supabase-only write like the rest of this file).
+// pillarFocus: null/"balanced" apportions across the 40/30/20/10 mix, or a
+// single "pillar_1".."pillar_4" to force every post into one pillar.
+export async function generateLinkedInPosts(
+  count: number,
+  pillarFocus: string | null,
+): Promise<{ post_count: number; posts: GeneratedLinkedInPost[] }> {
+  const res = await fetch(`/api/linkedin-queue/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ count, pillar_focus: pillarFocus }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Generating posts failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function batchApproveLinkedInQueue(
   batchMonth: string,
 ): Promise<{ approved_count: number }> {
