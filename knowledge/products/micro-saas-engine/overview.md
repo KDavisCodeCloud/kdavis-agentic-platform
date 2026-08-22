@@ -1,8 +1,8 @@
 # Micro SaaS Engine — Overview
 
-**Status:** Building — factory pipeline live, awaiting first opportunity build
-**Progress:** ~75%
-**Last updated:** 2026-07-17
+**Status:** Building — factory pipeline live, first real READY_TO_BUILD opportunity in hand (Trades vertical, 2026-08-22), not yet taken through human build approval
+**Progress:** ~75% (unchanged estimate — this update corrects what "75%" actually covers, see below, more than it adds new ground)
+**Last updated:** 2026-08-22 — see [[sprint-log]] Sprint 5. This file was stale between 2026-07-17 and 2026-08-22; Verdict v5.0 and a substantial marketing engine (MKT-R1/ORCH/O1-O5/S1/V1, Brevo) shipped in that gap undocumented here — Sprint 5 only captures what that session directly touched/verified, not a full backfill of everything built since 2026-07-17.
 **Repo:** `github.com/KDavisCodeCloud/kdavis-microsaas-engine`
 **Local path:** `/mnt/c/Users/Kelvin/projects/kdavis-microsaas-engine` (git root is the parent `/mnt/c/Users/Kelvin/projects/`, no separate `.git` in this folder)
 **Supabase project:** `microsaas-prod`
@@ -13,7 +13,7 @@
 
 ## What It Is
 
-A research-validated, retention-first software factory producing 1-2 micro-SaaS products per month from six research verticals: Healthcare/Medical Front Desk, Legal/Professional Services, E-commerce/Retail Ops, Real Estate/Property Management, HR/Ops/People Management, Finance/Accounting/Bookkeeping.
+A research-validated, retention-first software factory. Originally scoped to six problem-category research verticals (Healthcare/Medical Front Desk, Legal/Professional Services, E-commerce/Retail Ops, Real Estate/Property Management, HR/Ops/People Management, Finance/Accounting/Bookkeeping) — **none of these six ever got a real agent built** (confirmed 2026-08-22; all six `agents/*-intel/` directories are still empty `__init__.py` stubs, silently falling through to Dispatch's generic research prompt this whole time). As of 2026-08-22, four **industry** vertical agents are real and working — Residential Trades, Care Services, Personal Services, Field/Repair Services (`agents/{trades,care,service,field}_intel/`) — the first actual implementations of the per-vertical-agent pattern this repo has had.
 
 **$4,000 MRR floor** enforced at DB level and by the aggregator/Verdict gate. No product enters development without hitting this bar.
 
@@ -40,6 +40,15 @@ A research-validated, retention-first software factory producing 1-2 micro-SaaS 
 
 ---
 
+**Industry Vertical Agents + Real Pipeline Wiring (built 2026-08-22, this session — full detail in [[sprint-log]] Sprint 5):**
+- First 4 real vertical intel agents ever built in this repo: `agents/{trades,care,service,field}_intel/agent.py`
+- `opportunity_pipeline.vertical_agent_extras` (JSONB) — carries each agent's extra fields (named Facebook groups, license DB sources, `parts_integration_verdict`, `free_tier_differentiation`) forward to brief generation
+- `generate_research_report_from_verdict()` — every BUILD verdict now seeds the real `mse_research_reports`/`mse_icp_configs` and fires the already-built `run_campaign_orchestrator()` (MKT-O1/O2/O3/S1/V1), instead of a new disconnected marketing pipeline
+- Real, live, non-mocked verification: a complete Dispatch→Verdict run for the new Trades vertical produced a genuine `READY_TO_BUILD` opportunity (**$23,840 MRR, confidence 94**) — this is the first real opportunity this factory has ever produced with a working vertical agent behind it, not the generic fallback
+- Deployed: Railway `mse-api` (manual redeploy — see gap below) + Vercel frontend (auto-deploy confirmed)
+
+---
+
 ## Non-Negotiable Rules (CLAUDE.md)
 
 1. Retention scaffold ships before any feature work
@@ -57,11 +66,13 @@ A research-validated, retention-first software factory producing 1-2 micro-SaaS 
 
 ## What's Left to Go Live (see also `MSE-Build-Order.md` in the repo itself)
 
-1. Pick and run the first opportunity through the full pipeline end to end (research → Verdict → brief → human build approval → build → deploy) — nothing has gone through the whole flow yet
+1. Take the real Trades opportunity produced 2026-08-22 ($23,840 MRR, confidence 94, `READY_TO_BUILD`) through brief generation → human build approval → build → deploy — the first candidate that's actually made it this far with a real vertical agent behind it, not the generic fallback
 2. Stripe account creation — blocked on step 1 (first product discovered)
 3. Dashboard "agent last-ran" correlation across MSE/CEO/DecodedSix dashboards (DecodedSix "never run" bug flagged, not yet fixed)
 4. CEO dashboard cross-repo wiring: brief cards + monitoring health cards in the R&D department view (separate repo, not started)
 5. Monitoring/Incident/Support agent trio — deferred by design until a product hits the $4K/30-day gate
+6. Harden `node_write_pipeline`'s finding-to-result matching (currently exact `solution_concept` string equality — silently drops `icp`/`vertical_agent_extras`/etc. on a mismatch; see [[sprint-log]] Sprint 5)
+7. Confirm whether Railway's `mse-api` GitHub integration should auto-deploy on push — currently requires a manual redeploy trigger, Vercel's frontend auto-deploys fine from the same push
 
 LinkedIn HITL queue disclaimer for manual cold-DM outreach — **done**, deployed 2026-07-17 (amber banner + "MANUAL SEND" badge on `/outreach`).
 
