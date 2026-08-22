@@ -45,7 +45,7 @@ A research-validated, retention-first software factory. Originally scoped to six
 - `opportunity_pipeline.vertical_agent_extras` (JSONB) — carries each agent's extra fields (named Facebook groups, license DB sources, `parts_integration_verdict`, `free_tier_differentiation`) forward to brief generation
 - `generate_research_report_from_verdict()` — every BUILD verdict now seeds the real `mse_research_reports`/`mse_icp_configs` and fires the already-built `run_campaign_orchestrator()` (MKT-O1/O2/O3/S1/V1), instead of a new disconnected marketing pipeline
 - Real, live, non-mocked verification: a complete Dispatch→Verdict run for the new Trades vertical produced a genuine `READY_TO_BUILD` opportunity (**$23,840 MRR, confidence 94**) — this is the first real opportunity this factory has ever produced with a working vertical agent behind it, not the generic fallback
-- Deployed: Railway `mse-api` (manual redeploy — see gap below) + Vercel frontend (auto-deploy confirmed)
+- Deployed: Railway `mse-api` + Vercel frontend, both auto-deploying from GitHub pushes as of 2026-08-22 (Railway's connection had gone stale — `connect_service_source` re-run to fix it, verified live with a real test push)
 
 ---
 
@@ -72,7 +72,6 @@ A research-validated, retention-first software factory. Originally scoped to six
 4. CEO dashboard cross-repo wiring: brief cards + monitoring health cards in the R&D department view (separate repo, not started)
 5. Monitoring/Incident/Support agent trio — deferred by design until a product hits the $4K/30-day gate
 6. Harden `node_write_pipeline`'s finding-to-result matching (currently exact `solution_concept` string equality — silently drops `icp`/`vertical_agent_extras`/etc. on a mismatch; see [[sprint-log]] Sprint 5)
-7. Confirm whether Railway's `mse-api` GitHub integration should auto-deploy on push — currently requires a manual redeploy trigger, Vercel's frontend auto-deploys fine from the same push
 
 LinkedIn HITL queue disclaimer for manual cold-DM outreach — **done**, deployed 2026-07-17 (amber banner + "MANUAL SEND" badge on `/outreach`).
 

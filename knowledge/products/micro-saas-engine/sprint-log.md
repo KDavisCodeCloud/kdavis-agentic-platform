@@ -22,14 +22,14 @@
 - [x] 4 vertical scraper stubs (`scrapers/verticals/{trades,care,service,field}.py`), same `BaseScraper`/state-license-lookup pattern as the existing real estate one
 - [x] 408 tests passing (23 new)
 - [x] Verified end to end with real, non-mocked runs: live Trades-agent research pass, a full research-report-seed → campaign-orchestrator pass, and a complete real Dispatch→Verdict run for the new Trades vertical that produced a genuine `READY_TO_BUILD` opportunity ($23,840 MRR, confidence 94) in production
-- [x] Committed, pushed to `main`, deployed — Railway `mse-api` (manual redeploy needed, not auto-deploying from GitHub pushes — flagged below) and Vercel frontend (auto-deploys from GitHub, confirmed live within minutes of push)
+- [x] Committed, pushed to `main`, deployed — Railway `mse-api` and Vercel frontend
+- [x] Fixed Railway `mse-api` auto-deploy: the service's GitHub source connection had gone stale (no webhook actually registered against the repo despite `get_service_config` showing a connected source repo) — `connect_service_source` re-run against `KDavisCodeCloud/kdavis-microsaas-engine@main` re-established it. Verified live with a real empty test commit (`fcc7df5`): push → auto-build → auto-deploy → healthy, no manual trigger, cleanly replacing the prior manual deployment.
 
 ### Known gap found, not fixed (pre-existing, out of scope this sprint)
 `node_write_pipeline` matches a raw Dispatch finding back to Verdict's result by exact `solution_concept` string equality. When Verdict paraphrases the text even slightly, the match fails and everything sourced from the original finding (`icp`, `retention_hooks`, `vertical_agent_extras` included) silently lands as empty on the DB row — confirmed live on the real BUILD-verdict row produced this sprint. Affects all verticals, not just the new ones. Worth hardening (match by index or a stable id instead of a string) as its own follow-on task.
 
 ### Next
 - [ ] Harden `node_write_pipeline`'s finding-to-result matching (see gap above)
-- [ ] Confirm whether Railway's GitHub integration for `mse-api` should auto-deploy on push, or whether manual redeploy is the intended workflow
 - [ ] Pick a real opportunity (Trades one from this sprint is a live candidate) and run it through brief generation + human build approval
 - [ ] `overview.md` is still meaningfully behind actual repo state beyond what's captured above — the gap between 2026-07-17 and 2026-08-22 has more shipped in it than this sprint entry documents (this sprint only covers what today's session directly touched/verified)
 
