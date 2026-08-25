@@ -211,6 +211,23 @@ export interface MSEContentPost {
   created_at: string;
 }
 
+// nova_agent_status (jarvis-decoded supabase/migrations/011_nova_agent_status.sql).
+// Remote status/control channel for NOVA's voice agents -- purely
+// outbound-Supabase on both sides (dashboard writes `enabled`,
+// nova-voice.service polls it + writes last_heartbeat_at), deliberately
+// not routed through nova-api.service/the Cloudflare tunnel. `health` is
+// computed server-side in app/api/agent-status/route.ts, not stored.
+export type VoiceAgentHealth = "healthy" | "unhealthy" | "off";
+
+export interface VoiceAgentStatus {
+  agent_slug: "nova" | "apollo" | "ledger" | "counsel" | "board";
+  label: string;
+  enabled: boolean;
+  health: VoiceAgentHealth;
+  last_heartbeat_at: string | null;
+  status_detail: string | null;
+}
+
 export const DEPT_ROUTES = [
   { id: "overview",  label: "Overview",        path: "/dashboard/overview",   roles: ["admin", "marketing", "rnd"] },
   { id: "finance",   label: "Finance",          path: "/dashboard/finance",    roles: ["admin"] },
@@ -223,6 +240,7 @@ export const DEPT_ROUTES = [
   { id: "advisory",  label: "Advisory",         path: "/dashboard/advisory",   roles: ["admin"] },
   { id: "video",     label: "Video / Creative", path: "/dashboard/video",      roles: ["admin", "marketing"] },
   { id: "empire",    label: "Decoded Empire",   path: "/dashboard/empire",     roles: ["admin"] },
+  { id: "agents",    label: "Voice Agents",     path: "/dashboard/agents",    roles: ["admin"] },
 ] as const;
 
 export type DeptId = typeof DEPT_ROUTES[number]["id"];
