@@ -1,4 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+/* NOVA HUD (app/dashboard/agents, components/hud/NovaHud.tsx) uses its own
+   distinct typography, matching the design prototype's spec exactly --
+   not the rest of the dashboard's Inter/JetBrains Mono. */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Share+Tech+Mono&display=swap');
 
 @tailwind base;
 @tailwind components;

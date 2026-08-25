@@ -33,7 +33,7 @@ export async function GET() {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("nova_agent_status")
-    .select("agent_slug, enabled, last_heartbeat_at, status_detail, updated_at")
+    .select("agent_slug, enabled, last_heartbeat_at, status_detail, updated_at, current_state, state_updated_at")
     .order("agent_slug", { ascending: true });
 
   if (error) {

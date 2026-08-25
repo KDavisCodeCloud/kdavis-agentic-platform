@@ -1,18 +1,21 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { TopBar } from "@/components/shell/TopBar";
-import { SectionCard } from "@/components/ui/SectionCard";
-import { VoiceAgentCard } from "@/components/ui/VoiceAgentCard";
+import { NovaHud } from "@/components/hud/NovaHud";
+import { createClient } from "@/lib/supabase/client";
 import type { VoiceAgentStatus } from "@/lib/types";
 
-// Polls GET/PATCH /api/agent-status, which reads/writes jarvis-decoded's
-// nova_agent_status Supabase table directly -- no connection to
-// nova-api.service or the Cloudflare tunnel at all. Plain setInterval +
-// fetch, matching this repo's existing polling convention (no SWR/React
-// Query anywhere here) -- see components/FireButton.tsx.
+// Replaces the plain toggle-card panel with the real NOVA HUD (see
+// components/hud/NovaHud.tsx), live-driven by jarvis-decoded's
+// nova_agent_status table -- migration 011 (enable/heartbeat) + 012
+// (current_state) + 013 (Realtime read policy). Initial fetch and every
+// write still go through /api/agent-status (service-role, computes
+// health/label server-side) -- Realtime here is only a low-latency
+// "something changed, refetch" signal via the anon-key browser client,
+// not a second source of truth, so the health-computation logic never
+// has to be duplicated client-side.
 
-const POLL_INTERVAL_MS = 5000;
+const FALLBACK_POLL_MS = 15000; // safety net if a Realtime event is ever missed
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<VoiceAgentStatus[]>([]);
@@ -29,8 +32,20 @@ export default function AgentsPage() {
 
   useEffect(() => {
     fetchStatus();
-    const timer = setInterval(fetchStatus, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
+    const supabase = createClient();
+    const channel = supabase
+      .channel("nova_agent_status_hud")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "nova_agent_status" },
+        () => fetchStatus()
+      )
+      .subscribe();
+    const fallback = setInterval(fetchStatus, FALLBACK_POLL_MS);
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(fallback);
+    };
   }, [fetchStatus]);
 
   async function toggle(agentSlug: string, next: boolean) {
@@ -44,45 +59,64 @@ export default function AgentsPage() {
       });
     } finally {
       setPending((prev) => {
-        const next = new Set(prev);
-        next.delete(agentSlug);
-        return next;
+        const n = new Set(prev);
+        n.delete(agentSlug);
+        return n;
       });
       fetchStatus();
     }
   }
 
+  const nova = agents.find((a) => a.agent_slug === "nova");
+  const hudNodes = (["apollo", "counsel", "ledger", "board"] as const).map((slug) => {
+    const a = agents.find((row) => row.agent_slug === slug);
+    return { slug, label: a?.label ?? slug.toUpperCase(), enabled: a?.enabled ?? false };
+  });
+
   return (
-    <div className="flex flex-col h-full min-w-0">
-      <TopBar title="Voice Agents" />
-      <div className="flex-1 overflow-y-auto p-6 min-w-0">
-        <div className="space-y-5">
-          <SectionCard
-            title="Voice Agent Roster"
-            status="live"
-            statusNote="nova_agent_status -- toggle writes here, nova-voice.service polls + heartbeats here"
-          >
-            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-              {loading ? (
-                <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
-                  Loading…
-                </p>
-              ) : (
-                agents.map((a) => (
-                  <VoiceAgentCard
-                    key={a.agent_slug}
-                    label={a.label}
-                    enabled={a.enabled}
-                    health={a.health}
-                    statusDetail={a.status_detail}
-                    disabled={pending.has(a.agent_slug)}
-                    onToggle={(next) => toggle(a.agent_slug, next)}
-                  />
-                ))
-              )}
-            </div>
-          </SectionCard>
+    <div className="relative h-full w-full">
+      {loading ? (
+        <div
+          className="flex h-full w-full items-center justify-center font-mono text-[13px]"
+          style={{ color: "#5b6673", backgroundColor: "#02060c" }}
+        >
+          Loading NOVA…
         </div>
+      ) : (
+        <NovaHud state={nova?.current_state ?? "idle"} nodes={hudNodes} />
+      )}
+
+      {/* Compact control strip -- enable/disable, not part of the HUD's
+          own pixel-perfect 1920x1080 stage geometry. */}
+      <div
+        className="absolute top-4 right-4 flex flex-col gap-1.5 rounded-md p-3 font-mono text-[11px]"
+        style={{ backgroundColor: "rgba(2,6,12,.75)", border: "1px solid rgba(0,240,255,.3)", backdropFilter: "blur(4px)" }}
+      >
+        {agents.map((a) => (
+          <button
+            key={a.agent_slug}
+            type="button"
+            disabled={pending.has(a.agent_slug)}
+            onClick={() => toggle(a.agent_slug, !a.enabled)}
+            className="flex items-center justify-between gap-3 rounded px-2 py-1 transition-colors"
+            style={{
+              border: `1px solid ${a.enabled ? "#00f0ff" : "#2a3542"}`,
+              color: a.enabled ? "#00f0ff" : "#5b6673",
+              opacity: pending.has(a.agent_slug) ? 0.5 : 1,
+              cursor: pending.has(a.agent_slug) ? "not-allowed" : "pointer",
+              background: "transparent",
+            }}
+          >
+            <span>{a.label}</span>
+            <span
+              className="ml-2 inline-block h-2 w-2 rounded-full"
+              style={{
+                backgroundColor: a.health === "healthy" ? "#00ff88" : a.health === "unhealthy" ? "#ff0044" : "#5b6673",
+                boxShadow: a.health === "off" ? "none" : `0 0 6px ${a.health === "healthy" ? "#00ff88" : "#ff0044"}`,
+              }}
+            />
+          </button>
+        ))}
       </div>
     </div>
   );

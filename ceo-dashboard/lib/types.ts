@@ -219,6 +219,12 @@ export interface MSEContentPost {
 // computed server-side in app/api/agent-status/route.ts, not stored.
 export type VoiceAgentHealth = "healthy" | "unhealthy" | "off";
 
+// current_state (migration 012) is NOVA's own single global voice-loop
+// state, not per-agent -- matches the NOVA HUD design prototype's real
+// behavior (one `mode` driving one animation system, not five
+// independently-animated agents). Only meaningful on the "nova" row.
+export type NovaVoiceState = "idle" | "listening" | "thinking" | "talking" | "error";
+
 export interface VoiceAgentStatus {
   agent_slug: "nova" | "apollo" | "ledger" | "counsel" | "board";
   label: string;
@@ -226,6 +232,8 @@ export interface VoiceAgentStatus {
   health: VoiceAgentHealth;
   last_heartbeat_at: string | null;
   status_detail: string | null;
+  current_state: NovaVoiceState;
+  state_updated_at: string | null;
 }
 
 export const DEPT_ROUTES = [
