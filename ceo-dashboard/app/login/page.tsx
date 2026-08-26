@@ -33,11 +33,21 @@ function LoginForm() {
     setError(null);
     setLoading(true);
 
+    // The NOVA desktop app (Electron) sets a UA marker specifically so this
+    // page can tell it apart from a normal browser tab. A plain https
+    // redirect would open the confirmation link in the OS's default browser
+    // instead of the app -- an entirely separate session/cookie storage, so
+    // even a successful sign-in there would never reach the app's own
+    // window. nova://auth/callback is registered as the app's own protocol
+    // (main.ts) and is on this Supabase project's redirect allow-list.
+    const isDesktopApp = navigator.userAgent.includes("NOVADesktop");
+    const emailRedirectTo = isDesktopApp
+      ? "nova://auth/callback"
+      : `${window.location.origin}/auth/callback`;
+
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
+      options: { emailRedirectTo },
     });
 
     if (error) {
