@@ -51,12 +51,17 @@ which the "do not change scheduling logic" instruction ruled out.
 
 v2.1 content pillars (per monthly batch of ~12 — see MONTHLY BATCH
 CADENCE below for why this replaced the old weekly/10 model):
-  Pillar 1: Cloud and AI Execution (40%) — primary authority engine
+  Pillar 1: Cloud and AI Execution (30%) — primary authority engine
   Pillar 2: Builder's Journey (30%) — human layer, build-in-public
   Pillar 3: Philosophy, Faith, Gardening (20%) — differentiation layer
   Pillar 4: Product, Business, CTA (10%) — used sparingly
+  Pillar 5: Enterprise Consulting & AI Platform Architecture (10%) —
+    added 2026-08-27, carved out of Pillar 1's share (deeper/narrower
+    specialization of ground Pillar 1 already covers, not new subject
+    matter) — CTO/VP-of-Engineering-targeted infrastructure authority
+    content, no pricing or CTA by design (that's still Pillar 4's job)
 
-HITL tiers: Tier 2 (wife) = Pillars 1-3 with no product mention.
+HITL tiers: Tier 2 (wife) = Pillars 1-3 and 5 with no product mention.
 Tier 3 (Kelvin) = any Pillar 4 post, product mention, pricing, MKT-10 flag.
 
 Veteran and corporate career are texture, not identity — never headline.
@@ -130,12 +135,13 @@ log = logging.getLogger(__name__)
 AGENT_ID = "mkt-li1"
 MODEL = "claude-sonnet-4-6"
 
-CONTENT_MIX_RATIO = {"pillar_1": 0.4, "pillar_2": 0.3, "pillar_3": 0.2, "pillar_4": 0.1}
+CONTENT_MIX_RATIO = {"pillar_1": 0.3, "pillar_2": 0.3, "pillar_3": 0.2, "pillar_4": 0.1, "pillar_5": 0.1}
 PILLAR_NAMES = {
     "pillar_1": "Cloud and AI Execution",
     "pillar_2": "The Builder's Journey",
     "pillar_3": "Philosophy, Faith, and Gardening",
     "pillar_4": "Product, Business, and CTA",
+    "pillar_5": "Enterprise Consulting & AI Platform Architecture",
 }
 # Fallback topical grounding for generate_on_demand_posts (below) -- an
 # on-demand fire has no curated research_report/idea_reservoir pool to draw
@@ -156,6 +162,13 @@ PILLAR_TOPIC_SEEDS = {
     "pillar_4": "A product update told as a story rather than a press release, an honest "
                 "research-first take on a business decision, or a direct CTA that has earned its "
                 "place after the problem was established.",
+    "pillar_5": "A real infrastructure postmortem pattern (e.g. secret exposure, IaC lock "
+                "contention) and the architectural guardrail that prevents it, why production "
+                "LLM/agent systems fail without real state management and HITL gates, or an "
+                "infrastructure tradeoff framed the way a VP of Engineering or CTO actually "
+                "weighs it (risk, compliance velocity, cognitive load) rather than as a tool "
+                "pitch. Never invent a specific incident, company, or metric to sound more "
+                "authoritative -- describe the pattern and the principle, not a fabricated case.",
 }
 POSTS_PER_BATCH = 12
 POST_WEEKDAYS = [1, 2, 3]  # Tue, Wed, Thu (Monday=0) — same cadence feel as the old weekly rotation
@@ -497,7 +510,7 @@ def _content_pool(research_report: dict, idea_reservoir: list, build_updates: li
     """Buckets source material by pillar key. Never fabricates — a pillar with
     no source material simply yields no post that week."""
     content_angles = research_report.get("content_angles", []) if research_report else []
-    pool: dict[str, list[dict]] = {"pillar_1": [], "pillar_2": [], "pillar_3": [], "pillar_4": []}
+    pool: dict[str, list[dict]] = {"pillar_1": [], "pillar_2": [], "pillar_3": [], "pillar_4": [], "pillar_5": []}
 
     for angle in content_angles:
         text = angle.get("angle") if isinstance(angle, dict) else str(angle)
@@ -508,7 +521,8 @@ def _content_pool(research_report: dict, idea_reservoir: list, build_updates: li
         text = idea.get("text") if isinstance(idea, dict) else str(idea)
         # Support both old bucket names and new pillar keys
         pillar_map = {"educational": "pillar_1", "journey": "pillar_2",
-                      "repurposed": "pillar_3", "product": "pillar_4"}
+                      "repurposed": "pillar_3", "product": "pillar_4",
+                      "enterprise": "pillar_5"}
         bucket = pillar_map.get(raw_type, raw_type) if raw_type in (list(pillar_map) + list(pool)) else "pillar_2"
         if bucket not in pool:
             bucket = "pillar_2"
