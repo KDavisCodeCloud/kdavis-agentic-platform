@@ -7,6 +7,9 @@ import { MetricCard } from "@/components/ui/MetricCard";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { HITLQueuePanel } from "@/components/ui/HITLQueuePanel";
+import { MonitoringEventsPanel } from "@/components/ui/MonitoringEventsPanel";
+import { AttributionFunnelPanel } from "@/components/ui/AttributionFunnelPanel";
+import { SurfaceReviewPanel } from "@/components/ui/SurfaceReviewPanel";
 import { ActivityFeedRow } from "@/components/ui/ActivityFeedRow";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { FireButton } from "@/components/ui/FireButton";
@@ -51,6 +54,7 @@ export default function OverviewPage() {
   const supabase = createClient();
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [hitlCount, setHitlCount] = useState(0);
+  const [monitoringEventCount, setMonitoringEventCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const fetchEvents = useCallback(async () => {
@@ -95,6 +99,7 @@ export default function OverviewPage() {
             <MetricCard label="Portfolio MRR"  value="$0"    subtext="6 products tracked"  accent="#5eead4" live={false} />
             <MetricCard label="Products Live"  value="1"     subtext="of 6 in portfolio"   accent="#6fce8f" live={false} />
             <MetricCard label="Open HITL Items" value={String(hitlCount)} subtext="pending approval" accent="#e8963f" live={true} />
+            <MetricCard label="Monitoring Events" value={String(monitoringEventCount)} subtext="open, needs review" accent="#e8963f" live={true} />
             <MetricCard label="Stack Burn / mo" value="~$225" subtext="infra cost estimate" accent="#e05d5d" live={false} />
           </div>
 
@@ -168,6 +173,31 @@ export default function OverviewPage() {
               {/* TODO: batch-approve UX for 3+ similar items */}
             </SectionCard>
           </div>
+
+          {/* MSE Monitoring Events -- NOVA gap-closure Phase C1. First UI
+              surface for mse_monitoring_events anywhere; populated today by
+              nova/agents/ledger/monitoring_activation.py's $4K-MRR/30-day
+              threshold trigger. Approving/acknowledging here does not yet
+              dispatch anything (Phase D, not built) -- it only clears the
+              event off this open-only queue. */}
+          <SectionCard title="MSE Monitoring Events" status="live" statusNote="mse_monitoring_events, realtime">
+            <MonitoringEventsPanel onCountChange={setMonitoringEventCount} />
+          </SectionCard>
+
+          {/* DIST Phase 1 (2026-08-30) -- per-product signup/activation
+              funnel. Refetches on a 60s interval, not realtime (see
+              AttributionFunnelPanel.tsx's own comment on why). */}
+          <SectionCard title="Attribution Funnel" status="live" statusNote="mse_funnel_events, 60s refresh">
+            <AttributionFunnelPanel />
+          </SectionCard>
+
+          {/* DIST Phase 5 (2026-08-30) -- Tier 2 batch review, bulk
+              approve/reject. Tier 1 auto-publishes and never appears
+              here; Tier 3 is owner-only/individual and deliberately
+              excluded (see SurfaceReviewPanel.tsx's own comment). */}
+          <SectionCard title="Surface Review (Tier 2)" status="live" statusNote="mse_content_surfaces, 60s refresh">
+            <SurfaceReviewPanel />
+          </SectionCard>
 
           {/* Team Ops */}
           <SectionCard title="Team Ops" status="not_built" statusNote="static mock roster">

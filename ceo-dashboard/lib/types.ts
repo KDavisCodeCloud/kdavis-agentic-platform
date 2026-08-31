@@ -211,6 +211,33 @@ export interface MSEContentPost {
   created_at: string;
 }
 
+// mse_monitoring_events (kdavis-microsaas-engine
+// supabase/migrations/20260717000011_factory_expansion.sql). NOVA gap-
+// closure Phase C1 -- first UI surface for this table anywhere; it's
+// populated today by nova/agents/ledger/monitoring_activation.py's
+// $4K-MRR/30-day threshold trigger (jarvis-decoded), 'triggered' run_type
+// only so far, 'nightly'/'manual' are real values the schema supports but
+// nothing writes yet.
+export type MonitoringSeverity = "P1" | "P2" | "P3" | "healthy";
+export type MonitoringEventStatus = "open" | "acknowledged" | "resolved" | "dismissed";
+
+export interface MonitoringEvent {
+  id: string;
+  product_slug: string;
+  product_name: string;
+  run_type: "nightly" | "triggered" | "manual";
+  severity: MonitoringSeverity | null;
+  triggered_thresholds: Array<{ metric: string; value: number; threshold: number }>;
+  recommended_action: string | null;
+  requires_human_decision: boolean;
+  context: string | null;
+  status: MonitoringEventStatus;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  resolution_notes: string | null;
+  created_at: string;
+}
+
 // nova_agent_status (jarvis-decoded supabase/migrations/011_nova_agent_status.sql).
 // Remote status/control channel for NOVA's voice agents -- purely
 // outbound-Supabase on both sides (dashboard writes `enabled`,
@@ -252,3 +279,46 @@ export const DEPT_ROUTES = [
 ] as const;
 
 export type DeptId = typeof DEPT_ROUTES[number]["id"];
+
+// DIST Phase 1 (2026-08-30). mse_funnel_events.step is queried directly
+// (not just mse_attribution_summary, which only rolls up signups/paid) so
+// the panel can show real per-step drop-off, not just first/last touch.
+export const FUNNEL_STEPS = ["signup", "email_verified", "activated", "trial_started", "paid", "churned"] as const;
+export type FunnelStep = typeof FUNNEL_STEPS[number];
+
+export interface MseFunnelEvent {
+  id: string;
+  product_id: string;
+  tenant_id: string;
+  step: FunnelStep;
+  occurred_at: string;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface MseProduct {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  activation_definition: string | null;
+}
+
+// DIST Phase 5 (2026-08-30) -- mse_content_surfaces (migration 032).
+// hitl_tier: 1 auto-publishes on a quality-gate pass (never appears here
+// with status='pending_review' for long), 2 is this panel's own scope,
+// 3 is owner-only/individual and deliberately excluded from bulk review.
+export type ContentArchetype = "vs_competitor" | "alternatives_to" | "jurisdiction" | "jtbd" | "calculator" | "faq_block";
+export type SurfaceStatus = "draft" | "pending_review" | "approved" | "published" | "stale" | "archived";
+
+export interface MseContentSurface {
+  id: string;
+  product_id: string;
+  archetype: ContentArchetype;
+  slug: string;
+  title: string;
+  body_mdx: string | null;
+  hitl_tier: 1 | 2 | 3;
+  status: SurfaceStatus;
+  reject_reason: string | null;
+  created_at: string;
+}
