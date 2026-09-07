@@ -4,23 +4,13 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { AgentRosterCard } from "@/components/ui/AgentRosterCard";
 import { LinkedInBatchPanel } from "@/components/ui/LinkedInBatchPanel";
 import { MSEContentReview } from "@/components/ui/MSEContentReview";
-
-const PIPELINE_STAGES = [
-  { stage: "Cold",      count: 0, mrr_potential: "$0" },
-  { stage: "Contacted", count: 0, mrr_potential: "$0" },
-  { stage: "Demo",      count: 0, mrr_potential: "$0" },
-  { stage: "Trial",     count: 0, mrr_potential: "$0" },
-  { stage: "Paying",    count: 0, mrr_potential: "$0" },
-];
+import { LeadPipelinePanel } from "@/components/ui/LeadPipelinePanel";
+import { OutreachTracker } from "@/components/ui/OutreachTracker";
 
 const MARKETING_AGENTS = [
   { name: "LinkedIn Content",   status: "active",   lastRun: "2026-08-12", output: "MKT-LI1 — normally ~12 posts/mo, 16-post batch this run" },
   { name: "Cold Email",         status: "pending",  lastRun: null, output: "Not yet built" },
   { name: "Conversion Tracker", status: "pending",  lastRun: null, output: "Not yet built" },
-];
-
-const OUTREACH = [
-  { sequence: "MSE Intro Sequence", product: "MSE", sent: 0, opens: "—", meetings: 0 },
 ];
 
 export default function MarketingPage() {
@@ -30,27 +20,12 @@ export default function MarketingPage() {
 
       <div className="flex-1 overflow-y-auto p-6 min-w-0">
         <div className="space-y-5">
-          {/* Pipeline Stages */}
-          <SectionCard title="Sales Pipeline" status="not_built" statusNote="static mock — no CRM/pipeline table wired yet">
-            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
-              {PIPELINE_STAGES.map((stage) => (
-                <div
-                  key={stage.stage}
-                  className="rounded-[10px] p-3.5 text-center"
-                  style={{ backgroundColor: "#10151b", border: "1px solid #1c222b" }}
-                >
-                  <p className="text-[11px] font-mono uppercase mb-2" style={{ color: "#5b6673" }}>
-                    {stage.stage}
-                  </p>
-                  <p className="text-[22px] font-extrabold mb-1" style={{ color: "#eef2f5" }}>
-                    {stage.count}
-                  </p>
-                  <p className="text-[11px] font-mono" style={{ color: "#5eead4" }}>
-                    {stage.mrr_potential}
-                  </p>
-                </div>
-              ))}
-            </div>
+          {/* Lead Pipeline — real mse_leads.stage counts (DIST Phase 8's
+              CRM columns, applied to microsaas-prod 2026-09-07) plus the
+              manual n8n-outage fallback for the lead finder / sequence
+              sender crons. Replaces the old static "not_built" mock. */}
+          <SectionCard title="Lead Pipeline" status="live" statusNote="mse_leads.stage + mse_activities, DIST Phase 8">
+            <LeadPipelinePanel />
           </SectionCard>
 
           {/* LinkedIn Monthly Batch — MKT-LI1's ~12 posts, plus on-demand fire, review/approve/schedule */}
@@ -76,46 +51,12 @@ export default function MarketingPage() {
             </div>
           </SectionCard>
 
-          {/* Cold Outreach Tracker */}
-          <SectionCard title="Cold Outreach Tracker" status="not_built" statusNote="static mock — no outreach sequence tracking wired yet">
-            <div className="overflow-x-auto">
-              <table className="w-full text-[12px]" style={{ borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    {["Sequence", "Product", "Sent", "Open Rate", "Meetings"].map((h) => (
-                      <th
-                        key={h}
-                        className="text-left font-mono font-semibold"
-                        style={{ color: "#5b6673", borderBottom: "1px solid #1c222b", paddingBottom: "8px", paddingRight: "16px" }}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {OUTREACH.map((row) => (
-                    <tr key={row.sequence}>
-                      <td className="font-semibold" style={{ color: "#eef2f5", padding: "9px 16px 9px 0", borderTop: "1px solid #1c222b" }}>
-                        {row.sequence}
-                      </td>
-                      <td className="font-mono" style={{ color: "#aab4bd", padding: "9px 16px 9px 0", borderTop: "1px solid #1c222b" }}>
-                        {row.product}
-                      </td>
-                      <td className="font-mono" style={{ color: "#aab4bd", padding: "9px 16px 9px 0", borderTop: "1px solid #1c222b" }}>
-                        {row.sent}
-                      </td>
-                      <td className="font-mono" style={{ color: "#aab4bd", padding: "9px 16px 9px 0", borderTop: "1px solid #1c222b" }}>
-                        {row.opens}
-                      </td>
-                      <td className="font-mono" style={{ color: "#aab4bd", padding: "9px 0", borderTop: "1px solid #1c222b" }}>
-                        {row.meetings}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {/* Cold Outreach Tracker — real per-product sent/meetings counts
+              (mse_dm_sequences + mse_leads.stage). Open rate has no real
+              signal anywhere in this codebase (no email-open tracking) and
+              is shown as "not tracked," not a fabricated number. */}
+          <SectionCard title="Cold Outreach Tracker" status="partial" statusNote="mse_dm_sequences + mse_leads.stage — sent/meetings are real, open rate isn't tracked">
+            <OutreachTracker />
           </SectionCard>
         </div>
       </div>

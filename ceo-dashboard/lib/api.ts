@@ -244,3 +244,84 @@ export async function batchApproveLinkedInQueue(
   }
   return res.json();
 }
+
+// --- Lead pipeline manual controls (n8n-outage fallback) ---
+// Each hits an app/api/marketing-leads/*/route.ts, which proxies
+// server-side to the microsaas-engine backend's own /marketing/leads/*
+// routes -- the same endpoints n8n/lead_finder_workflow.json and
+// n8n/outreach-sender-workflow.json call on a schedule. A human clicking
+// these buttons gets identical behavior to those crons, for when n8n
+// itself is down.
+
+export interface IcpProduct {
+  product_id: string;
+  name: string;
+  slug: string | null;
+  vertical: string | null;
+  target_count: number | null;
+}
+
+export async function listIcpProducts(): Promise<IcpProduct[]> {
+  const res = await fetch(`/api/marketing-leads/products`, { cache: "no-store" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching ICP-configured products failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.products ?? [];
+}
+
+export async function triggerLeadFinder(productId: string): Promise<{ run_id: string; status: string }> {
+  const res = await fetch(`/api/marketing-leads/find`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ product_id: productId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Triggering lead finder failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function triggerSendSequences(): Promise<{ status: string }> {
+  const res = await fetch(`/api/marketing-leads/send-sequences`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Triggering sequence send failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface PipelineSummary {
+  product_id: string | null;
+  total: number;
+  stages: Record<string, number>;
+}
+
+export async function fetchPipelineSummary(productId?: string): Promise<PipelineSummary> {
+  const qs = productId ? `?product_id=${encodeURIComponent(productId)}` : "";
+  const res = await fetch(`/api/marketing-leads/pipeline-summary${qs}`, { cache: "no-store" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching pipeline summary failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface OutreachSummaryRow {
+  product_id: string;
+  name: string;
+  sent: number;
+  meetings: number;
+}
+
+export async function fetchOutreachSummary(): Promise<OutreachSummaryRow[]> {
+  const res = await fetch(`/api/marketing-leads/outreach-summary`, { cache: "no-store" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching outreach summary failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.products ?? [];
+}
