@@ -261,8 +261,25 @@ export interface IcpProduct {
   target_count: number | null;
 }
 
+// middleware.ts gates every path under this app, /api/* included, on a
+// live Supabase session check -- if that session lapsed between page load
+// and this client-side fetch firing (or the auth check itself hiccups),
+// the browser's fetch() follows the resulting redirect to /login and gets
+// back a 200 HTML page, not JSON. res.ok is true in that case, so the
+// normal !res.ok branch below never fires -- res.json() would otherwise
+// throw a cryptic "Unexpected token '<'" (or worse, silently coerce to {}
+// via a .catch and look like an empty/"Not Found" result). res.redirected
+// catches this before either happens, with a message that actually tells
+// the user what to do.
+function assertNotRedirectedToLogin(res: Response): void {
+  if (res.redirected && new URL(res.url).pathname.startsWith("/login")) {
+    throw new Error("Your session needs a refresh -- reload the page and sign in again.");
+  }
+}
+
 export async function listIcpProducts(): Promise<IcpProduct[]> {
   const res = await fetch(`/api/marketing-leads/products`, { cache: "no-store" });
+  assertNotRedirectedToLogin(res);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Fetching ICP-configured products failed: ${res.status}`);
@@ -277,6 +294,7 @@ export async function triggerLeadFinder(productId: string): Promise<{ run_id: st
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ product_id: productId }),
   });
+  assertNotRedirectedToLogin(res);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Triggering lead finder failed: ${res.status}`);
@@ -286,6 +304,7 @@ export async function triggerLeadFinder(productId: string): Promise<{ run_id: st
 
 export async function triggerSendSequences(): Promise<{ status: string }> {
   const res = await fetch(`/api/marketing-leads/send-sequences`, { method: "POST" });
+  assertNotRedirectedToLogin(res);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Triggering sequence send failed: ${res.status}`);
@@ -302,6 +321,7 @@ export interface PipelineSummary {
 export async function fetchPipelineSummary(productId?: string): Promise<PipelineSummary> {
   const qs = productId ? `?product_id=${encodeURIComponent(productId)}` : "";
   const res = await fetch(`/api/marketing-leads/pipeline-summary${qs}`, { cache: "no-store" });
+  assertNotRedirectedToLogin(res);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Fetching pipeline summary failed: ${res.status}`);
@@ -318,6 +338,7 @@ export interface OutreachSummaryRow {
 
 export async function fetchOutreachSummary(): Promise<OutreachSummaryRow[]> {
   const res = await fetch(`/api/marketing-leads/outreach-summary`, { cache: "no-store" });
+  assertNotRedirectedToLogin(res);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Fetching outreach summary failed: ${res.status}`);
