@@ -416,6 +416,38 @@ export async function testMCPConnection(
   }
 }
 
+// ── Workspaces ─────────────────────────────────────────────────────────
+
+export async function createWorkspace(companyName: string): Promise<{
+  id: string
+  workspace_token: string
+  warning: string
+}> {
+  const res = await fetch(`${API_URL}/api/v1/workspaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company_name: companyName }),
+  })
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new ApiError(res.status, body.detail ?? `HTTP ${res.status}`)
+  }
+
+  return res.json()
+}
+
+export async function saveLlmKey(
+  token: string,
+  provider: 'anthropic' | 'openai',
+  apiKey: string,
+): Promise<{ status: string }> {
+  return request<{ status: string }>('/workspaces/llm-key', token, {
+    method: 'POST',
+    body: JSON.stringify({ provider, api_key: apiKey }),
+  })
+}
+
 // ── Health ─────────────────────────────────────────────────────────────
 
 export async function healthCheck(): Promise<boolean> {

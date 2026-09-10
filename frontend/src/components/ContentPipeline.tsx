@@ -68,7 +68,7 @@ const MOCK_DRAFTS: DraftSummary[] = [
   {
     id: 'draft-001',
     platform: 'linkedin',
-    raw_idea: 'Most engineering teams don't know how much time their on-call engineers spend triaging CI/CD failures before they can even start fixing them.',
+    raw_idea: 'Most engineering teams don\'t know how much time their on-call engineers spend triaging CI/CD failures before they can even start fixing them.',
     goal: 'education',
     status: 'pending_review',
     brand_voice_score: 9,

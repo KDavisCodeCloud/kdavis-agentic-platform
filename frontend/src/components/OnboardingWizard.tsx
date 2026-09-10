@@ -2,9 +2,10 @@
 
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Check, Copy, ChevronRight, Zap, Key, Cloud, Webhook } from 'lucide-react'
+import { Check, Copy, ChevronRight, Zap, Key, Cloud, Webhook, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { createWorkspace, saveLlmKey, ApiError } from '@/lib/api'
 
 interface OnboardingWizardProps {
   onComplete: (token: string) => void
@@ -35,7 +36,10 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
     llmApiKey:      '',
     cloudProviders: [],
   })
-  const [copied, setCopied]     = useState<string | null>(null)
+  const [copied, setCopied]         = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError]           = useState<string | null>(null)
+  const [llmKeySaved, setLlmKeySaved] = useState(false)
 
   function update(patch: Partial<FormData>) {
     setForm(f => ({ ...f, ...patch }))
@@ -57,9 +61,42 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   }
 
   function canAdvance(): boolean {
-    if (step === 1) return form.companyName.length > 0 && form.workspaceToken.length > 0
+    if (step === 1) return form.companyName.length > 0
     if (step === 2) return form.llmApiKey.length > 0
     return true
+  }
+
+  async function handleContinue() {
+    setError(null)
+
+    if (step === 1 && !form.workspaceToken) {
+      setSubmitting(true)
+      try {
+        const result = await createWorkspace(form.companyName)
+        update({ workspaceToken: result.workspace_token })
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not create workspace. Try again.')
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
+    if (step === 2 && !llmKeySaved) {
+      setSubmitting(true)
+      try {
+        await saveLlmKey(form.workspaceToken, form.llmProvider, form.llmApiKey)
+        setLlmKeySaved(true)
+        setStep(3)
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not save your LLM key. Try again.')
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
+    setStep((s) => (s + 1) as Step)
   }
 
   const webhookBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -121,7 +158,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
               <div>
                 <h2 className="text-lg font-semibold text-zinc-100">Set up your workspace</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Enter your company name and the workspace token from your Cloud Decoded account.
+                  Enter your company name — we'll create your workspace and issue an access token.
                 </p>
               </div>
 
@@ -135,25 +172,21 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                     value={form.companyName}
                     onChange={e => update({ companyName: e.target.value })}
                     placeholder="Acme Engineering"
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                    disabled={!!form.workspaceToken}
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none disabled:opacity-60"
                   />
                 </div>
 
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-                    Workspace Token
-                  </label>
-                  <input
-                    type="password"
-                    value={form.workspaceToken}
-                    onChange={e => update({ workspaceToken: e.target.value })}
-                    placeholder="ws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
+                {form.workspaceToken && (
+                  <WebhookRow
+                    label="Workspace Token — copy this now, it won't be shown again"
+                    url={form.workspaceToken}
+                    hint="You'll need this token to sign in and for the webhook URLs in the next steps."
+                    copied={copied}
+                    onCopy={url => copyToClipboard(url, 'workspace_token')}
+                    copyKey="workspace_token"
                   />
-                  <p className="mt-1.5 text-xs text-zinc-600">
-                    Find this in your Cloud Decoded account settings.
-                  </p>
-                </div>
+                )}
               </div>
             </div>
           )}
@@ -284,12 +317,17 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         </motion.div>
       </AnimatePresence>
 
+      {/* Error */}
+      {error && (
+        <p className="mt-3 text-center text-xs text-red-400">{error}</p>
+      )}
+
       {/* Navigation */}
       <div className="mt-4 flex items-center justify-between">
         <Button
           variant="ghost"
           size="sm"
-          disabled={step === 1}
+          disabled={step === 1 || submitting}
           onClick={() => setStep((s) => (s - 1) as Step)}
         >
           Back
@@ -298,10 +336,13 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         {step < 3 ? (
           <Button
             size="sm"
-            disabled={!canAdvance()}
-            onClick={() => setStep((s) => (s + 1) as Step)}
+            disabled={!canAdvance() || submitting}
+            onClick={handleContinue}
           >
-            Continue <ChevronRight className="h-4 w-4" />
+            {submitting
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <>Continue <ChevronRight className="h-4 w-4" /></>
+            }
           </Button>
         ) : (
           <Button

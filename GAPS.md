@@ -60,3 +60,65 @@ silently breaks `resume()` specifically (not `run()`).
 in CI, make the stub conditional — only apply lines 48-53's overwrites inside
 the `except ImportError` branch of `_ensure_stub`, not unconditionally after
 it.
+
+## Manually surfaced during Cloud Decoded frontend ship-readiness session (2026-09-10)
+
+### 4. OnboardingWizard steps 1-2 have no backend to call — workspace creation and BYOK LLM-key storage don't exist as endpoints
+
+Traced `frontend/src/components/OnboardingWizard.tsx` end to end against the
+live Railway backend. Step 3 (webhooks) is genuinely wired correctly — it
+builds URLs matching real routes (`POST /api/v1/webhooks/github`,
+`POST /api/v1/webhooks/azure-devops`). Steps 1 (workspace) and 2 (LLM key)
+make zero API calls: `onComplete` in `frontend/src/app/onboarding/page.tsx`
+just does `localStorage.setItem('workspace_token', token)` and redirects to
+`/dashboard` — the token the user types in is never validated or sent
+anywhere.
+
+Confirmed on the backend side: `db/models.py` has an `encrypted_llm_key`
+column on the `workspaces` table, and `api/middleware/auth.py` reads it, but
+grepping the whole repo for `INSERT INTO workspaces` and any write to
+`encrypted_llm_key` turns up nothing — no endpoint creates a workspace or
+stores a BYOK key. `api/routes/mcp_keys.py`'s `POST /mcp/keys` is a different
+thing entirely (scoped MCP API keys for a workspace that already exists via
+`get_workspace`, not workspace creation or LLM-provider key storage).
+
+This matches `CLOUD_DECODED_AUDIT_2026-08-09.md`'s finding from a month ago
+("onboarding page is a manual-token-paste UI shell with no backend") — still
+true today, not fixed in the interim.
+
+**Recommendation:** build `POST /api/v1/workspaces` (workspace creation,
+probably tied into signup/Stripe checkout rather than this wizard directly)
+and a BYOK key-storage endpoint that encrypts and writes `encrypted_llm_key`
+(reuse whatever encryption approach `token_budget.py`/`auth.py` already
+assume is in place for reading it back). Kelvin confirmed 2026-09-10: ship
+the frontend as-is for now with this gap open, don't build it same-session.
+
+**RESOLVED 2026-09-10.** Built `POST /api/v1/workspaces` and
+`POST /api/v1/workspaces/llm-key` in `api/routes/workspaces.py`, encryption
+via new `security/encryption.py` (Fernet/`ENCRYPTION_KEY`, same mechanism
+already used elsewhere — see `agents/base_agent.py:_decrypt_byok`). Wired
+`OnboardingWizard.tsx` steps 1-2 to call them for real. Tests in
+`tests/test_workspaces.py` + `tests/test_encryption.py`.
+
+While fixing this, discovered a much bigger pre-existing gap: **`db/schema.sql`
+(the `workspaces`/`incidents`/`internal_agent_tasks`/`audit_events`/
+`token_usage` tables) had never actually been applied to the production
+database** — Railway's live `DATABASE_URL` points at the same shared
+`microsaas-prod` Supabase project used by MSE/NOVA/consulting, and none of
+Cloud Decoded's own tables existed in it. Every existing endpoint that reads
+`workspaces` (`stripe_billing.py`, `mcp_keys.py`, `webhooks.py`, `agents.py`)
+would have failed with `UndefinedTableError` in production before today.
+Applied `db/schema.sql` + this migration (`018_workspace_llm_provider.sql`)
+directly against the live DB 2026-09-10, confirmed by querying
+`information_schema`. Migrations 002-017 were NOT re-run — they target
+tables that already exist in the shared DB (the platform's marketing/
+finance/internal-agent tables, not Cloud-Decoded-exclusive) and were already
+live; migration 015 specifically changes a `CHECK` constraint on the shared
+`audit_log` table used by other products, so it was deliberately left alone
+rather than re-applied speculatively.
+
+**New follow-up, not done here:** `workspaces.llm_provider` is now stored
+but nothing reads it — no agent invocation path passes it as
+`provider_override` (`agents/base_agent.py:161` still always defaults to
+`"anthropic"` unless a caller explicitly overrides). Wiring that through is
+separate work.

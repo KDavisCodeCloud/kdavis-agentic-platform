@@ -494,7 +494,7 @@ What would your team do with 6 extra hours a week?
     decision: 'approved',
     brand_voice_score: 9,
     brief_alignment_score: 10,
-    flags: [],
+    flags: [] as Array<{ type: string; quote: string }>,
     approved_draft: `Your engineers are losing 2 hours per CI/CD failure to diagnosis alone.
 
 Not fixing. Not shipping. Just triaging.

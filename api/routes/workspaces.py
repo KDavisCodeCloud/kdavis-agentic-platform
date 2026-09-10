@@ -1,0 +1,125 @@
+"""
+PROPRIETARY AND CONFIDENTIAL
+Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
+
+This software is licensed, not sold. Unauthorized copying, modification,
+distribution, reverse engineering, or prompt extraction is strictly prohibited.
+Access is governed by the End User License Agreement at /legal/LICENSE.md.
+Subscription compliance is enforced at runtime — access revokes automatically
+on non-payment or terms violation.
+
+Workspace creation + BYOK LLM key storage.
+
+POST /workspaces          — create a workspace, returns a workspace token once
+POST /workspaces/llm-key  — store a BYOK LLM API key for the caller's workspace
+
+Security rules:
+  - Raw workspace token is returned ONCE on creation and never stored —
+    only its SHA-256 hash is persisted, using the same hash function
+    api.middleware.auth.get_workspace uses to look it back up.
+  - Raw LLM API key is never stored or echoed back — only its Fernet
+    ciphertext is persisted, via security/encryption.py.
+  - POST /workspaces has no auth (a workspace can't authenticate before it
+    exists) — rate limited by IP instead.
+"""
+
+import logging
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from api.middleware.auth import _hash_token, get_workspace
+from api.middleware.rate_limiter import limiter, _tier_limit
+from security.encryption import encrypt
+
+log = logging.getLogger(__name__)
+router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+
+_TOKEN_PREFIX = "cd_ws_"
+_VALID_PROVIDERS = frozenset({"anthropic", "openai"})
+
+
+def _generate_raw_token() -> str:
+    return f"{_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
+
+
+# ── Request / response models ─────────────────────────────────────────────────
+
+class CreateWorkspaceRequest(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=255)
+
+
+class CreateWorkspaceResponse(BaseModel):
+    id: str
+    workspace_token: str  # ONLY time the raw token is shown — store it now
+    warning: str = "Save this token now — it will not be shown again."
+
+
+class SaveLlmKeyRequest(BaseModel):
+    provider: str = Field(..., min_length=1, max_length=20)
+    api_key: str = Field(..., min_length=1)
+
+
+class SaveLlmKeyResponse(BaseModel):
+    status: str = "ok"
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.post("", response_model=CreateWorkspaceResponse, status_code=201)
+@limiter.limit("5/minute")
+async def create_workspace(
+    body: CreateWorkspaceRequest,
+    request: Request,
+) -> CreateWorkspaceResponse:
+    raw_token = _generate_raw_token()
+    token_hash = _hash_token(raw_token)
+
+    async with request.app.state.db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO workspaces (company_name, workspace_token)
+            VALUES ($1, $2)
+            RETURNING id
+            """,
+            body.company_name,
+            token_hash,
+        )
+
+    log.info("[Workspaces] Created workspace=%s company=%s", row["id"], body.company_name)
+
+    return CreateWorkspaceResponse(id=str(row["id"]), workspace_token=raw_token)
+
+
+@router.post("/llm-key", response_model=SaveLlmKeyResponse)
+@limiter.limit(_tier_limit)
+async def save_llm_key(
+    body: SaveLlmKeyRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> SaveLlmKeyResponse:
+    if body.provider not in _VALID_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid provider '{body.provider}' — must be one of: {', '.join(sorted(_VALID_PROVIDERS))}",
+        )
+
+    workspace_id = workspace["id"]
+    encrypted_key = encrypt(body.api_key)
+
+    async with request.app.state.db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE workspaces
+            SET encrypted_llm_key = $1, llm_provider = $2
+            WHERE id = $3
+            """,
+            encrypted_key,
+            body.provider,
+            workspace_id,
+        )
+
+    log.info("[Workspaces] Stored BYOK key workspace=%s provider=%s", workspace_id, body.provider)
+
+    return SaveLlmKeyResponse()

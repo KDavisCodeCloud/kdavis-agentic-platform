@@ -54,6 +54,7 @@ from api.routes import gta_hub
 from api.routes import marketing
 from api.routes import internal_agents
 from api.routes import internal_marketing
+from api.routes import workspaces
 
 log = logging.getLogger(__name__)
 
@@ -192,6 +193,7 @@ app.include_router(gta_hub.router)
 app.include_router(marketing.router,       prefix="/api/v1")
 app.include_router(internal_agents.router, prefix="/api/v1")
 app.include_router(internal_marketing.router, prefix="/api/v1")
+app.include_router(workspaces.router,      prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────
