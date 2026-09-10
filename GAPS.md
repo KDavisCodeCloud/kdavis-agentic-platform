@@ -122,3 +122,50 @@ but nothing reads it — no agent invocation path passes it as
 `provider_override` (`agents/base_agent.py:161` still always defaults to
 `"anthropic"` unless a caller explicitly overrides). Wiring that through is
 separate work.
+
+### 5. `api/middleware/rate_limiter.py`'s `_tier_limit` crashes every request — CRITICAL, affects the live agent-execution endpoint
+
+Discovered live 2026-09-10 while verifying the `POST /api/v1/workspaces/llm-key`
+endpoint above (which originally used the same pattern). Every call hit:
+
+```
+TypeError: _tier_limit() missing 1 required positional argument: 'request'
+  File ".../slowapi/wrappers.py", line 94, in __iter__
+```
+
+Root cause: `_tier_limit(request: Request) -> str` (`api/middleware/
+rate_limiter.py`) is used as a callable rate-limit provider via
+`@limiter.limit(_tier_limit)`. The pinned `slowapi==0.1.9`'s
+`LimitGroup.__iter__` (`slowapi/wrappers.py`) only supports a callable
+limit-provider shaped as `fn(key: str)` (it inspects the callable's
+parameters for a literal `"key"` argument) or `fn()` — there is no supported
+way for it to hand the callable a `Request`. Calling convention mismatch,
+not a version-drift issue (0.1.9 is exactly what's installed both locally
+and on Railway) — this has been broken since it was written.
+
+**This is the exact same decorator used on `POST /agents/{agent_id}/run`
+in `api/routes/agents.py`** — the actual agent-execution endpoint, i.e. the
+core paid product. It has never been caught because `Depends(get_workspace)`
+always failed first with `UndefinedTableError` until gap #4's schema fix
+today made a working `workspaces` table exist for the first time. **As of
+right now, in production, the first real customer request to
+`POST /agents/{agent_id}/run` will 500 with this exact `TypeError`.**
+
+Fixed narrowly for the new `save_llm_key` endpoint only (swapped to a flat
+`@limiter.limit("30/minute")`, since a per-tier limit can't be recovered
+from just the rate-limit key string). **`agents.py::run_agent` still has
+the broken `@limiter.limit(_tier_limit)` decorator — not touched, this is
+its own fix and deserves dedicated attention, not a same-session patch
+bundled into the onboarding gap.**
+
+**Recommendation:** `_tier_limit` needs `request.state.workspace_tier` (set
+earlier by `WorkspaceTierMiddleware`), which this slowapi version's callable
+convention can't deliver. Either: (a) drop the callable and use per-tier
+route variants or a static conservative limit like the fix above, (b)
+upgrade slowapi past 0.1.9 and confirm a version that actually supports
+request-based callables before repinning, or (c) implement tier lookup
+inside `_workspace_key` itself (the `key_func`, which *does* receive
+`request`) and encode the tier in the key/limit some other way. Whatever
+the fix, add a real test that actually exercises the decorator (calling the
+route through slowapi, not just calling the handler function directly) —
+that's exactly the kind of test gap that let this sit unnoticed.

@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.middleware.auth import _hash_token, get_workspace
-from api.middleware.rate_limiter import limiter, _tier_limit
+from api.middleware.rate_limiter import limiter
 from security.encryption import encrypt
 
 log = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ async def create_workspace(
 
 
 @router.post("/llm-key", response_model=SaveLlmKeyResponse)
-@limiter.limit(_tier_limit)
+@limiter.limit("30/minute")  # _tier_limit is broken under the pinned slowapi==0.1.9 — see GAPS.md
 async def save_llm_key(
     body: SaveLlmKeyRequest,
     request: Request,
