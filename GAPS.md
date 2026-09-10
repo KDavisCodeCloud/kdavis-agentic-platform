@@ -169,3 +169,23 @@ inside `_workspace_key` itself (the `key_func`, which *does* receive
 the fix, add a real test that actually exercises the decorator (calling the
 route through slowapi, not just calling the handler function directly) —
 that's exactly the kind of test gap that let this sit unnoticed.
+
+**RESOLVED 2026-09-10.** Went with option (c). `_workspace_key` (the
+`key_func`, which does receive the Request) now embeds the tier from
+`request.state.workspace_tier` into the key it already produces:
+`f"ws:{tier}:{token[:16]}"`. `_tier_limit` was changed from `fn(request)`
+to `fn(key)` — matching the shape slowapi's `LimitGroup.__iter__` actually
+calls — and parses the tier back out of that key instead of reading
+`request.state` directly. `get_rate_limit_for_tier` untouched.
+`agents.py::run_agent`'s `@limiter.limit(_tier_limit)` needed no changes at
+all — same callable, same call site, just fixed underneath it.
+
+Added `tests/test_rate_limiter.py`, including the integration test this
+gap's own recommendation called for: a real FastAPI app with
+`@limiter.limit(_tier_limit)` on a route, exercised through
+`TestClient`/a real `starlette.requests.Request` — not just calling the
+plain function directly. That's the exact gap that let the original bug
+ship silently: `_tier_limit(request)` looked correct read as a plain
+Python function and nothing ever actually invoked it through slowapi in a
+test. 9 new tests, full suite still 997 passing (same 4 pre-existing,
+unrelated failures in `test_agent01_local.py`/`test_security.py`).
