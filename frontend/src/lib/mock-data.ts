@@ -1,7 +1,15 @@
 // Cloud Decoded — Mock data for NEXT_PUBLIC_MOCK_MODE=true
 // All state lives in-memory only. Refreshing the page resets everything.
 
-import type { AuditSubmissionDetail, AuditSubmissionSummary, Incident } from './types'
+import type {
+  AgentConnectionStatus,
+  AuditSubmissionDetail,
+  AuditSubmissionSummary,
+  ComplianceReportData,
+  FinOpsDashboardData,
+  FinOpsHitlItem,
+  Incident,
+} from './types'
 
 function ago(mins: number): string {
   return new Date(Date.now() - mins * 60_000).toISOString()
@@ -414,6 +422,153 @@ export function mockActionAuditItem(
     }
   }
   throw new Error('Remediation item not found')
+}
+
+// ── FinOps / Compliance agent — Mock Connection + Dashboard Data ─────
+// Mirrors the real connect -> pending_setup -> connected state machine in
+// api/routes/finops_agent.py / compliance_agent.py, entirely in-memory.
+
+const MOCK_SETUP = {
+  aws_trust_policy: {
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Effect: 'Allow',
+        Principal: { AWS: 'arn:aws:iam::402916653765:root' },
+        Action: 'sts:AssumeRole',
+        Condition: { StringEquals: { 'sts:ExternalId': 'demo-external-id-000' } },
+      },
+    ],
+  },
+  aws_permissions_policy: {
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Action: ['iam:ListUsers', 'iam:ListMFADevices'], Resource: '*' }],
+  },
+}
+
+let _finopsConnection: AgentConnectionStatus = { connected: false, pending_setup: false, setup: null }
+let _complianceConnection: AgentConnectionStatus = { connected: false, pending_setup: false, setup: null }
+
+export function getMockAgentStatus(product: 'finops' | 'compliance'): AgentConnectionStatus {
+  return product === 'finops' ? _finopsConnection : _complianceConnection
+}
+
+export function mockConnectAgent(product: 'finops' | 'compliance'): AgentConnectionStatus {
+  const current = getMockAgentStatus(product)
+  if (current.connected || current.pending_setup) {
+    throw new Error(`${product === 'finops' ? 'FinOps' : 'Compliance'} agent already connected or pending setup`)
+  }
+  const next: AgentConnectionStatus = { connected: false, pending_setup: true, setup: MOCK_SETUP }
+  if (product === 'finops') _finopsConnection = next
+  else _complianceConnection = next
+  return next
+}
+
+export function mockVerifyAgentRole(product: 'finops' | 'compliance'): { status: string } {
+  const next: AgentConnectionStatus = { connected: true, pending_setup: false, setup: null }
+  if (product === 'finops') _finopsConnection = next
+  else _complianceConnection = next
+  return { status: 'active' }
+}
+
+let _finopsItems: FinOpsHitlItem[] = [
+  {
+    id: 'fo-item-001',
+    severity: 'HIGH',
+    category: 'SECURITY',
+    title: 'Root account has no MFA',
+    description: 'The root account can sign in with just a password, the single highest-value target in the account.',
+    remediation: 'Enable a hardware or virtual MFA device on the root account immediately.',
+    estimated_monthly_waste_usd: 0,
+    priority_rank: 1,
+    status: 'pending_approval',
+  },
+  {
+    id: 'fo-item-002',
+    severity: 'MEDIUM',
+    category: 'WASTE',
+    title: 'Stopped instance still paying for storage',
+    description: 'An EC2 instance is stopped but its attached EBS volumes continue to bill monthly.',
+    remediation: 'Terminate if no longer needed, or snapshot and delete the volumes.',
+    estimated_monthly_waste_usd: 48.0,
+    priority_rank: 2,
+    status: 'pending_approval',
+  },
+]
+
+export function getMockFinopsDashboard(): FinOpsDashboardData {
+  return {
+    tenant_id: 'demo-finops-tenant',
+    status: 'active',
+    latest_scan: {
+      scan_id: 'demo-finops-scan-1',
+      provider: 'aws',
+      status: 'ready',
+      total_findings: _finopsItems.length,
+      total_estimated_monthly_waste_usd: _finopsItems.reduce((sum, i) => sum + i.estimated_monthly_waste_usd, 0),
+      started_at: ago(5),
+      completed_at: ago(4),
+    },
+    open_items: _finopsItems.filter(i => i.status === 'pending_approval'),
+  }
+}
+
+export function mockActionFinopsItem(itemId: string, status: 'approved' | 'dismissed'): { id: string; status: string } {
+  const item = _finopsItems.find(i => i.id === itemId)
+  if (!item) throw new Error('HITL item not found')
+  item.status = status
+  return { id: item.id, status: item.status }
+}
+
+export function getMockComplianceReport(): ComplianceReportData {
+  return {
+    framework: 'CIS AWS Foundations Benchmark v3.0.0',
+    controls_assessed: 4,
+    controls_total_in_framework: 62,
+    readiness_score: 50,
+    controls: [
+      {
+        control_id: '1.4',
+        security_hub_id: 'IAM.4',
+        title: 'IAM root user access key should not exist',
+        status: 'PASS',
+        exact_match: true,
+        caveat: null,
+      },
+      {
+        control_id: '1.5',
+        security_hub_id: 'IAM.9',
+        title: 'MFA should be enabled for the root user',
+        status: 'FAIL',
+        exact_match: true,
+        caveat: null,
+      },
+      {
+        control_id: '1.10',
+        security_hub_id: 'IAM.5',
+        title: "MFA should be enabled for all IAM users that have a console password",
+        status: 'PASS',
+        exact_match: false,
+        caveat:
+          'AWSProvider flags any IAM user with no MFA device at all -- it cannot determine whether a given user actually has a console password. Conservative proxy, not exact.',
+      },
+      {
+        control_id: '1.14',
+        security_hub_id: 'IAM.3',
+        title: "IAM users' access keys should be rotated every 90 days or less",
+        status: 'FAIL',
+        exact_match: true,
+        caveat: null,
+      },
+    ],
+    coverage_note:
+      'This report automatically assesses 4 of 62 CIS AWS Foundations Benchmark v3.0.0 controls -- the ones this scan can verify from AWS API data alone. The readiness score reflects only the assessed subset -- it is not a complete CIS assessment.',
+    documentation_checklist: [
+      { item: 'Information Security Policy', status: 'cannot_verify_from_scan', guidance: 'Must be authored manually' },
+      { item: 'Incident Response Plan', status: 'cannot_verify_from_scan', guidance: 'Must be authored manually' },
+      { item: 'Access Control Policy', status: 'cannot_verify_from_scan', guidance: 'Must be authored manually' },
+    ],
+  }
 }
 
 // ── Phase 6 Internal Ops — Mock Pipeline Outputs ─────────────────────

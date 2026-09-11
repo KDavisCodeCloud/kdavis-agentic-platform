@@ -144,3 +144,101 @@ export const AUDIT_ITEM_STATUS_META: Record<AuditItemStatus, { label: string; co
   approved:         { label: 'Approved',  color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30' },
   dismissed:        { label: 'Dismissed', color: 'text-zinc-500 bg-zinc-900 border-zinc-700' },
 }
+
+// ── FinOps / Compliance agent connection (mirrors api/routes/finops_agent.py
+// and api/routes/compliance_agent.py -- shared shape, both proxy to a
+// separately-deployed Railway service via Cloud Decoded's own backend) ────
+
+export interface AgentSetupPolicy {
+  aws_trust_policy: Record<string, unknown>
+  aws_permissions_policy: Record<string, unknown>
+}
+
+export interface AgentConnectionStatus {
+  connected: boolean
+  pending_setup: boolean
+  setup: AgentSetupPolicy | null
+}
+
+// ── FinOps agent (mirrors kdavis-finops-agent's api/routes/tenants.py +
+// scans.py + hitl.py, proxied through api/routes/finops_agent.py) ─────────
+
+export type FinOpsSeverity = 'HIGH' | 'MEDIUM' | 'LOW'
+export type FinOpsCategory = 'WASTE' | 'SECURITY' | 'COMPLIANCE'
+export type FinOpsItemStatus = 'pending_approval' | 'approved' | 'dismissed'
+
+export interface FinOpsHitlItem {
+  id: string
+  severity: FinOpsSeverity
+  category: FinOpsCategory
+  title: string
+  description: string
+  remediation: string
+  estimated_monthly_waste_usd: number
+  priority_rank: number
+  status: FinOpsItemStatus
+}
+
+export interface FinOpsScanSummary {
+  scan_id: string
+  provider: string
+  status: string
+  total_findings: number
+  total_estimated_monthly_waste_usd: number
+  started_at: string
+  completed_at: string | null
+}
+
+export interface FinOpsDashboardData {
+  tenant_id: string
+  status: string
+  latest_scan: FinOpsScanSummary | null
+  open_items: FinOpsHitlItem[]
+}
+
+export const FINOPS_ITEM_STATUS_META: Record<FinOpsItemStatus, { label: string; color: string }> = {
+  pending_approval: { label: 'Pending',   color: 'text-amber-400 bg-amber-400/10 border-amber-400/30' },
+  approved:         { label: 'Approved',  color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30' },
+  dismissed:        { label: 'Dismissed', color: 'text-zinc-500 bg-zinc-900 border-zinc-700' },
+}
+
+// ── Compliance agent (mirrors kdavis-compliance-agent's
+// compliance/gap_report.py, proxied through api/routes/compliance_agent.py) ──
+
+export type CisControlStatus = 'PASS' | 'FAIL'
+
+export interface CisControl {
+  control_id: string
+  security_hub_id: string
+  title: string
+  status: CisControlStatus
+  exact_match: boolean
+  caveat: string | null
+}
+
+export interface ComplianceDocChecklistItem {
+  item: string
+  status: string
+  guidance: string
+}
+
+export interface ComplianceReportData {
+  framework: string
+  controls_assessed: number
+  controls_total_in_framework: number
+  readiness_score: number
+  controls: CisControl[]
+  coverage_note: string
+  documentation_checklist: ComplianceDocChecklistItem[]
+}
+
+export interface ComplianceScanResult {
+  scan_id: string
+  tenant_id: string
+  status: string
+  provider: string
+  report: ComplianceReportData | null
+  error_message: string | null
+  started_at: string
+  completed_at: string | null
+}

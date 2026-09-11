@@ -3,8 +3,13 @@
 import type {
   Incident, ApprovalRequest, ApprovalResponse, AgentsResponse,
   AuditSubmissionSummary, AuditSubmissionDetail,
+  AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
 } from './types'
-import { getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem } from './mock-data'
+import {
+  getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
+  getMockAgentStatus, mockConnectAgent, mockVerifyAgentRole,
+  getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
+} from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
@@ -471,6 +476,94 @@ export async function approveAuditItem(token: string, itemId: string): Promise<{
 export async function dismissAuditItem(token: string, itemId: string): Promise<{ id: string; status: string }> {
   if (MOCK_MODE) return mockActionAuditItem(itemId, 'dismissed')
   return request<{ id: string; status: string }>(`/audit/items/${itemId}/dismiss`, token, { method: 'POST' })
+}
+
+// ── FinOps agent ───────────────────────────────────────────────────────
+// Proxied through Cloud Decoded's own backend (api/routes/finops_agent.py) --
+// this frontend never sees a kdavis-finops-agent tenant token, only its own
+// X-Workspace-Token.
+
+export async function getFinopsStatus(token: string): Promise<AgentConnectionStatus> {
+  if (MOCK_MODE) return getMockAgentStatus('finops')
+  return request<AgentConnectionStatus>('/finops-agent/status', token)
+}
+
+export async function connectFinops(token: string): Promise<AgentConnectionStatus> {
+  if (MOCK_MODE) return mockConnectAgent('finops')
+  return request<AgentConnectionStatus>('/finops-agent/connect', token, { method: 'POST' })
+}
+
+export async function verifyFinopsAwsRole(token: string, roleArn: string): Promise<{ status: string }> {
+  if (MOCK_MODE) return mockVerifyAgentRole('finops')
+  return request<{ status: string }>('/finops-agent/verify-role', token, {
+    method: 'POST',
+    body: JSON.stringify({ role_arn: roleArn }),
+  })
+}
+
+export async function triggerFinopsScan(token: string): Promise<FinOpsDashboardData> {
+  if (MOCK_MODE) return getMockFinopsDashboard()
+  return request<FinOpsDashboardData>('/finops-agent/scan', token, { method: 'POST' })
+}
+
+export async function getFinopsDashboard(token: string): Promise<FinOpsDashboardData> {
+  if (MOCK_MODE) return getMockFinopsDashboard()
+  return request<FinOpsDashboardData>('/finops-agent/dashboard', token)
+}
+
+export async function approveFinopsItem(token: string, itemId: string): Promise<{ id: string; status: string }> {
+  if (MOCK_MODE) return mockActionFinopsItem(itemId, 'approved')
+  return request<{ id: string; status: string }>(`/finops-agent/items/${itemId}/approve`, token, { method: 'POST' })
+}
+
+export async function dismissFinopsItem(token: string, itemId: string): Promise<{ id: string; status: string }> {
+  if (MOCK_MODE) return mockActionFinopsItem(itemId, 'dismissed')
+  return request<{ id: string; status: string }>(`/finops-agent/items/${itemId}/dismiss`, token, { method: 'POST' })
+}
+
+// ── Compliance agent ───────────────────────────────────────────────────
+// Same proxy shape as FinOps (api/routes/compliance_agent.py), minus HITL --
+// CIS control pass/fail is deterministic, not something a human approves.
+
+export async function getComplianceStatus(token: string): Promise<AgentConnectionStatus> {
+  if (MOCK_MODE) return getMockAgentStatus('compliance')
+  return request<AgentConnectionStatus>('/compliance-agent/status', token)
+}
+
+export async function connectCompliance(token: string): Promise<AgentConnectionStatus> {
+  if (MOCK_MODE) return mockConnectAgent('compliance')
+  return request<AgentConnectionStatus>('/compliance-agent/connect', token, { method: 'POST' })
+}
+
+export async function verifyComplianceAwsRole(token: string, roleArn: string): Promise<{ status: string }> {
+  if (MOCK_MODE) return mockVerifyAgentRole('compliance')
+  return request<{ status: string }>('/compliance-agent/verify-role', token, {
+    method: 'POST',
+    body: JSON.stringify({ role_arn: roleArn }),
+  })
+}
+
+export async function triggerComplianceScan(token: string): Promise<ComplianceScanResult> {
+  if (MOCK_MODE) {
+    return {
+      scan_id: 'demo-compliance-scan-1',
+      tenant_id: 'demo-compliance-tenant',
+      status: 'ready',
+      provider: 'aws',
+      report: getMockComplianceReport(),
+      error_message: null,
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    }
+  }
+  return request<ComplianceScanResult>('/compliance-agent/scan', token, { method: 'POST' })
+}
+
+export async function getComplianceReport(token: string): Promise<ComplianceReportData> {
+  if (MOCK_MODE) return getMockComplianceReport()
+  const result = await request<ComplianceScanResult>('/compliance-agent/report', token)
+  if (!result.report) throw new ApiError(404, 'No compliance report yet')
+  return result.report
 }
 
 // ── Health ─────────────────────────────────────────────────────────────

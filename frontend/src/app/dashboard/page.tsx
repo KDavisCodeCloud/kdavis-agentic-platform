@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Zap, LogOut, Settings, Activity, Shield, Layers, CreditCard, FileText, Users, Plug, ClipboardList } from 'lucide-react'
+import { Zap, LogOut, Settings, Activity, Shield, Layers, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
 import { OpsHub } from '@/components/OpsHub'
 import { ContentPipeline } from '@/components/ContentPipeline'
 import OutreachPipeline from '@/components/OutreachPipeline'
 import { IntegrationsDashboard } from '@/components/IntegrationsDashboard'
 import { AuditDashboard } from '@/components/AuditDashboard'
+import { FinOpsAgentDashboard } from '@/components/FinOpsAgentDashboard'
+import { ComplianceAgentDashboard } from '@/components/ComplianceAgentDashboard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getBillingPortalUrl } from '@/lib/api'
@@ -16,7 +18,7 @@ import { getBillingPortalUrl } from '@/lib/api'
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
 
-type DashTab = 'hitl' | 'ops' | 'content' | 'outreach' | 'integrations' | 'audit'
+type DashTab = 'hitl' | 'ops' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent'
 
 export default function DashboardPage() {
   const router                        = useRouter()
@@ -187,6 +189,30 @@ export default function DashboardPage() {
           <ClipboardList className="h-3.5 w-3.5" />
           Cloud Audit
         </button>
+        <button
+          onClick={() => setActiveTab('finops-agent')}
+          className={cn(
+            'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-colors',
+            activeTab === 'finops-agent'
+              ? 'bg-zinc-800 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300',
+          )}
+        >
+          <DollarSign className="h-3.5 w-3.5" />
+          FinOps
+        </button>
+        <button
+          onClick={() => setActiveTab('compliance-agent')}
+          className={cn(
+            'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-colors',
+            activeTab === 'compliance-agent'
+              ? 'bg-zinc-800 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300',
+          )}
+        >
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Compliance
+        </button>
         {MOCK_MODE && (
           <span className="ml-auto text-xs text-zinc-700">
             Refresh page to reset demo
@@ -202,6 +228,8 @@ export default function DashboardPage() {
         {activeTab === 'outreach'     && <OutreachPipeline token={token} />}
         {activeTab === 'integrations' && <IntegrationsDashboard token={token} />}
         {activeTab === 'audit'        && <AuditDashboard token={token} />}
+        {activeTab === 'finops-agent'     && <FinOpsAgentDashboard token={token} />}
+        {activeTab === 'compliance-agent' && <ComplianceAgentDashboard token={token} />}
       </main>
     </div>
   )
