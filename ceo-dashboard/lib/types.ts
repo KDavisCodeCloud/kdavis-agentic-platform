@@ -280,6 +280,18 @@ export const DEPT_ROUTES = [
 
 export type DeptId = typeof DEPT_ROUTES[number]["id"];
 
+// Links to other, separately-deployed products (not internal /dashboard/*
+// routes) -- rendered in their own section of the sidebar as external links,
+// not react-router Links, since active-path matching doesn't apply to them.
+export const EXTERNAL_LINKS = [
+  {
+    id: "cloud-decoded",
+    label: "Cloud Decoded",
+    url: "https://theclouddecoded.com/dashboard",
+    roles: ["admin"],
+  },
+] as const;
+
 // DIST Phase 1 (2026-08-30). mse_funnel_events.step is queried directly
 // (not just mse_attribution_summary, which only rolls up signups/paid) so
 // the panel can show real per-step drop-off, not just first/last touch.

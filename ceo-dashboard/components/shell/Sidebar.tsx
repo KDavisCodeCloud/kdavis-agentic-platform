@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { DEPT_ROUTES, type Role } from "@/lib/types";
+import { DEPT_ROUTES, EXTERNAL_LINKS, type Role } from "@/lib/types";
 
 export function Sidebar({ role }: { role: Role }) {
   const pathname = usePathname();
 
   const visible = DEPT_ROUTES.filter((d) => (d.roles as readonly string[]).includes(role));
+  const visibleExternal = EXTERNAL_LINKS.filter((l) => (l.roles as readonly string[]).includes(role));
 
   return (
     <nav
@@ -64,6 +65,51 @@ export function Sidebar({ role }: { role: Role }) {
           );
         })}
       </ul>
+
+      {/* External product dashboards -- separately-deployed apps, plain
+          <a target="_blank"> links rather than <Link>, no active-path state */}
+      {visibleExternal.length > 0 && (
+        <>
+          <div
+            className="mx-2 my-3 border-t"
+            style={{ borderColor: "#1c222b" }}
+          />
+          <ul className="flex flex-col gap-0.5 px-2">
+            {visibleExternal.map((link) => (
+              <li key={link.id}>
+                <a
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 rounded-[8px] transition-colors"
+                  style={{
+                    padding: "9px 10px",
+                    color: "#8b96a3",
+                    fontWeight: 400,
+                    fontSize: "12.5px",
+                    textDecoration: "none",
+                  }}
+                >
+                  <span
+                    className="shrink-0"
+                    style={{
+                      width: 12,
+                      height: 12,
+                      border: "1.5px solid #5b6673",
+                      borderRadius: "2px",
+                      display: "inline-block",
+                    }}
+                  />
+                  <span className="truncate-text">{link.label}</span>
+                  <span className="ml-auto text-[10px]" style={{ color: "#5b6673" }}>
+                    ↗
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </nav>
   );
 }

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { DEPT_ROUTES, type Role } from "@/lib/types";
+import { DEPT_ROUTES, EXTERNAL_LINKS, type Role } from "@/lib/types";
 
 // Confirmed 2026-07-27: the desktop shell (IconRail 60px + Sidebar 196px,
 // both fixed-width, zero responsive classes) ate 60-68% of a phone-width
@@ -17,6 +17,7 @@ export function MobileNav({ role }: { role: Role }) {
   const pathname = usePathname();
 
   const visible = DEPT_ROUTES.filter((d) => (d.roles as readonly string[]).includes(role));
+  const visibleExternal = EXTERNAL_LINKS.filter((l) => (l.roles as readonly string[]).includes(role));
 
   return (
     <>
@@ -119,6 +120,48 @@ export function MobileNav({ role }: { role: Role }) {
                 );
               })}
             </ul>
+
+            {visibleExternal.length > 0 && (
+              <>
+                <div className="mx-2 my-3 border-t" style={{ borderColor: "#1c222b" }} />
+                <ul className="flex flex-col gap-1 px-2">
+                  {visibleExternal.map((link) => (
+                    <li key={link.id}>
+                      <a
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => setOpen(false)}
+                        className="flex items-center gap-3 rounded-[8px] transition-colors"
+                        style={{
+                          padding: "12px 12px",
+                          minHeight: 44,
+                          color: "#c7cfd6",
+                          fontWeight: 400,
+                          fontSize: "14px",
+                          textDecoration: "none",
+                        }}
+                      >
+                        <span
+                          className="shrink-0"
+                          style={{
+                            width: 12,
+                            height: 12,
+                            border: "1.5px solid #5b6673",
+                            borderRadius: "2px",
+                            display: "inline-block",
+                          }}
+                        />
+                        <span className="truncate">{link.label}</span>
+                        <span className="ml-auto text-xs" style={{ color: "#5b6673" }}>
+                          ↗
+                        </span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </nav>
         </div>
       )}
