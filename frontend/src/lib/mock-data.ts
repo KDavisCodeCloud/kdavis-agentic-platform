@@ -1,7 +1,7 @@
 // Cloud Decoded — Mock data for NEXT_PUBLIC_MOCK_MODE=true
 // All state lives in-memory only. Refreshing the page resets everything.
 
-import type { Incident } from './types'
+import type { AuditSubmissionDetail, AuditSubmissionSummary, Incident } from './types'
 
 function ago(mins: number): string {
   return new Date(Date.now() - mins * 60_000).toISOString()
@@ -301,6 +301,119 @@ export function getMockIncidents(statusFilter?: string): Incident[] {
 export function mockApprove(incidentId: string, optionId: string): void {
   const inc = getStore().find(i => i.incident_id === incidentId)
   if (inc) inc.status = optionId === 'hold' ? 'held' : 'executing'
+}
+
+// ── Cloud Audit Remediation Plan — Mock Data ─────────────────────────
+
+const MOCK_AUDIT_SUBMISSIONS: AuditSubmissionDetail[] = [
+  {
+    audit_id: 'b1c2d3e4-f5a6-7890-bcde-f12345678001',
+    provider: 'aws',
+    status: 'ready',
+    total_findings: 9,
+    total_estimated_monthly_waste_usd: 62.0,
+    analysis_error: null,
+    created_at: ago(60),
+    items: [
+      {
+        id: 'item-001',
+        severity: 'HIGH',
+        category: 'SECURITY',
+        title: 'Enforce MFA on IAM users',
+        description: 'Multiple IAM users can sign in with only a password, lacking multi-factor authentication.',
+        remediation: 'Enable MFA for all IAM users, particularly those with console access.',
+        estimated_monthly_waste_usd: 0,
+        priority_rank: 1,
+        status: 'pending_approval',
+      },
+      {
+        id: 'item-002',
+        severity: 'MEDIUM',
+        category: 'WASTE',
+        title: 'Stopped instance still paying for storage',
+        description: 'An EC2 instance is stopped but its attached EBS volumes continue to bill.',
+        remediation: 'Terminate if no longer needed, or snapshot and delete the volumes.',
+        estimated_monthly_waste_usd: 62.0,
+        priority_rank: 2,
+        status: 'pending_approval',
+      },
+      {
+        id: 'item-003',
+        severity: 'LOW',
+        category: 'COMPLIANCE',
+        title: 'Enable Security Hub',
+        description: 'Security Hub is not enabled in this account/region.',
+        remediation: 'Enable Security Hub to get continuous security findings.',
+        estimated_monthly_waste_usd: 0,
+        priority_rank: 3,
+        status: 'approved',
+      },
+    ],
+  },
+  {
+    audit_id: 'b1c2d3e4-f5a6-7890-bcde-f12345678002',
+    provider: 'azure',
+    status: 'ready',
+    total_findings: 4,
+    total_estimated_monthly_waste_usd: 8.0,
+    analysis_error: null,
+    created_at: ago(24 * 60),
+    items: [
+      {
+        id: 'item-004',
+        severity: 'MEDIUM',
+        category: 'WASTE',
+        title: 'Unattached managed disk',
+        description: "A 160GB managed disk isn't attached to any VM.",
+        remediation: 'Delete it if no longer needed, or attach it.',
+        estimated_monthly_waste_usd: 8.0,
+        priority_rank: 1,
+        status: 'dismissed',
+      },
+      {
+        id: 'item-005',
+        severity: 'LOW',
+        category: 'WASTE',
+        title: 'Empty resource group',
+        description: 'This resource group has no resources in it.',
+        remediation: 'Delete it if no longer needed.',
+        estimated_monthly_waste_usd: 0,
+        priority_rank: 2,
+        status: 'pending_approval',
+      },
+    ],
+  },
+]
+
+let _auditStore: AuditSubmissionDetail[] | null = null
+
+function getAuditStore(): AuditSubmissionDetail[] {
+  if (!_auditStore) _auditStore = JSON.parse(JSON.stringify(MOCK_AUDIT_SUBMISSIONS)) as AuditSubmissionDetail[]
+  return _auditStore
+}
+
+export function getMockAuditSubmissions(): AuditSubmissionSummary[] {
+  return getAuditStore().map(({ items: _items, analysis_error: _analysisError, ...summary }) => summary)
+}
+
+export function getMockAuditReport(auditId: string): AuditSubmissionDetail {
+  const submission = getAuditStore().find(s => s.audit_id === auditId)
+  if (!submission) throw new Error('Audit submission not found')
+  return submission
+}
+
+export function mockActionAuditItem(
+  itemId: string,
+  status: 'approved' | 'dismissed',
+): { id: string; status: string } {
+  for (const submission of getAuditStore()) {
+    const item = submission.items.find(i => i.id === itemId)
+    if (item) {
+      item.status = status
+      return { id: item.id, status: item.status }
+    }
+  }
+  throw new Error('Remediation item not found')
 }
 
 // ── Phase 6 Internal Ops — Mock Pipeline Outputs ─────────────────────

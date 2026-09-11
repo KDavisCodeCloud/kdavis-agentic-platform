@@ -106,3 +106,41 @@ export const IMPACT_META: Record<ImpactLevel, { label: string; color: string }> 
   medium: { label: 'Med Impact',    color: 'text-amber-400 bg-amber-400/10 border-amber-400/30' },
   high:   { label: 'High Impact',   color: 'text-red-400 bg-red-400/10 border-red-400/30' },
 }
+
+// ── Cloud audit remediation plan (mirrors api/routes/audit.py) ─────────────
+
+export type AuditItemStatus = 'pending_approval' | 'approved' | 'dismissed'
+export type AuditSeverity = 'HIGH' | 'MEDIUM' | 'LOW'
+export type AuditCategory = 'WASTE' | 'SECURITY' | 'COMPLIANCE'
+
+export interface RemediationItem {
+  id: string
+  severity: AuditSeverity
+  category: AuditCategory
+  title: string
+  description: string
+  remediation: string
+  estimated_monthly_waste_usd: number
+  priority_rank: number
+  status: AuditItemStatus
+}
+
+export interface AuditSubmissionSummary {
+  audit_id: string
+  provider: string
+  status: string
+  total_findings: number
+  total_estimated_monthly_waste_usd: number
+  created_at: string
+}
+
+export interface AuditSubmissionDetail extends AuditSubmissionSummary {
+  analysis_error: string | null
+  items: RemediationItem[]
+}
+
+export const AUDIT_ITEM_STATUS_META: Record<AuditItemStatus, { label: string; color: string }> = {
+  pending_approval: { label: 'Pending',   color: 'text-amber-400 bg-amber-400/10 border-amber-400/30' },
+  approved:         { label: 'Approved',  color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30' },
+  dismissed:        { label: 'Dismissed', color: 'text-zinc-500 bg-zinc-900 border-zinc-700' },
+}

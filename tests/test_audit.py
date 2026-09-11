@@ -11,6 +11,8 @@ _tier_limit form fixed in gap #5).
 What this file validates:
   - submit_audit: creates the submission row, invokes the analysis agent
     with the right payload, returns the persisted report
+  - list_audit_submissions: scoped to the caller's workspace, ordered
+    newest first, empty list for a fresh workspace
   - get_audit_report: found (scoped to the caller's workspace) and
     not-found (wrong workspace or unknown id) -> 404, never another
     workspace's data
@@ -18,6 +20,7 @@ What this file validates:
     404 when the item doesn't belong to the caller's workspace
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -123,6 +126,45 @@ class TestSubmitAudit:
         run_payload = MockAgent.return_value.run.await_args.kwargs["payload"]
         assert run_payload["submission_id"] == str(submission_id)
         assert len(run_payload["findings"]) == 1
+
+
+class TestListAuditSubmissions:
+    async def test_returns_summaries_scoped_to_workspace(self):
+        submission_id = uuid4()
+        created_at = datetime.now(timezone.utc)
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(
+            return_value=[
+                {
+                    "id": submission_id,
+                    "provider": "aws",
+                    "status": "ready",
+                    "total_findings": 9,
+                    "total_estimated_monthly_waste_usd": 12.5,
+                    "created_at": created_at,
+                }
+            ]
+        )
+        request = _make_request(conn)
+        fake_workspace = {"id": uuid4()}
+
+        result = await audit.list_audit_submissions(request, workspace=fake_workspace)
+
+        assert len(result) == 1
+        assert result[0].audit_id == str(submission_id)
+        assert result[0].created_at == created_at.isoformat()
+        sql, bound_workspace = conn.fetch.await_args.args
+        assert "ORDER BY created_at DESC" in sql
+        assert bound_workspace == fake_workspace["id"]
+
+    async def test_empty_for_fresh_workspace(self):
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[])
+        request = _make_request(conn)
+
+        result = await audit.list_audit_submissions(request, workspace={"id": uuid4()})
+
+        assert result == []
 
 
 class TestGetAuditReport:

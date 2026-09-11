@@ -1,7 +1,10 @@
 // Cloud Decoded — typed API client
 
-import type { Incident, ApprovalRequest, ApprovalResponse, AgentsResponse } from './types'
-import { getMockIncidents, mockApprove } from './mock-data'
+import type {
+  Incident, ApprovalRequest, ApprovalResponse, AgentsResponse,
+  AuditSubmissionSummary, AuditSubmissionDetail,
+} from './types'
+import { getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem } from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
@@ -446,6 +449,28 @@ export async function saveLlmKey(
     method: 'POST',
     body: JSON.stringify({ provider, api_key: apiKey }),
   })
+}
+
+// ── Cloud Audit Remediation Plan ─────────────────────────────────────────
+
+export async function listAuditSubmissions(token: string): Promise<AuditSubmissionSummary[]> {
+  if (MOCK_MODE) return getMockAuditSubmissions()
+  return request<AuditSubmissionSummary[]>('/audit', token)
+}
+
+export async function getAuditReport(token: string, auditId: string): Promise<AuditSubmissionDetail> {
+  if (MOCK_MODE) return getMockAuditReport(auditId)
+  return request<AuditSubmissionDetail>(`/audit/${auditId}/report`, token)
+}
+
+export async function approveAuditItem(token: string, itemId: string): Promise<{ id: string; status: string }> {
+  if (MOCK_MODE) return mockActionAuditItem(itemId, 'approved')
+  return request<{ id: string; status: string }>(`/audit/items/${itemId}/approve`, token, { method: 'POST' })
+}
+
+export async function dismissAuditItem(token: string, itemId: string): Promise<{ id: string; status: string }> {
+  if (MOCK_MODE) return mockActionAuditItem(itemId, 'dismissed')
+  return request<{ id: string; status: string }>(`/audit/items/${itemId}/dismiss`, token, { method: 'POST' })
 }
 
 // ── Health ─────────────────────────────────────────────────────────────

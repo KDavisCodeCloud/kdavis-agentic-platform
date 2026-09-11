@@ -12,6 +12,7 @@ Cloud audit findings submission + remediation plan review.
 
 POST /audit/submit                — submit a kdavis-cloud-audit findings.json,
                                      runs the analysis agent synchronously
+GET  /audit                       — list the caller's past submissions
 GET  /audit/{audit_id}/report     — retrieve a submission's plan
 POST /audit/items/{item_id}/approve — mark an item approved (terminal, no execution)
 POST /audit/items/{item_id}/dismiss — mark an item dismissed
@@ -99,6 +100,15 @@ class ItemActionResponse(BaseModel):
     status: str
 
 
+class AuditSubmissionSummary(BaseModel):
+    audit_id: str
+    provider: str
+    status: str
+    total_findings: int
+    total_estimated_monthly_waste_usd: float
+    created_at: str
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _row_to_item(row) -> RemediationItemResponse:
@@ -179,6 +189,31 @@ async def submit_audit(
         log.info("[Audit] Submission=%s workspace=%s findings=%d", submission_id, workspace_id, len(findings))
 
         return await _load_report(conn, submission_id, workspace_id)
+
+
+@router.get("", response_model=list[AuditSubmissionSummary])
+async def list_audit_submissions(
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> list[AuditSubmissionSummary]:
+    async with request.app.state.db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, provider, status, total_findings, total_estimated_monthly_waste_usd, created_at "
+            "FROM cloud_audit_submissions WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 50",
+            workspace["id"],
+        )
+
+    return [
+        AuditSubmissionSummary(
+            audit_id=str(r["id"]),
+            provider=r["provider"],
+            status=r["status"],
+            total_findings=r["total_findings"],
+            total_estimated_monthly_waste_usd=float(r["total_estimated_monthly_waste_usd"]),
+            created_at=r["created_at"].isoformat(),
+        )
+        for r in rows
+    ]
 
 
 @router.get("/{audit_id}/report", response_model=AuditReportResponse)
