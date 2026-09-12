@@ -29,6 +29,13 @@ WORKSPACE_TOKEN_HEADER = APIKeyHeader(name="X-Workspace-Token", auto_error=False
 
 _MCP_SERVICE_KEY = os.environ.get("MCP_SERVICE_KEY", "")
 
+# 'pending_payment' -- the default status for every newly-created workspace
+# (db/migrations/021_workspace_pending_payment.sql) -- is the actual paywall
+# gate: a workspace that has never completed Stripe checkout stays blocked
+# here exactly like a canceled/suspended one, until the checkout.session.
+# completed webhook (api/routes/stripe_billing.py) flips it to 'active'.
+_BLOCKED_SUBSCRIPTION_STATUSES = ("canceled", "suspended", "pending_payment")
+
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -87,7 +94,7 @@ async def _get_workspace_by_mcp_service(request: Request, service_key: str) -> d
         )
 
     status_val = row["stripe_subscription_status"]
-    if status_val in ("canceled", "suspended"):
+    if status_val in _BLOCKED_SUBSCRIPTION_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=f"Workspace subscription {status_val} — access denied",
@@ -137,7 +144,7 @@ async def get_workspace(request: Request) -> dict:
         )
 
     status_val = row["stripe_subscription_status"]
-    if status_val in ("canceled", "suspended"):
+    if status_val in _BLOCKED_SUBSCRIPTION_STATUSES:
         log.warning(
             "[Auth] Workspace %s blocked — subscription status: %s",
             row["id"], status_val
