@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Zap, LogOut, Settings, Activity, Shield, Layers, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck } from 'lucide-react'
+import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
-import { OpsHub } from '@/components/OpsHub'
 import { ContentPipeline } from '@/components/ContentPipeline'
 import OutreachPipeline from '@/components/OutreachPipeline'
 import { IntegrationsDashboard } from '@/components/IntegrationsDashboard'
@@ -18,7 +17,7 @@ import { getBillingPortalUrl } from '@/lib/api'
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
 
-type DashTab = 'hitl' | 'ops' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent'
+type DashTab = 'hitl' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent'
 
 export default function DashboardPage() {
   const router                        = useRouter()
@@ -130,18 +129,6 @@ export default function DashboardPage() {
           HITL Console
         </button>
         <button
-          onClick={() => setActiveTab('ops')}
-          className={cn(
-            'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-colors',
-            activeTab === 'ops'
-              ? 'bg-zinc-800 text-zinc-100'
-              : 'text-zinc-500 hover:text-zinc-300',
-          )}
-        >
-          <Layers className="h-3.5 w-3.5" />
-          Internal Ops
-        </button>
-        <button
           onClick={() => setActiveTab('content')}
           className={cn(
             'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-colors',
@@ -223,7 +210,6 @@ export default function DashboardPage() {
       {/* Main content */}
       <main className="flex-1 overflow-hidden">
         {activeTab === 'hitl'         && <IncidentConsole token={token} />}
-        {activeTab === 'ops'          && <OpsHub />}
         {activeTab === 'content'      && <ContentPipeline token={token} />}
         {activeTab === 'outreach'     && <OutreachPipeline token={token} />}
         {activeTab === 'integrations' && <IntegrationsDashboard token={token} />}
