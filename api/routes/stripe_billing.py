@@ -30,7 +30,7 @@ import stripe.error
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment
+from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment, get_workspace_any_status
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -356,13 +356,17 @@ async def create_customer_portal(
 
 @router.get("/status", response_model=BillingStatusResponse)
 async def billing_status(
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_any_status),
 ) -> BillingStatusResponse:
     """
     Return current billing tier and subscription status for the workspace.
 
-    The frontend polls this after a Checkout success redirect to confirm
-    the webhook has fired and the tier has been applied.
+    Deliberately does not 402 on a blocked subscription status -- a
+    workspace needs to be able to see *why* it's locked (pending_payment,
+    canceled, suspended) in order to fix it. The frontend polls this after
+    a Checkout success redirect to confirm the webhook has fired, and the
+    /billing page reads it to render the current plan/status regardless
+    of lock state.
     """
     return BillingStatusResponse(
         tier=workspace.get("product_tier", "starter"),

@@ -17,7 +17,12 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from api.middleware.auth import _hash_token, get_workspace, get_workspace_allow_pending_payment
+from api.middleware.auth import (
+    _hash_token,
+    get_workspace,
+    get_workspace_allow_pending_payment,
+    get_workspace_any_status,
+)
 
 
 def _make_request(token: str | None, row: dict | None) -> SimpleNamespace:
@@ -113,3 +118,28 @@ class TestGetWorkspaceAllowPendingPayment:
         request = _make_request("cd_ws_real", _workspace_row("active"))
         result = await get_workspace_allow_pending_payment(request)
         assert result["stripe_subscription_status"] == "active"
+
+
+class TestGetWorkspaceAnyStatus:
+    """GET /billing/status must be readable no matter how locked the
+    workspace is -- a customer can't fix pending_payment/canceled/
+    suspended without first being told that's their status."""
+
+    @pytest.mark.parametrize(
+        "blocked_status", ["pending_payment", "canceled", "suspended"]
+    )
+    async def test_all_blocked_statuses_pass_through(self, blocked_status):
+        request = _make_request("cd_ws_real", _workspace_row(blocked_status))
+        result = await get_workspace_any_status(request)
+        assert result["stripe_subscription_status"] == blocked_status
+
+    async def test_active_workspace_passes(self):
+        request = _make_request("cd_ws_real", _workspace_row("active"))
+        result = await get_workspace_any_status(request)
+        assert result["stripe_subscription_status"] == "active"
+
+    async def test_invalid_token_still_403s(self):
+        request = _make_request("cd_ws_bogus", None)
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_any_status(request)
+        assert exc.value.status_code == 403

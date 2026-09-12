@@ -24,6 +24,22 @@ export class ApiError extends Error {
   }
 }
 
+export function isPaywallError(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status === 402
+}
+
+// A 402 means get_workspace (api/middleware/auth.py) blocked this workspace
+// -- pending_payment, canceled, or suspended. Every dashboard tab reaches
+// its data through request(), so handling it here once means no individual
+// component needs to know about billing state. /billing itself reads
+// status through get_workspace_any_status, which never 402s, so this can't
+// loop back on itself.
+function redirectToBilling() {
+  if (typeof window === 'undefined') return
+  if (window.location.pathname === '/billing') return
+  window.location.href = '/billing?locked=1'
+}
+
 async function request<T>(
   path: string,
   token: string,
@@ -40,7 +56,9 @@ async function request<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new ApiError(res.status, body.detail ?? `HTTP ${res.status}`)
+    const err = new ApiError(res.status, body.detail ?? `HTTP ${res.status}`)
+    if (res.status === 402) redirectToBilling()
+    throw err
   }
 
   return res.json() as Promise<T>

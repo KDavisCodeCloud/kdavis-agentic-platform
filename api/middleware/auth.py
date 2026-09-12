@@ -182,4 +182,21 @@ async def get_workspace_allow_pending_payment(request: Request) -> dict:
 
     return await _get_workspace_by_token(request, ("canceled", "suspended"))
 
-    return dict(row)
+
+async def get_workspace_any_status(request: Request) -> dict:
+    """
+    Same token validation (401 missing, 403 invalid) as get_workspace, but
+    never 402s on subscription status -- for the one thing a locked-out
+    workspace must still be able to check: its own billing status.
+
+    Without this, GET /billing/status itself 402s for exactly the
+    workspaces that most need to call it (pending_payment, canceled,
+    suspended), forcing the frontend to guess why it's locked instead of
+    just asking. Never use this for anything other than reading status --
+    every other protected route must keep using get_workspace.
+    """
+    mcp_key = request.headers.get("X-MCP-Service-Key")
+    if mcp_key:
+        return await _get_workspace_by_mcp_service(request, mcp_key)
+
+    return await _get_workspace_by_token(request, ())

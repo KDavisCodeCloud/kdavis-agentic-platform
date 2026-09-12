@@ -12,7 +12,7 @@ import { FinOpsAgentDashboard } from '@/components/FinOpsAgentDashboard'
 import { ComplianceAgentDashboard } from '@/components/ComplianceAgentDashboard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { getBillingPortalUrl, getBillingStatus } from '@/lib/api'
+import { getBillingStatus } from '@/lib/api'
 
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
@@ -127,7 +127,6 @@ export default function DashboardPage() {
   const [token, setToken]             = useState<string | null>(null)
   const [hydrated, setHydrated]       = useState(false)
   const [activeTab, setActiveTab]     = useState<DashTab>('hitl')
-  const [portalLoading, setPortalLoading] = useState(false)
 
   useEffect(() => {
     if (MOCK_MODE) {
@@ -156,19 +155,6 @@ export default function DashboardPage() {
   function handleLogout() {
     localStorage.removeItem('workspace_token')
     router.replace('/')
-  }
-
-  async function handleBillingPortal() {
-    if (!token || MOCK_MODE) return
-    setPortalLoading(true)
-    try {
-      const url = await getBillingPortalUrl(token)
-      window.open(url, '_blank', 'noopener,noreferrer')
-    } catch {
-      // Portal not available (e.g. no billing account yet) — silently ignore
-    } finally {
-      setPortalLoading(false)
-    }
   }
 
   if (!hydrated) return null
@@ -205,9 +191,8 @@ export default function DashboardPage() {
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              title="Manage billing"
-              disabled={portalLoading}
-              onClick={handleBillingPortal}
+              title="Billing"
+              onClick={() => router.push('/billing')}
             >
               <CreditCard className="h-3.5 w-3.5" />
             </Button>
