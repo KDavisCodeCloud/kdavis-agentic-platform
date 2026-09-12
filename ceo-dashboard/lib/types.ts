@@ -276,6 +276,7 @@ export const DEPT_ROUTES = [
   { id: "video",     label: "Video / Creative", path: "/dashboard/video",      roles: ["admin", "marketing"] },
   { id: "empire",    label: "Decoded Empire",   path: "/dashboard/empire",     roles: ["admin"] },
   { id: "agents",    label: "Voice Agents",     path: "/dashboard/agents",    roles: ["admin"] },
+  { id: "customers", label: "Customers",        path: "/dashboard/customers", roles: ["admin"] },
 ] as const;
 
 export type DeptId = typeof DEPT_ROUTES[number]["id"];

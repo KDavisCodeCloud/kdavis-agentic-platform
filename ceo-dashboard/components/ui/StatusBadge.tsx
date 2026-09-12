@@ -2,6 +2,11 @@ import type { BadgeStatus } from "@/lib/types";
 
 const STATUS_MAP: Record<string, { text: string; bg: string; label?: string }> = {
   active:         { text: "#6fce8f", bg: "#6fce8f22" },
+  trialing:       { text: "#7ea6f5", bg: "#5b8def22" },
+  pending_payment:{ text: "#e8963f", bg: "#e8963f22", label: "PAYMENT REQUIRED" },
+  past_due:       { text: "#e8963f", bg: "#e8963f22" },
+  canceled:       { text: "#e05d5d", bg: "#e05d5d22" },
+  suspended:      { text: "#e05d5d", bg: "#e05d5d22" },
   pass:           { text: "#6fce8f", bg: "#6fce8f22" },
   healthy:        { text: "#6fce8f", bg: "#6fce8f22" },
   complete:       { text: "#6fce8f", bg: "#6fce8f22" },
