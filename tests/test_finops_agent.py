@@ -112,12 +112,14 @@ class TestConnect:
             "tenant_token": "fo_t_rawtoken",
             "aws_trust_policy": {"Statement": []},
             "aws_permissions_policy": {"Statement": []},
+            "azure_setup_instructions": "az ad sp create-for-rbac ...",
         }
         with patch("api.routes.finops_agent.client.create_tenant", new=AsyncMock(return_value=remote_response)):
             result = await finops_agent.connect(request, workspace=fake_workspace)
 
         assert result.pending_setup is True
         assert result.setup["aws_trust_policy"] == {"Statement": []}
+        assert result.setup["azure_setup_instructions"] == "az ad sp create-for-rbac ..."
 
         sql, tenant_id, encrypted_token, setup_json, bound_workspace_id = conn.execute.await_args.args
         assert tenant_id == remote_tenant_id
@@ -204,6 +206,73 @@ class TestVerifyRole:
             with pytest.raises(HTTPException) as exc:
                 await finops_agent.verify_role(
                     finops_agent.VerifyRoleRequest(role_arn="arn:x"), request, workspace={"id": uuid4()}
+                )
+        assert exc.value.status_code == 400
+
+
+class TestVerifyAzure:
+    async def test_happy_path_marks_connected(self):
+        workspace_id = uuid4()
+        tenant_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            return_value=_connection_row(
+                finops_agent_tenant_id=tenant_id,
+                encrypted_finops_agent_tenant_token=encrypt("fo_t_raw"),
+            )
+        )
+        conn.execute = AsyncMock()
+        request = _make_request(conn)
+
+        with patch("api.routes.finops_agent.client.verify_azure_service_principal", new=AsyncMock()) as mock_verify:
+            result = await finops_agent.verify_azure(
+                finops_agent.VerifyAzureServicePrincipalRequest(
+                    azure_tenant_id="tid", client_id="cid", client_secret="secret", subscription_id="sub",
+                ),
+                request,
+                workspace={"id": workspace_id},
+            )
+
+        assert result.status == "active"
+        mock_verify.assert_awaited_once_with(str(tenant_id), "fo_t_raw", "tid", "cid", "secret", "sub")
+        sql, bound_workspace_id = conn.execute.await_args.args
+        assert bound_workspace_id == workspace_id
+
+    async def test_never_connected_returns_400(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=_connection_row())
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await finops_agent.verify_azure(
+                finops_agent.VerifyAzureServicePrincipalRequest(
+                    azure_tenant_id="tid", client_id="cid", client_secret="s", subscription_id="sub",
+                ),
+                request,
+                workspace={"id": uuid4()},
+            )
+        assert exc.value.status_code == 400
+
+    async def test_upstream_verification_failure_returns_400(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            return_value=_connection_row(
+                finops_agent_tenant_id=uuid4(), encrypted_finops_agent_tenant_token=encrypt("t")
+            )
+        )
+        request = _make_request(conn)
+
+        with patch(
+            "api.routes.finops_agent.client.verify_azure_service_principal",
+            new=AsyncMock(side_effect=AgentServiceError("bad creds")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await finops_agent.verify_azure(
+                    finops_agent.VerifyAzureServicePrincipalRequest(
+                        azure_tenant_id="tid", client_id="cid", client_secret="s", subscription_id="sub",
+                    ),
+                    request,
+                    workspace={"id": uuid4()},
                 )
         assert exc.value.status_code == 400
 

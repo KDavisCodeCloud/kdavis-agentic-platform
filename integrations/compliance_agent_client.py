@@ -73,6 +73,27 @@ async def verify_aws_role(tenant_id: str, tenant_token: str, role_arn: str) -> d
     )
 
 
+async def verify_azure_service_principal(
+    tenant_id: str,
+    tenant_token: str,
+    azure_tenant_id: str,
+    client_id: str,
+    client_secret: str,
+    subscription_id: str,
+) -> dict:
+    return await _request(
+        "PATCH",
+        f"/api/v1/tenants/{tenant_id}/azure-credentials",
+        tenant_token,
+        json={
+            "azure_tenant_id": azure_tenant_id,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "subscription_id": subscription_id,
+        },
+    )
+
+
 async def trigger_scan(tenant_id: str, tenant_token: str) -> dict:
     return await _request("POST", f"/api/v1/tenants/{tenant_id}/scan", tenant_token)
 

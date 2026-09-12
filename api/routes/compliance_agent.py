@@ -51,6 +51,13 @@ class VerifyRoleResponse(BaseModel):
     status: str
 
 
+class VerifyAzureServicePrincipalRequest(BaseModel):
+    azure_tenant_id: str
+    client_id: str
+    client_secret: str
+    subscription_id: str
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 async def _get_connection(conn, workspace_id) -> dict | None:
@@ -111,6 +118,7 @@ async def connect(request: Request, workspace: dict = Depends(get_workspace)) ->
         setup_json = {
             "aws_trust_policy": result["aws_trust_policy"],
             "aws_permissions_policy": result["aws_permissions_policy"],
+            "azure_setup_instructions": result["azure_setup_instructions"],
         }
         await conn.execute(
             """
@@ -154,6 +162,35 @@ async def verify_role(
         )
 
     log.info("[ComplianceAgent] AWS role verified workspace=%s", workspace_id)
+    return VerifyRoleResponse(status="active")
+
+
+@router.post("/verify-azure", response_model=VerifyRoleResponse)
+async def verify_azure(
+    body: VerifyAzureServicePrincipalRequest, request: Request, workspace: dict = Depends(get_workspace)
+) -> VerifyRoleResponse:
+    workspace_id = workspace["id"]
+    async with request.app.state.db_pool.acquire() as conn:
+        row = await _get_connection(conn, workspace_id)
+        if not row or not row["compliance_agent_tenant_id"]:
+            raise HTTPException(status_code=400, detail="Compliance agent connection not started yet")
+
+        tenant_id = str(row["compliance_agent_tenant_id"])
+        tenant_token = decrypt(row["encrypted_compliance_agent_tenant_token"])
+
+        try:
+            await client.verify_azure_service_principal(
+                tenant_id, tenant_token, body.azure_tenant_id, body.client_id, body.client_secret, body.subscription_id
+            )
+        except AgentServiceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        await conn.execute(
+            "UPDATE workspaces SET compliance_agent_connected_at = NOW() WHERE id = $1",
+            workspace_id,
+        )
+
+    log.info("[ComplianceAgent] Azure Service Principal verified workspace=%s", workspace_id)
     return VerifyRoleResponse(status="active")
 
 

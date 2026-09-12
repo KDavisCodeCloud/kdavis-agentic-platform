@@ -17,7 +17,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from integrations.finops_agent_client import AgentServiceError, create_tenant, get_dashboard, verify_aws_role
+from integrations.finops_agent_client import (
+    AgentServiceError,
+    create_tenant,
+    get_dashboard,
+    verify_aws_role,
+    verify_azure_service_principal,
+)
 
 
 def _mock_async_client(response: MagicMock) -> MagicMock:
@@ -62,6 +68,28 @@ class TestVerifyAwsRole:
         args, kwargs = client.request.call_args
         assert kwargs["headers"] == {"X-Tenant-Token": "fo_t_secret"}
         assert "arn:aws:iam::1:role/x" in str(kwargs.get("json"))
+
+
+class TestVerifyAzureServicePrincipal:
+    async def test_sends_x_tenant_token_header_and_azure_body(self):
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json = MagicMock(return_value={"status": "active"})
+        client = _mock_async_client(response)
+
+        with patch("httpx.AsyncClient", return_value=client):
+            await verify_azure_service_principal("t1", "fo_t_secret", "tid", "cid", "secret", "sub")
+
+        args, kwargs = client.request.call_args
+        assert kwargs["headers"] == {"X-Tenant-Token": "fo_t_secret"}
+        body = kwargs.get("json")
+        assert body == {
+            "azure_tenant_id": "tid",
+            "client_id": "cid",
+            "client_secret": "secret",
+            "subscription_id": "sub",
+        }
+        assert "azure-credentials" in args[1]
 
 
 class TestErrorHandling:

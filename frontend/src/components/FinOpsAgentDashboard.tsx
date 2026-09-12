@@ -6,11 +6,11 @@ import { Button } from '@/components/ui/button'
 import { AgentConnectFlow } from './AgentConnectFlow'
 import { FinOpsHitlItemCard } from './FinOpsHitlItemCard'
 import {
-  getFinopsStatus, connectFinops, verifyFinopsAwsRole,
+  getFinopsStatus, connectFinops, verifyFinopsAwsRole, verifyFinopsAzureServicePrincipal,
   getFinopsDashboard, triggerFinopsScan,
 } from '@/lib/api'
 import { cn, timeAgo } from '@/lib/utils'
-import type { AgentConnectionStatus, FinOpsDashboardData } from '@/lib/types'
+import type { AgentConnectionStatus, AzureServicePrincipalInput, FinOpsDashboardData } from '@/lib/types'
 
 interface FinOpsAgentDashboardProps {
   token: string
@@ -63,6 +63,19 @@ export function FinOpsAgentDashboard({ token }: FinOpsAgentDashboardProps) {
       await load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not verify that role')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  async function handleVerifyAzure(input: AzureServicePrincipalInput) {
+    setVerifying(true)
+    setError(null)
+    try {
+      await verifyFinopsAzureServicePrincipal(token, input)
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not verify that Service Principal')
     } finally {
       setVerifying(false)
     }
@@ -123,6 +136,7 @@ export function FinOpsAgentDashboard({ token }: FinOpsAgentDashboardProps) {
           error={error}
           onConnect={handleConnect}
           onVerifyRole={handleVerifyRole}
+          onVerifyAzure={handleVerifyAzure}
         />
       ) : (
         <div className="flex-1 overflow-y-auto p-4">

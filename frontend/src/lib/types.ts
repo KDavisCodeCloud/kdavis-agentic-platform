@@ -152,12 +152,20 @@ export const AUDIT_ITEM_STATUS_META: Record<AuditItemStatus, { label: string; co
 export interface AgentSetupPolicy {
   aws_trust_policy: Record<string, unknown>
   aws_permissions_policy: Record<string, unknown>
+  azure_setup_instructions: string
 }
 
 export interface AgentConnectionStatus {
   connected: boolean
   pending_setup: boolean
   setup: AgentSetupPolicy | null
+}
+
+export interface AzureServicePrincipalInput {
+  azure_tenant_id: string
+  client_id: string
+  client_secret: string
+  subscription_id: string
 }
 
 // ── FinOps agent (mirrors kdavis-finops-agent's api/routes/tenants.py +

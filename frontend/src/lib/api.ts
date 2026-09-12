@@ -4,7 +4,7 @@ import type {
   Incident, ApprovalRequest, ApprovalResponse, AgentsResponse,
   AuditSubmissionSummary, AuditSubmissionDetail,
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
-  DraftSummary, DraftDetail,
+  DraftSummary, DraftDetail, AzureServicePrincipalInput,
 } from './types'
 import {
   getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -555,6 +555,17 @@ export async function verifyFinopsAwsRole(token: string, roleArn: string): Promi
   })
 }
 
+export async function verifyFinopsAzureServicePrincipal(
+  token: string,
+  body: AzureServicePrincipalInput,
+): Promise<{ status: string }> {
+  if (MOCK_MODE) return mockVerifyAgentRole('finops')
+  return request<{ status: string }>('/finops-agent/verify-azure', token, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function triggerFinopsScan(token: string): Promise<FinOpsDashboardData> {
   if (MOCK_MODE) return getMockFinopsDashboard()
   return request<FinOpsDashboardData>('/finops-agent/scan', token, { method: 'POST' })
@@ -594,6 +605,17 @@ export async function verifyComplianceAwsRole(token: string, roleArn: string): P
   return request<{ status: string }>('/compliance-agent/verify-role', token, {
     method: 'POST',
     body: JSON.stringify({ role_arn: roleArn }),
+  })
+}
+
+export async function verifyComplianceAzureServicePrincipal(
+  token: string,
+  body: AzureServicePrincipalInput,
+): Promise<{ status: string }> {
+  if (MOCK_MODE) return mockVerifyAgentRole('compliance')
+  return request<{ status: string }>('/compliance-agent/verify-azure', token, {
+    method: 'POST',
+    body: JSON.stringify(body),
   })
 }
 

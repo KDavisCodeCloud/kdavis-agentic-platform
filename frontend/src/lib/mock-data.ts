@@ -444,6 +444,9 @@ const MOCK_SETUP = {
     Version: '2012-10-17',
     Statement: [{ Effect: 'Allow', Action: ['iam:ListUsers', 'iam:ListMFADevices'], Resource: '*' }],
   },
+  azure_setup_instructions:
+    'In Azure: run `az ad sp create-for-rbac --name demo-readonly --skip-assignment` to create a ' +
+    'Service Principal, then assign it "Reader" and "Cost Management Reader" at your subscription scope.',
 }
 
 let _finopsConnection: AgentConnectionStatus = { connected: false, pending_setup: false, setup: null }

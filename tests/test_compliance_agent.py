@@ -103,6 +103,7 @@ class TestConnect:
             "tenant_token": "co_t_rawtoken",
             "aws_trust_policy": {"Statement": []},
             "aws_permissions_policy": {"Statement": []},
+            "azure_setup_instructions": "az ad sp create-for-rbac ...",
         }
         with patch(
             "api.routes.compliance_agent.client.create_tenant", new=AsyncMock(return_value=remote_response)
@@ -160,6 +161,48 @@ class TestVerifyRole:
         with pytest.raises(HTTPException) as exc:
             await compliance_agent.verify_role(
                 compliance_agent.VerifyRoleRequest(role_arn="arn:x"), request, workspace={"id": uuid4()}
+            )
+        assert exc.value.status_code == 400
+
+
+class TestVerifyAzure:
+    async def test_happy_path_marks_connected(self):
+        workspace_id = uuid4()
+        tenant_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            return_value=_connection_row(
+                compliance_agent_tenant_id=tenant_id,
+                encrypted_compliance_agent_tenant_token=encrypt("co_t_raw"),
+            )
+        )
+        conn.execute = AsyncMock()
+        request = _make_request(conn)
+
+        with patch("api.routes.compliance_agent.client.verify_azure_service_principal", new=AsyncMock()) as mock_verify:
+            result = await compliance_agent.verify_azure(
+                compliance_agent.VerifyAzureServicePrincipalRequest(
+                    azure_tenant_id="tid", client_id="cid", client_secret="secret", subscription_id="sub",
+                ),
+                request,
+                workspace={"id": workspace_id},
+            )
+
+        assert result.status == "active"
+        mock_verify.assert_awaited_once_with(str(tenant_id), "co_t_raw", "tid", "cid", "secret", "sub")
+
+    async def test_never_connected_returns_400(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=_connection_row())
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await compliance_agent.verify_azure(
+                compliance_agent.VerifyAzureServicePrincipalRequest(
+                    azure_tenant_id="tid", client_id="cid", client_secret="s", subscription_id="sub",
+                ),
+                request,
+                workspace={"id": uuid4()},
             )
         assert exc.value.status_code == 400
 

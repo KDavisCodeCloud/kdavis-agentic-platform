@@ -6,11 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AgentConnectFlow } from './AgentConnectFlow'
 import {
-  getComplianceStatus, connectCompliance, verifyComplianceAwsRole,
+  getComplianceStatus, connectCompliance, verifyComplianceAwsRole, verifyComplianceAzureServicePrincipal,
   getComplianceReport, triggerComplianceScan,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { AgentConnectionStatus, ComplianceReportData } from '@/lib/types'
+import type { AgentConnectionStatus, AzureServicePrincipalInput, ComplianceReportData } from '@/lib/types'
 
 interface ComplianceAgentDashboardProps {
   token: string
@@ -59,6 +59,19 @@ export function ComplianceAgentDashboard({ token }: ComplianceAgentDashboardProp
       setError(e instanceof Error ? e.message : 'Failed to connect')
     } finally {
       setConnecting(false)
+    }
+  }
+
+  async function handleVerifyAzure(input: AzureServicePrincipalInput) {
+    setVerifying(true)
+    setError(null)
+    try {
+      await verifyComplianceAzureServicePrincipal(token, input)
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not verify that Service Principal')
+    } finally {
+      setVerifying(false)
     }
   }
 
@@ -125,6 +138,7 @@ export function ComplianceAgentDashboard({ token }: ComplianceAgentDashboardProp
           error={error}
           onConnect={handleConnect}
           onVerifyRole={handleVerifyRole}
+          onVerifyAzure={handleVerifyAzure}
         />
       ) : (
         <div className="flex-1 overflow-y-auto p-4">
