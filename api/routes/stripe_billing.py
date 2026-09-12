@@ -30,7 +30,7 @@ import stripe.error
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -178,7 +178,7 @@ async def _workspace_id_for_customer(db_pool, stripe_customer_id: str) -> Option
 async def create_checkout_session(
     body: CheckoutRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_allow_pending_payment),
 ) -> CheckoutResponse:
     """
     Create a Stripe Checkout Session for the requested tier.
@@ -189,6 +189,11 @@ async def create_checkout_session(
 
     Frontend should poll GET /billing/status after success redirect
     to confirm the tier has been applied.
+
+    Uses get_workspace_allow_pending_payment, not get_workspace: every
+    brand-new signup is 'pending_payment' until this exact call succeeds
+    and its checkout completes -- get_workspace's normal block would make
+    this endpoint permanently unreachable for the one case it exists for.
     """
     tier = body.tier.lower()
     if tier not in _VALID_TIERS:

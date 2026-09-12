@@ -103,21 +103,7 @@ async def _get_workspace_by_mcp_service(request: Request, service_key: str) -> d
     return dict(row)
 
 
-async def get_workspace(request: Request) -> dict:
-    """
-    FastAPI dependency: validates the workspace token and returns the workspace row.
-    Raises 401 if missing, 403 if invalid or subscription blocked.
-
-    Usage:
-        @router.get("/...")
-        async def endpoint(workspace: dict = Depends(get_workspace)):
-            ...
-    """
-    # MCP internal service auth — check before workspace token path
-    mcp_key = request.headers.get("X-MCP-Service-Key")
-    if mcp_key:
-        return await _get_workspace_by_mcp_service(request, mcp_key)
-
+async def _get_workspace_by_token(request: Request, blocked_statuses: tuple[str, ...]) -> dict:
     token = request.headers.get("X-Workspace-Token")
     if not token:
         raise HTTPException(
@@ -144,7 +130,7 @@ async def get_workspace(request: Request) -> dict:
         )
 
     status_val = row["stripe_subscription_status"]
-    if status_val in _BLOCKED_SUBSCRIPTION_STATUSES:
+    if status_val in blocked_statuses:
         log.warning(
             "[Auth] Workspace %s blocked — subscription status: %s",
             row["id"], status_val
@@ -153,5 +139,47 @@ async def get_workspace(request: Request) -> dict:
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=f"Workspace subscription {status_val} — access denied",
         )
+
+    return dict(row)
+
+
+async def get_workspace(request: Request) -> dict:
+    """
+    FastAPI dependency: validates the workspace token and returns the workspace row.
+    Raises 401 if missing, 403 if invalid, 402 if subscription blocked
+    (canceled, suspended, or pending_payment -- see get_workspace_allow_pending_payment
+    for the one deliberate exception to the pending_payment block).
+
+    Usage:
+        @router.get("/...")
+        async def endpoint(workspace: dict = Depends(get_workspace)):
+            ...
+    """
+    # MCP internal service auth — check before workspace token path
+    mcp_key = request.headers.get("X-MCP-Service-Key")
+    if mcp_key:
+        return await _get_workspace_by_mcp_service(request, mcp_key)
+
+    return await _get_workspace_by_token(request, _BLOCKED_SUBSCRIPTION_STATUSES)
+
+
+async def get_workspace_allow_pending_payment(request: Request) -> dict:
+    """
+    Same as get_workspace, but does NOT block 'pending_payment' -- for the
+    one endpoint an unpaid workspace must be able to reach in order to stop
+    being unpaid: POST /billing/checkout. Without this, get_workspace's own
+    pending_payment block created a deadlock where a brand-new signup could
+    never call checkout at all (found live 2026-09-11 exercising the real
+    signup -> checkout flow end to end, not caught by unit tests alone).
+
+    Still blocks canceled/suspended: re-subscribing after cancellation or
+    lifting a ToS suspension goes through their own explicit flows, not a
+    bare retry of checkout.
+    """
+    mcp_key = request.headers.get("X-MCP-Service-Key")
+    if mcp_key:
+        return await _get_workspace_by_mcp_service(request, mcp_key)
+
+    return await _get_workspace_by_token(request, ("canceled", "suspended"))
 
     return dict(row)

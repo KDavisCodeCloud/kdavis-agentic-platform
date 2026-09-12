@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from api.middleware.auth import _hash_token, get_workspace
+from api.middleware.auth import _hash_token, get_workspace, get_workspace_allow_pending_payment
 
 
 def _make_request(token: str | None, row: dict | None) -> SimpleNamespace:
@@ -89,3 +89,27 @@ class TestGetWorkspace:
         sql, bound_hash = conn.fetchrow.await_args.args
         assert bound_hash == _hash_token("cd_ws_plaintext")
         assert bound_hash != "cd_ws_plaintext"
+
+
+class TestGetWorkspaceAllowPendingPayment:
+    async def test_pending_payment_passes_through(self):
+        """The real regression: a brand-new signup must be able to reach
+        POST /billing/checkout -- the one call that gets it OUT of
+        pending_payment. Found live 2026-09-11 exercising the actual
+        signup -> checkout flow: get_workspace's normal block made this
+        endpoint permanently unreachable for every new workspace."""
+        request = _make_request("cd_ws_real", _workspace_row("pending_payment"))
+        result = await get_workspace_allow_pending_payment(request)
+        assert result["stripe_subscription_status"] == "pending_payment"
+
+    @pytest.mark.parametrize("blocked_status", ["canceled", "suspended"])
+    async def test_canceled_and_suspended_still_blocked(self, blocked_status):
+        request = _make_request("cd_ws_real", _workspace_row(blocked_status))
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_allow_pending_payment(request)
+        assert exc.value.status_code == 402
+
+    async def test_active_workspace_passes(self):
+        request = _make_request("cd_ws_real", _workspace_row("active"))
+        result = await get_workspace_allow_pending_payment(request)
+        assert result["stripe_subscription_status"] == "active"
