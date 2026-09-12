@@ -30,6 +30,14 @@ Bumping will also require re-resolving `langgraph-checkpoint-postgres`
 newer, re-verify resume), re-run the full agent test suite against the real
 package (not the conftest stubs) before merging.
 
+**RESOLVED — already done, just undocumented.** `requirements.txt` already
+pins `langgraph==0.2.76` (found 2026-09-12 auditing this file against the
+repo — the fix landed at some point without this entry being closed out).
+Confirmed the pinned version still has working `Command`/`interrupt` by
+running the full suite with gap #3's conftest.py fix applied (see below) —
+1092 passed, same 4 pre-existing unrelated failures, none in the LangGraph
+resume path.
+
 ### 2. ~~Top-level `queue/` package shadows Python's stdlib `queue` module~~ — FIXED
 
 Hit this mid-session (`queue/__init__.py` breaking `urllib3`/`langgraph`
@@ -60,6 +68,17 @@ silently breaks `resume()` specifically (not `run()`).
 in CI, make the stub conditional — only apply lines 48-53's overwrites inside
 the `except ImportError` branch of `_ensure_stub`, not unconditionally after
 it.
+
+**RESOLVED 2026-09-12.** `_ensure_stub` now returns `(module, was_stubbed)`;
+the `StateGraph`/`START`/`END`/`interrupt`/`Command`/`AsyncPostgresSaver`
+overwrites only fire when `was_stubbed` is `True` for that specific
+submodule. In this repo's own `.venv` (real `langgraph==0.2.76` installed),
+every agent test now exercises the real classes. Full suite still 1092
+passed, same 4 pre-existing unrelated failures — the real package's resume
+semantics agree with what the mocks always claimed, but now that's actually
+being checked instead of assumed. `tests/test_engine.py`'s `sys.modules`
+purge workaround (described above) is now redundant but left in place —
+harmless, and removing it is unrelated cleanup, not part of this fix.
 
 ## Manually surfaced during Cloud Decoded frontend ship-readiness session (2026-09-10)
 

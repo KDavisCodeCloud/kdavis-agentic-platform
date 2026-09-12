@@ -242,3 +242,49 @@ export interface ComplianceScanResult {
   started_at: string
   completed_at: string | null
 }
+
+// ── Content Pipeline ─────────────────────────────────────────────────────
+
+export interface ContentImpact {
+  tier: 'strong' | 'solid' | 'weak' | 'unknown'
+  label: string
+  description: string
+  combined_score?: number
+}
+
+export interface DraftSummary {
+  id: string
+  platform: string
+  raw_idea: string
+  goal: string
+  status: string
+  brand_voice_score: number | null
+  brief_alignment_score: number | null
+  brief_title: string | null
+  impact: ContentImpact
+  created_at: string
+  updated_at: string
+}
+
+export interface DraftDetail extends DraftSummary {
+  brief: Record<string, unknown> | null
+  draft_output: {
+    platform: string
+    draft_a: { text: string; hook: string; word_count: number; hashtags: string[]; engagement_prompt: string }
+    draft_b: { text: string; hook: string; word_count: number; hashtags: string[]; engagement_prompt: string }
+    writer_notes: string
+  } | null
+  review_output: {
+    decision: string
+    brand_voice_score: number
+    brief_alignment_score: number
+    flags: Array<{ type: string; quote: string; reason: string }>
+    approved_draft: string
+    revision_notes: string
+  } | null
+  publish_package: Record<string, unknown> | null
+  operator_edit: string | null
+  rejection_feedback: string | null
+  linkedin_post_id: string | null
+  x_post_id: string | null
+}

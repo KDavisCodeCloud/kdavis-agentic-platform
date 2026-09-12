@@ -273,5 +273,5 @@ async def list_agents(
         "tier": tier,
         "available_agents": all_agents[:max_agents],
         "locked_agents": all_agents[max_agents:],
-        "upgrade_url": "https://cloud-decoded.com/pricing",
+        "upgrade_url": "https://theclouddecoded.com/#pricing",
     }

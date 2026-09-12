@@ -4,6 +4,7 @@ import type {
   Incident, ApprovalRequest, ApprovalResponse, AgentsResponse,
   AuditSubmissionSummary, AuditSubmissionDetail,
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
+  DraftSummary, DraftDetail,
 } from './types'
 import {
   getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -108,6 +109,41 @@ export async function approveIncident(
 
 export async function listAgents(token: string): Promise<AgentsResponse> {
   return request<AgentsResponse>('/agents', token)
+}
+
+// ── Content Pipeline ───────────────────────────────────────────────────
+// ContentPipeline.tsx previously made its own raw fetch() calls here instead
+// of going through this shared client like every other tab -- moved so it
+// picks up the same 402 → /billing redirect handling in request() for free.
+
+export async function listContentDrafts(token: string): Promise<DraftSummary[]> {
+  return request<DraftSummary[]>('/content/drafts', token)
+}
+
+export async function getContentDraft(token: string, draftId: string): Promise<DraftDetail> {
+  return request<DraftDetail>(`/content/drafts/${draftId}`, token)
+}
+
+export async function approveContentDraft(
+  token: string,
+  draftId: string,
+  body: { selected_draft: string; operator_edit?: string },
+): Promise<DraftDetail> {
+  return request<DraftDetail>(`/content/drafts/${draftId}/approve`, token, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function rejectContentDraft(
+  token: string,
+  draftId: string,
+  feedback: string,
+): Promise<DraftDetail> {
+  return request<DraftDetail>(`/content/drafts/${draftId}/reject`, token, {
+    method: 'POST',
+    body: JSON.stringify({ feedback }),
+  })
 }
 
 // ── Billing ────────────────────────────────────────────────────────────

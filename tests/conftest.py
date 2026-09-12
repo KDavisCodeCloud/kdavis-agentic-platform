@@ -25,30 +25,45 @@ def _stub(name: str) -> MagicMock:
     return m
 
 
-def _ensure_stub(name: str) -> MagicMock:
-    """Register stub only if the real module is not importable."""
+def _ensure_stub(name: str) -> tuple[MagicMock, bool]:
+    """Register stub only if the real module is not importable.
+
+    Returns (module, was_stubbed). Callers that go on to overwrite specific
+    symbols on the returned module (see the LangGraph block below) MUST
+    check was_stubbed first -- overwriting unconditionally clobbers the real
+    package's classes when it IS installed, silently downgrading every test
+    to a fake graph that can never catch a real resume bug (GAPS.md gap #3).
+    """
     try:
         __import__(name)
-        return sys.modules[name]
+        return sys.modules[name], False
     except ImportError:
-        return _stub(name)
+        return _stub(name), True
 
 
-# LangGraph — not installed in CI; stub so workflow.py is importable
-_lg       = _ensure_stub("langgraph")
-_lg_graph = _ensure_stub("langgraph.graph")
-_lg_types = _ensure_stub("langgraph.types")
-_lg_chk   = _ensure_stub("langgraph.checkpoint")
-_lg_pg    = _ensure_stub("langgraph.checkpoint.postgres")
-_lg_pgaio = _ensure_stub("langgraph.checkpoint.postgres.aio")
+# LangGraph — stub so workflow.py is importable when the real package isn't
+# installed (e.g. before `pip install -r requirements.txt`). When it IS
+# installed (the normal case in this repo's own .venv), _ensure_stub returns
+# the real module and was_stubbed is False -- the symbol overwrites below
+# only fire in the stubbed case, so a real environment exercises the real
+# StateGraph/interrupt/Command/AsyncPostgresSaver, not mocks standing in for
+# them.
+_lg,       _                    = _ensure_stub("langgraph")
+_lg_graph, _lg_graph_stubbed    = _ensure_stub("langgraph.graph")
+_lg_types, _lg_types_stubbed    = _ensure_stub("langgraph.types")
+_lg_chk,   _                    = _ensure_stub("langgraph.checkpoint")
+_lg_pg,    _                    = _ensure_stub("langgraph.checkpoint.postgres")
+_lg_pgaio, _lg_pgaio_stubbed    = _ensure_stub("langgraph.checkpoint.postgres.aio")
 
-# Expose the symbols workflow.py imports directly
-_lg_graph.StateGraph    = MagicMock(return_value=MagicMock())
-_lg_graph.START         = "START"
-_lg_graph.END           = "END"
-_lg_types.interrupt     = MagicMock(return_value=None)
-_lg_types.Command       = MagicMock()
-_lg_pgaio.AsyncPostgresSaver = MagicMock()
+if _lg_graph_stubbed:
+    _lg_graph.StateGraph = MagicMock(return_value=MagicMock())
+    _lg_graph.START      = "START"
+    _lg_graph.END        = "END"
+if _lg_types_stubbed:
+    _lg_types.interrupt  = MagicMock(return_value=None)
+    _lg_types.Command    = MagicMock()
+if _lg_pgaio_stubbed:
+    _lg_pgaio.AsyncPostgresSaver = MagicMock()
 
 # slowapi — used in api/
 _ensure_stub("slowapi")

@@ -9,52 +9,8 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface Impact {
-  tier: 'strong' | 'solid' | 'weak' | 'unknown'
-  label: string
-  description: string
-  combined_score?: number
-}
-
-interface DraftSummary {
-  id: string
-  platform: string
-  raw_idea: string
-  goal: string
-  status: string
-  brand_voice_score: number | null
-  brief_alignment_score: number | null
-  brief_title: string | null
-  impact: Impact
-  created_at: string
-  updated_at: string
-}
-
-interface DraftDetail extends DraftSummary {
-  brief: Record<string, unknown> | null
-  draft_output: {
-    platform: string
-    draft_a: { text: string; hook: string; word_count: number; hashtags: string[]; engagement_prompt: string }
-    draft_b: { text: string; hook: string; word_count: number; hashtags: string[]; engagement_prompt: string }
-    writer_notes: string
-  } | null
-  review_output: {
-    decision: string
-    brand_voice_score: number
-    brief_alignment_score: number
-    flags: Array<{ type: string; quote: string; reason: string }>
-    approved_draft: string
-    revision_notes: string
-  } | null
-  publish_package: Record<string, unknown> | null
-  operator_edit: string | null
-  rejection_feedback: string | null
-  linkedin_post_id: string | null
-  x_post_id: string | null
-}
+import type { DraftSummary, DraftDetail, ContentImpact } from '@/lib/types'
+import { listContentDrafts, getContentDraft, approveContentDraft, rejectContentDraft } from '@/lib/api'
 
 interface Props {
   token: string
@@ -263,7 +219,7 @@ function ScoreBar({ label, score }: { label: string; score: number | null }) {
   )
 }
 
-function ImpactPanel({ impact }: { impact: Impact }) {
+function ImpactPanel({ impact }: { impact: ContentImpact }) {
   return (
     <div className={cn('rounded-lg border p-3 space-y-1', IMPACT_COLORS[impact.tier])}>
       <div className="flex items-center gap-1.5">
@@ -299,10 +255,9 @@ export function ContentPipeline({ token }: Props) {
       return
     }
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/content/drafts`, {
-        headers: { 'X-Workspace-Token': token },
-      })
-      if (res.ok) setDrafts(await res.json())
+      setDrafts(await listContentDrafts(token))
+    } catch {
+      // matches prior raw-fetch behavior: silently keep the last known list on failure
     } finally {
       setLoading(false)
     }
@@ -315,10 +270,9 @@ export function ContentPipeline({ token }: Props) {
     }
     setDetailLoading(true)
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/content/drafts/${id}`, {
-        headers: { 'X-Workspace-Token': token },
-      })
-      if (res.ok) setSelected(await res.json())
+      setSelected(await getContentDraft(token, id))
+    } catch {
+      // matches prior raw-fetch behavior: silently keep the last known selection on failure
     } finally {
       setDetailLoading(false)
     }
@@ -343,22 +297,15 @@ export function ContentPipeline({ token }: Props) {
         setSelected(prev => prev ? { ...prev, status: 'published' } : null)
         return
       }
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/content/drafts/${selected.id}/approve`,
-        {
-          method: 'POST',
-          headers: { 'X-Workspace-Token': token, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            selected_draft: activeVariant,
-            operator_edit: editMode ? editText || undefined : undefined,
-          }),
-        }
-      )
-      if (res.ok) {
-        await fetchDrafts()
-        await fetchDetail(selected.id)
-        setEditMode(false)
-      }
+      await approveContentDraft(token, selected.id, {
+        selected_draft: activeVariant,
+        operator_edit: editMode ? editText || undefined : undefined,
+      })
+      await fetchDrafts()
+      await fetchDetail(selected.id)
+      setEditMode(false)
+    } catch {
+      // matches prior raw-fetch behavior: silently no-op on failure
     } finally {
       setActing(false)
     }
@@ -375,16 +322,11 @@ export function ContentPipeline({ token }: Props) {
         setSelected(prev => prev ? { ...prev, status: 'rejected' } : null)
         return
       }
-      await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/content/drafts/${selected.id}/reject`,
-        {
-          method: 'POST',
-          headers: { 'X-Workspace-Token': token, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ feedback }),
-        }
-      )
+      await rejectContentDraft(token, selected.id, feedback)
       await fetchDrafts()
       await fetchDetail(selected.id)
+    } catch {
+      // matches prior raw-fetch behavior: silently no-op on failure
     } finally {
       setActing(false)
     }
