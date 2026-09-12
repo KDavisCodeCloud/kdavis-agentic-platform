@@ -1,0 +1,158 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+// Real dedicated /login route, recreating login.dc.html's 2-column brand/
+// form layout from the design handoff -- but functionally still
+// "workspace token" auth underneath, not email+password. The handoff's SSO
+// buttons (Google Workspace, Azure AD/Okta) are deliberately NOT recreated
+// here: there is no backend for either, and shipping buttons that do
+// nothing would be actively misleading on a page real customers pay to use.
+//
+// This also drops the previous combined "/" page's raw API-up/down health
+// text -- internal debug info a customer never needs to see.
+
+const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
+
+export default function LoginPage() {
+  const router = useRouter()
+  const [token, setToken] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (MOCK_MODE) {
+      router.replace('/dashboard')
+      return
+    }
+    if (localStorage.getItem('workspace_token')) {
+      router.replace('/dashboard')
+    }
+  }, [router])
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!token.trim()) {
+      setError('Workspace access token is required')
+      return
+    }
+    localStorage.setItem('workspace_token', token.trim())
+    router.push('/dashboard')
+  }
+
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#070910' }}>
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet"
+      />
+      <style>{`@keyframes cd-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}`}</style>
+
+      {/* LEFT: brand panel */}
+      <div
+        style={{
+          width: 420, flexShrink: 0, position: 'relative',
+          background: 'linear-gradient(160deg,#0b1020,#070910)', overflow: 'hidden',
+          display: 'flex', flexDirection: 'column', padding: '32px 40px',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute', inset: 0,
+            backgroundImage: 'linear-gradient(rgba(120,160,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(120,160,255,.04) 1px,transparent 1px)',
+            backgroundSize: '48px 48px',
+            WebkitMaskImage: 'radial-gradient(100% 100% at 80% 20%,#000,transparent 72%)',
+            maskImage: 'radial-gradient(100% 100% at 80% 20%,#000,transparent 72%)',
+            pointerEvents: 'none',
+          }}
+        />
+        <div style={{ position: 'absolute', top: 40, right: -80, width: 380, height: 380, background: 'radial-gradient(circle,rgba(47,111,230,.22),transparent 65%)', pointerEvents: 'none' }} />
+        <div style={{ position: 'absolute', bottom: 80, left: -80, width: 300, height: 300, background: 'radial-gradient(circle,rgba(245,166,35,.09),transparent 65%)', pointerEvents: 'none' }} />
+
+        <div style={{ position: 'relative', zIndex: 2, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(150deg,#4a8bff,#1f5fe0)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 14px rgba(61,125,255,.5)' }}>
+              <div style={{ width: 14, height: 14, background: '#fff', clipPath: 'polygon(46% 0,16% 56%,44% 56%,30% 100%,84% 40%,54% 40%,68% 0)' }} />
+            </div>
+            <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 16, color: '#fff' }}>Cloud Decoded</span>
+          </a>
+        </div>
+
+        <div style={{ position: 'relative', zIndex: 2, flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: '.1em', color: 'rgba(159,194,255,.75)', marginBottom: 18 }}>
+            DETECT → PROPOSE → YOU APPROVE → EXECUTE
+          </div>
+          <h2 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 32, lineHeight: 1.1, letterSpacing: '-.02em', color: '#fff', margin: '0 0 14px' }}>
+            Nothing reaches production until you approve it.
+          </h2>
+          <p style={{ fontSize: 15, lineHeight: 1.6, color: 'rgba(232,236,242,.55)', margin: '0 0 32px' }}>
+            Your infra. Your call. Less guessing.
+          </p>
+        </div>
+
+        <div style={{ position: 'relative', zIndex: 2 }}>
+          <div style={{ display: 'flex', gap: 12, fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: 'rgba(232,236,242,.3)', marginBottom: 8 }}>
+            <span>SOC 2 ready</span><span>·</span><span>RBAC</span>
+          </div>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: 'rgba(232,236,242,.2)' }}>
+            © 2026 THD Agentic Systems LLC
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT: form */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 40px', background: '#070910' }}>
+        <div style={{ width: '100%', maxWidth: 400 }}>
+          <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 28, letterSpacing: '-.02em', color: '#fff', margin: '0 0 8px' }}>
+            Sign in
+          </h1>
+          <p style={{ fontSize: 14, color: 'rgba(232,236,242,.5)', margin: '0 0 28px' }}>
+            Welcome back. Your queue is waiting.
+          </p>
+
+          <form onSubmit={handleSubmit}>
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
+                Workspace access token
+              </label>
+              <input
+                type="password"
+                value={token}
+                onChange={e => { setToken(e.target.value); setError('') }}
+                placeholder="cd_ws_••••••••••••••••••••••••••••••••"
+                autoComplete="current-password"
+                style={{
+                  width: '100%', boxSizing: 'border-box', background: '#0c111c',
+                  border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+                  fontSize: 14, fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
+                }}
+              />
+              {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
+            </div>
+
+            <button
+              type="submit"
+              style={{
+                width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
+                background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
+                border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
+                marginBottom: 20, cursor: 'pointer', fontFamily: "'IBM Plex Sans',sans-serif",
+              }}
+            >
+              Sign in →
+            </button>
+          </form>
+
+          <p style={{ textAlign: 'center', fontSize: 13.5, color: 'rgba(232,236,242,.5)', margin: 0 }}>
+            No account?{' '}
+            <a href="/signup" style={{ color: '#9fc2ff', fontWeight: 500, textDecoration: 'none' }}>
+              Start 14-day free trial
+            </a>
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}

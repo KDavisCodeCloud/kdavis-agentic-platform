@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck } from 'lucide-react'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck, Check, Copy } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
 import { ContentPipeline } from '@/components/ContentPipeline'
 import OutreachPipeline from '@/components/OutreachPipeline'
@@ -12,12 +12,115 @@ import { FinOpsAgentDashboard } from '@/components/FinOpsAgentDashboard'
 import { ComplianceAgentDashboard } from '@/components/ComplianceAgentDashboard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { getBillingPortalUrl } from '@/lib/api'
+import { getBillingPortalUrl, getBillingStatus } from '@/lib/api'
 
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
 
 type DashTab = 'hitl' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent'
+
+// Stripe's success_url (api/routes/stripe_billing.py) redirects here with
+// ?checkout_success=1 -- the workspace only exists as a locked
+// (pending_payment) sessionStorage token up to this point (see /signup,
+// /checkout), since it's useless until Stripe's webhook actually fires.
+// This polls briefly to absorb the race between the browser landing here
+// and the webhook arriving, then promotes the token to a real logged-in
+// session and reveals it once for the user to save.
+function CheckoutSuccessGate({ onReady }: { onReady: (token: string) => void }) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const isCheckoutSuccess = searchParams.get('checkout_success') === '1'
+  const [state, setState] = useState<'confirming' | 'ready' | 'error' | 'skip'>('confirming')
+  const [revealedToken, setRevealedToken] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!isCheckoutSuccess) {
+      setState('skip')
+      return
+    }
+    const pending = sessionStorage.getItem('pending_workspace_token')
+    if (!pending) {
+      setState('skip')
+      return
+    }
+
+    let cancelled = false
+    async function poll() {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try {
+          const status = await getBillingStatus(pending as string)
+          if (status.subscription_status !== 'pending_payment') {
+            if (cancelled) return
+            localStorage.setItem('workspace_token', pending as string)
+            sessionStorage.removeItem('pending_workspace_token')
+            setRevealedToken(pending)
+            setState('ready')
+            return
+          }
+        } catch {
+          // keep polling — the webhook may just not have landed yet
+        }
+        await new Promise(r => setTimeout(r, 1500))
+      }
+      if (!cancelled) setState('error')
+    }
+    poll()
+    return () => { cancelled = true }
+  }, [isCheckoutSuccess])
+
+  if (state === 'skip') return null
+
+  function finish() {
+    if (revealedToken) onReady(revealedToken)
+    router.replace('/dashboard')
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/95 backdrop-blur-sm">
+      <div className="mx-4 w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-900 p-7 text-center">
+        {state === 'confirming' && (
+          <>
+            <div className="mx-auto mb-5 h-10 w-10 animate-spin rounded-full border-2 border-zinc-700 border-t-blue-500" />
+            <h2 className="text-lg font-semibold text-zinc-100">Confirming your payment…</h2>
+            <p className="mt-2 text-sm text-zinc-500">This usually takes a few seconds.</p>
+          </>
+        )}
+        {state === 'error' && (
+          <>
+            <h2 className="text-lg font-semibold text-zinc-100">Still confirming</h2>
+            <p className="mt-2 text-sm text-zinc-500">
+              Stripe hasn&apos;t confirmed your payment yet. Refresh in a moment, or check your email for a receipt.
+            </p>
+          </>
+        )}
+        {state === 'ready' && revealedToken && (
+          <>
+            <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
+              <Check className="h-6 w-6 text-emerald-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-zinc-100">Trial started — you&apos;re in.</h2>
+            <p className="mt-2 text-sm text-zinc-500">Save your workspace access token now — it won&apos;t be shown again.</p>
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+              <code className="flex-1 truncate font-mono text-xs text-blue-300">{revealedToken}</code>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(revealedToken)
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 2000)
+                }}
+                className="shrink-0 rounded border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-400 hover:text-zinc-200"
+              >
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <Button className="mt-5 w-full" onClick={finish}>Connect your stack →</Button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 export default function DashboardPage() {
   const router                        = useRouter()
@@ -34,7 +137,16 @@ export default function DashboardPage() {
     }
     const stored = localStorage.getItem('workspace_token')
     if (!stored) {
-      router.replace('/')
+      // A fresh checkout-success redirect hasn't promoted its sessionStorage
+      // token to localStorage yet -- let CheckoutSuccessGate handle it
+      // instead of bouncing straight back to the marketing page.
+      const isCheckoutSuccess = new URLSearchParams(window.location.search).get('checkout_success') === '1'
+      const hasPending = !!sessionStorage.getItem('pending_workspace_token')
+      if (isCheckoutSuccess && hasPending) {
+        setHydrated(true)
+        return
+      }
+      router.replace('/login')
       return
     }
     setToken(stored)
@@ -59,7 +171,14 @@ export default function DashboardPage() {
     }
   }
 
-  if (!hydrated || !token) return null
+  if (!hydrated) return null
+  if (!token) {
+    return (
+      <Suspense fallback={null}>
+        <CheckoutSuccessGate onReady={setToken} />
+      </Suspense>
+    )
+  }
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950">
