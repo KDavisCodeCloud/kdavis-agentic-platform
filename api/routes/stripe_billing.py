@@ -229,11 +229,15 @@ async def create_checkout_session(
         "billing_address_collection": "required",
     }
 
-    # If workspace already has a Stripe customer, attach to avoid duplicate accounts
+    # If workspace already has a Stripe customer, attach to avoid duplicate
+    # accounts. In "subscription" mode Stripe always creates a customer
+    # automatically when none is given -- customer_creation is a "payment"
+    # mode-only param and Stripe rejects the request outright if it's set
+    # here (confirmed live 2026-09-11: "customer_creation can only be used
+    # in payment mode" -- this had never actually been exercised against
+    # real Stripe before that).
     if existing_customer:
         params["customer"] = existing_customer
-    else:
-        params["customer_creation"] = "always"
 
     try:
         session = stripe.checkout.Session.create(**params)

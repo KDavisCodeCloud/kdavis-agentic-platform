@@ -67,7 +67,14 @@ def _env():
 
 
 class TestCreateCheckoutSession:
-    async def test_new_customer_uses_customer_creation(self):
+    async def test_new_customer_omits_customer_params_lets_stripe_create_one(self):
+        """customer_creation is a "payment"-mode-only param -- Stripe
+        rejects it outright on a "subscription"-mode session
+        ("customer_creation can only be used in payment mode", confirmed
+        live 2026-09-11 against real Stripe, not caught by mocks alone
+        until this test was written against that real error). Subscription
+        mode always creates a customer automatically when none is given,
+        so the fix is to send neither customer nor customer_creation."""
         workspace_id = uuid4()
         fake_workspace = {"id": workspace_id}
         request = _make_request(AsyncMock())
@@ -81,8 +88,9 @@ class TestCreateCheckoutSession:
         assert result.checkout_url == "https://checkout.stripe.com/session123"
         assert result.tier == "growth"
         kwargs = mock_create.call_args.kwargs
-        assert kwargs["customer_creation"] == "always"
+        assert "customer_creation" not in kwargs
         assert "customer" not in kwargs
+        assert kwargs["mode"] == "subscription"
         assert kwargs["line_items"] == [{"price": "price_growth", "quantity": 1}]
         assert kwargs["client_reference_id"] == str(workspace_id)
 
