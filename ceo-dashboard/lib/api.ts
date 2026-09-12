@@ -1,4 +1,4 @@
-import type { LinkedInQueuePost, MSEContentPost, ThdConsultingLead, ThdScrapeRun } from "./types";
+import type { LinkedInQueuePost, MSEContentPost } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -345,90 +345,6 @@ export async function fetchOutreachSummary(): Promise<OutreachSummaryRow[]> {
   }
   const data = await res.json();
   return data.products ?? [];
-}
-
-// --- THD Consulting lead scout (app/api/thd-consulting/*) ------------------
-// Each hits a Next.js route handler here that proxies server-side to
-// kdavis-microsaas-engine's api/routers/thd_consulting.py -- same split as
-// the marketing-leads functions above. Not an MSE product; see lib/types.ts's
-// ThdConsultingLead docstring for why this is a separate, parallel system.
-
-export interface ThdScrapeFilters {
-  industries?: string[];
-  locations: string[];
-  min_signal_score?: number;
-  employee_range?: string;
-}
-
-export async function triggerThdLeadScout(filters: ThdScrapeFilters): Promise<{ run_id: string; status: string }> {
-  const res = await fetch(`/api/thd-consulting/find`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(filters),
-  });
-  assertNotRedirectedToLogin(res);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Triggering lead scout failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-export async function fetchThdScrapeStatus(runId?: string): Promise<ThdScrapeRun | { status: "never_run" }> {
-  const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
-  const res = await fetch(`/api/thd-consulting/status${qs}`, { cache: "no-store" });
-  assertNotRedirectedToLogin(res);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Fetching scrape status failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-export interface ThdLeadFilters {
-  industry?: string;
-  status?: string;
-  minScore?: number;
-  location?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export async function fetchThdLeads(filters: ThdLeadFilters = {}): Promise<ThdConsultingLead[]> {
-  const params = new URLSearchParams();
-  if (filters.industry) params.set("industry", filters.industry);
-  if (filters.status) params.set("status", filters.status);
-  if (filters.minScore !== undefined) params.set("min_score", String(filters.minScore));
-  if (filters.location) params.set("location", filters.location);
-  if (filters.limit !== undefined) params.set("limit", String(filters.limit));
-  if (filters.offset !== undefined) params.set("offset", String(filters.offset));
-  const qs = params.toString();
-
-  const res = await fetch(`/api/thd-consulting/leads${qs ? `?${qs}` : ""}`, { cache: "no-store" });
-  assertNotRedirectedToLogin(res);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Fetching THD Consulting leads failed: ${res.status}`);
-  }
-  const data = await res.json();
-  return data.leads ?? [];
-}
-
-export async function updateThdLead(
-  leadId: string,
-  update: { status?: string; outcome?: string; notes?: string },
-): Promise<ThdConsultingLead> {
-  const res = await fetch(`/api/thd-consulting/leads/${leadId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(update),
-  });
-  assertNotRedirectedToLogin(res);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Updating lead failed: ${res.status}`);
-  }
-  return res.json();
 }
 
 // --- Cloud Decoded workspace admin (api/routes/internal_workspaces.py) -----
