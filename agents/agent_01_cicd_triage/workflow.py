@@ -96,10 +96,18 @@ class CICDTriageWorkflow(BaseAgent):
 
     AGENT_ID = "agent_01_cicd_triage"
 
-    def __init__(self, db_conn, workspace_id: str, checkpointer: AsyncPostgresSaver):
+    def __init__(
+        self,
+        db_conn,
+        workspace_id: str,
+        checkpointer: AsyncPostgresSaver,
+        github_token: Optional[str] = None,
+        aws_session=None,  # unused -- Agent 01 is GitHub-only; accepted so callers can
+        azure_access_token: Optional[str] = None,  # pass build_agent_credentials()'s dict uniformly across agents 01/05/06/08
+    ):
         super().__init__(db_conn, workspace_id)
         self._checkpointer = checkpointer
-        self._tools = CICDTools()
+        self._tools = CICDTools(github_token=github_token)
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph = self._build_graph()
 

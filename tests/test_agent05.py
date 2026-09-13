@@ -4,16 +4,18 @@ Tests for agents/agent_05_iam_minimizer/tools.py and workflow.py.
 
 What this file validates:
   IAMMinimizeTools — read operations:
-    - get_aws_policy_document() GETs ListPolicyVersions then GetPolicyVersion
-    - get_aws_policy_document() raises EnvironmentError when AWS credentials missing
+    - get_aws_policy_document() calls real boto3 iam.list_policy_versions +
+      get_policy_version (per-workspace assumed-role session, not raw HTTP)
+    - get_aws_policy_document() raises EnvironmentError when no AWS session
     - get_azure_role_assignments() GETs the ARM role assignments endpoint
     - get_azure_role_assignments() raises EnvironmentError when AZURE_ACCESS_TOKEN missing
     - get_gcp_iam_policy() POSTs to the GCP resource manager getIamPolicy endpoint
     - get_gcp_iam_policy() raises EnvironmentError when GCP_ACCESS_TOKEN missing
 
   IAMMinimizeTools — write operations (post-approval only):
-    - apply_aws_policy() POSTs CreatePolicyVersion with the minimized document
-    - apply_aws_policy() raises EnvironmentError when AWS credentials missing
+    - apply_aws_policy() calls real boto3 iam.create_policy_version
+    - apply_aws_policy() deletes the oldest non-default version and retries on LimitExceeded
+    - apply_aws_policy() raises EnvironmentError when no AWS session
     - apply_azure_role_assignment() PUTs a new role assignment
     - apply_gcp_iam_binding() POSTs setIamPolicy for the resource
     - create_policy_pr() opens a PR with the minimized policy file (5-step flow)
@@ -317,46 +319,56 @@ class TestDetectPrincipalType:
 # IAMMinimizeTools — read operations
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _client_error(code: str, operation: str) -> "ClientError":
+    from botocore.exceptions import ClientError
+    return ClientError({"Error": {"Code": code, "Message": "boom"}}, operation)
+
+
 class TestGetAWSPolicyDocument:
     @pytest.fixture
-    def tools(self):
-        return IAMMinimizeTools(aws_access_key_id="AKID", aws_secret_access_key="secret")
+    def fake_iam(self):
+        return MagicMock()
 
-    async def test_raises_without_aws_credentials(self):
-        no_creds = IAMMinimizeTools(aws_access_key_id="")
-        with pytest.raises(EnvironmentError, match="AWS_ACCESS_KEY_ID"):
-            await no_creds.get_aws_policy_document("arn:aws:iam::123:policy/P")
+    @pytest.fixture
+    def tools(self, fake_iam):
+        session = MagicMock()
+        session.client.return_value = fake_iam
+        return IAMMinimizeTools(aws_session=session)
 
-    async def test_calls_list_then_get_policy_version(self, tools):
-        # XML responses that parse_aws_* helpers can handle
-        list_xml = "<ListPolicyVersionsResponse><PolicyVersions><member><IsDefaultVersion>true</IsDefaultVersion><VersionId>v3</VersionId></member></PolicyVersions></ListPolicyVersionsResponse>"
-        get_xml  = "<GetPolicyVersionResponse><PolicyVersion><Document>%7B%22Version%22%3A%222012-10-17%22%7D</Document></PolicyVersion></GetPolicyVersionResponse>"
+    async def test_raises_without_aws_session(self):
+        no_session = IAMMinimizeTools(aws_session=None)
+        with pytest.raises(EnvironmentError, match="AWS role not connected"):
+            await no_session.get_aws_policy_document("arn:aws:iam::123:policy/P")
 
-        list_resp = MagicMock(status_code=200, text=list_xml)
-        get_resp  = MagicMock(status_code=200, text=get_xml)
+    async def test_calls_list_then_get_policy_version(self, tools, fake_iam):
+        import json as _json
+        from urllib.parse import quote
 
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.get = AsyncMock(side_effect=[list_resp, get_resp])
+        fake_iam.list_policy_versions.return_value = {
+            "Versions": [
+                {"VersionId": "v2", "IsDefaultVersion": False},
+                {"VersionId": "v3", "IsDefaultVersion": True},
+            ]
+        }
+        doc = {"Version": "2012-10-17"}
+        fake_iam.get_policy_version.return_value = {
+            "PolicyVersion": {"Document": quote(_json.dumps(doc))}
+        }
 
-        with patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.get_aws_policy_document("arn:aws:iam::123:policy/P")
+        result = await tools.get_aws_policy_document("arn:aws:iam::123:policy/P")
 
-        assert ctx.get.call_count == 2
+        fake_iam.list_policy_versions.assert_called_once_with(PolicyArn="arn:aws:iam::123:policy/P")
+        fake_iam.get_policy_version.assert_called_once_with(
+            PolicyArn="arn:aws:iam::123:policy/P", VersionId="v3"
+        )
         assert result["policy_arn"] == "arn:aws:iam::123:policy/P"
         assert result["version_id"] == "v3"
+        assert result["document"] == doc
 
-    async def test_raises_on_list_versions_error(self, tools):
-        err_resp = MagicMock(status_code=403, text="AccessDenied")
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.get = AsyncMock(return_value=err_resp)
-
-        with patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            with pytest.raises(RuntimeError, match="ListPolicyVersions error"):
-                await tools.get_aws_policy_document("arn:aws:iam::123:policy/P")
+    async def test_raises_on_list_versions_error(self, tools, fake_iam):
+        fake_iam.list_policy_versions.side_effect = _client_error("AccessDenied", "ListPolicyVersions")
+        with pytest.raises(RuntimeError, match="AWS IAM error"):
+            await tools.get_aws_policy_document("arn:aws:iam::123:policy/P")
 
 
 class TestGetAzureRoleAssignments:
@@ -418,39 +430,61 @@ class TestGetGCPIAMPolicy:
 
 class TestApplyAWSPolicy:
     @pytest.fixture
-    def tools(self):
-        return IAMMinimizeTools(aws_access_key_id="AKID", aws_secret_access_key="secret")
+    def fake_iam(self):
+        return MagicMock()
 
-    async def test_raises_without_credentials(self):
-        no_creds = IAMMinimizeTools(aws_access_key_id="")
-        with pytest.raises(EnvironmentError, match="AWS_ACCESS_KEY_ID"):
-            await no_creds.apply_aws_policy("arn:aws:iam::123:policy/P", {})
+    @pytest.fixture
+    def tools(self, fake_iam):
+        session = MagicMock()
+        session.client.return_value = fake_iam
+        return IAMMinimizeTools(aws_session=session)
 
-    async def test_posts_create_policy_version(self, tools):
-        ok_xml = "<CreatePolicyVersionResponse><PolicyVersion><VersionId>v4</VersionId></PolicyVersion></CreatePolicyVersionResponse>"
-        resp = MagicMock(status_code=200, text=ok_xml)
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=resp)
+    async def test_raises_without_aws_session(self):
+        no_session = IAMMinimizeTools(aws_session=None)
+        with pytest.raises(EnvironmentError, match="AWS role not connected"):
+            await no_session.apply_aws_policy("arn:aws:iam::123:policy/P", {})
 
-        with patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.apply_aws_policy("arn:aws:iam::123:policy/P", SAMPLE_MINIMIZED_POLICY)
+    async def test_creates_policy_version(self, tools, fake_iam):
+        fake_iam.create_policy_version.return_value = {"PolicyVersion": {"VersionId": "v4"}}
 
+        result = await tools.apply_aws_policy("arn:aws:iam::123:policy/P", SAMPLE_MINIMIZED_POLICY)
+
+        fake_iam.create_policy_version.assert_called_once_with(
+            PolicyArn="arn:aws:iam::123:policy/P",
+            PolicyDocument=json.dumps(SAMPLE_MINIMIZED_POLICY),
+            SetAsDefault=True,
+        )
         assert result["status"] == "policy_updated"
         assert result["cloud"] == "aws"
         assert result["new_version_id"] == "v4"
 
-    async def test_raises_on_api_error(self, tools):
-        err_resp = MagicMock(status_code=403, text="AccessDenied")
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=err_resp)
+    async def test_raises_on_api_error(self, tools, fake_iam):
+        fake_iam.create_policy_version.side_effect = _client_error("AccessDenied", "CreatePolicyVersion")
+        with pytest.raises(RuntimeError, match="AWS CreatePolicyVersion error"):
+            await tools.apply_aws_policy("arn:aws:iam::123:policy/P", {})
 
-        with patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            with pytest.raises(RuntimeError, match="CreatePolicyVersion error"):
-                await tools.apply_aws_policy("arn:aws:iam::123:policy/P", {})
+    async def test_deletes_oldest_version_and_retries_on_limit_exceeded(self, tools, fake_iam):
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        fake_iam.create_policy_version.side_effect = [
+            _client_error("LimitExceeded", "CreatePolicyVersion"),
+            {"PolicyVersion": {"VersionId": "v6"}},
+        ]
+        fake_iam.list_policy_versions.return_value = {
+            "Versions": [
+                {"VersionId": "v1", "IsDefaultVersion": False, "CreateDate": now - timedelta(days=10)},
+                {"VersionId": "v5", "IsDefaultVersion": True, "CreateDate": now},
+            ]
+        }
+
+        result = await tools.apply_aws_policy("arn:aws:iam::123:policy/P", SAMPLE_MINIMIZED_POLICY)
+
+        fake_iam.delete_policy_version.assert_called_once_with(
+            PolicyArn="arn:aws:iam::123:policy/P", VersionId="v1"
+        )
+        assert fake_iam.create_policy_version.call_count == 2
+        assert result["new_version_id"] == "v6"
 
 
 class TestApplyAzureRoleAssignment:
@@ -551,7 +585,7 @@ class TestExecuteOption:
     @pytest.fixture
     def tools(self):
         return IAMMinimizeTools(
-            aws_access_key_id="AKID", aws_secret_access_key="secret",
+            aws_session=MagicMock(),
             azure_access_token="eyJ0...", gcp_access_token="ya29...",
             github_token="gh_test_token",
         )

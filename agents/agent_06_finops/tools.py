@@ -18,21 +18,26 @@ Two categories:
   WRITE (post-approval) — stop idle resources, create GitHub issue, post Slack alert
 
 Supported clouds: AWS, Azure, GCP
+
+AWS calls use a real boto3 client built from a per-workspace assumed-role
+session (core/workspace_credentials.py) -- not raw signed HTTP requests.
+GCP is out of scope for per-workspace credential storage and stays
+env-var-backed.
 """
 
 import logging
 import os
 from typing import Optional
 
+import boto3
 import httpx
+from botocore.exceptions import ClientError
 
 log = logging.getLogger(__name__)
 
 _GH_API      = "https://api.github.com"
-_AWS_CE      = "https://ce.us-east-1.amazonaws.com"
 _ARM_COST    = "https://management.azure.com"
 _GCP_BILLING = "https://cloudbilling.googleapis.com"
-_AWS_EC2     = "https://ec2.amazonaws.com"
 _ARM_COMPUTE = "https://management.azure.com"
 _GCP_COMPUTE = "https://compute.googleapis.com"
 
@@ -48,17 +53,19 @@ class FinOpsTools:
         self,
         github_token: Optional[str] = None,
         slack_webhook_url: Optional[str] = None,
-        aws_access_key_id: Optional[str] = None,
-        aws_secret_access_key: Optional[str] = None,
+        aws_session: Optional[boto3.Session] = None,
         azure_access_token: Optional[str] = None,
         gcp_access_token: Optional[str] = None,
     ):
-        self.github_token          = github_token          or os.environ.get("GITHUB_TOKEN", "")
-        self.slack_webhook_url     = slack_webhook_url     or os.environ.get("SLACK_WEBHOOK_URL", "")
-        self.aws_access_key_id     = aws_access_key_id     or os.environ.get("AWS_ACCESS_KEY_ID", "")
-        self.aws_secret_access_key = aws_secret_access_key or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-        self.azure_access_token    = azure_access_token    or os.environ.get("AZURE_ACCESS_TOKEN", "")
-        self.gcp_access_token      = gcp_access_token      or os.environ.get("GCP_ACCESS_TOKEN", "")
+        # No env-var fallback for github_token/aws_session/azure_access_token --
+        # these are per-workspace now (core/workspace_credentials.py). Slack
+        # webhook URL and GCP token are out of scope for per-workspace
+        # storage in this phase -- still env-backed.
+        self.github_token       = github_token or ""
+        self.slack_webhook_url  = slack_webhook_url or os.environ.get("SLACK_WEBHOOK_URL", "")
+        self.aws_session        = aws_session
+        self.azure_access_token = azure_access_token or ""
+        self.gcp_access_token   = gcp_access_token or os.environ.get("GCP_ACCESS_TOKEN", "")
 
     # ──────────────────────────────────────────────
     # Read — billing data fetch (always safe)
@@ -74,27 +81,19 @@ class FinOpsTools:
         Query AWS Cost Explorer for spend grouped by SERVICE.
         Ref: https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_GetCostAndUsage.html
         """
-        if not self.aws_access_key_id:
-            raise EnvironmentError("AWS_ACCESS_KEY_ID not configured for this workspace")
+        if not self.aws_session:
+            raise EnvironmentError("AWS role not connected for this workspace")
 
-        payload = {
-            "TimePeriod": {"Start": start_date, "End": end_date},
-            "Granularity": granularity,
-            "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}],
-            "Metrics": ["UnblendedCost", "UsageQuantity"],
-        }
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{_AWS_CE}/GetCostAndUsage",
-                headers=_aws_ce_headers(self.aws_access_key_id, self.aws_secret_access_key),
-                json=payload,
+        ce = self.aws_session.client("ce")
+        try:
+            return ce.get_cost_and_usage(
+                TimePeriod={"Start": start_date, "End": end_date},
+                Granularity=granularity,
+                GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+                Metrics=["UnblendedCost", "UsageQuantity"],
             )
-
-        if resp.status_code != 200:
-            raise RuntimeError(f"AWS Cost Explorer error {resp.status_code}: {resp.text[:200]}")
-
-        return resp.json()
+        except ClientError as exc:
+            raise RuntimeError(f"AWS Cost Explorer error: {exc}") from exc
 
     async def get_azure_cost_data(
         self,
@@ -173,24 +172,16 @@ class FinOpsTools:
         Stop (not terminate) idle AWS EC2 instances.
         Ref: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_StopInstances.html
         """
-        if not self.aws_access_key_id:
-            raise EnvironmentError("AWS_ACCESS_KEY_ID not configured for this workspace")
+        if not self.aws_session:
+            raise EnvironmentError("AWS role not connected for this workspace")
         if not instance_ids:
             return {"status": "skipped", "reason": "no instance IDs provided"}
 
-        params = {"Action": "StopInstances", "Version": "2016-11-15"}
-        for i, iid in enumerate(instance_ids, 1):
-            params[f"InstanceId.{i}"] = iid
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                _AWS_EC2,
-                headers=_aws_ec2_headers(self.aws_access_key_id, self.aws_secret_access_key),
-                data=params,
-            )
-
-        if resp.status_code != 200:
-            raise RuntimeError(f"AWS StopInstances error {resp.status_code}: {resp.text[:200]}")
+        ec2 = self.aws_session.client("ec2")
+        try:
+            ec2.stop_instances(InstanceIds=instance_ids)
+        except ClientError as exc:
+            raise RuntimeError(f"AWS StopInstances error: {exc}") from exc
 
         log.info("[FinOpsTools] Stopped EC2 instances: %s", instance_ids)
         return {
@@ -204,24 +195,20 @@ class FinOpsTools:
         Delete unattached EBS volumes that are incurring idle storage cost.
         Ref: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DeleteVolume.html
         """
-        if not self.aws_access_key_id:
-            raise EnvironmentError("AWS_ACCESS_KEY_ID not configured for this workspace")
+        if not self.aws_session:
+            raise EnvironmentError("AWS role not connected for this workspace")
         if not volume_ids:
             return {"status": "skipped", "reason": "no volume IDs provided"}
 
+        ec2 = self.aws_session.client("ec2")
         deleted = []
         errors  = []
         for vid in volume_ids:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    _AWS_EC2,
-                    headers=_aws_ec2_headers(self.aws_access_key_id, self.aws_secret_access_key),
-                    data={"Action": "DeleteVolume", "VolumeId": vid, "Version": "2016-11-15"},
-                )
-            if resp.status_code == 200:
+            try:
+                ec2.delete_volume(VolumeId=vid)
                 deleted.append(vid)
-            else:
-                errors.append({"volume_id": vid, "error": resp.text[:100]})
+            except ClientError as exc:
+                errors.append({"volume_id": vid, "error": str(exc)[:200]})
 
         log.info("[FinOpsTools] Deleted EBS volumes: %s (errors: %d)", deleted, len(errors))
         return {
@@ -236,24 +223,20 @@ class FinOpsTools:
         Release unused Elastic IPs back to the pool.
         Ref: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_ReleaseAddress.html
         """
-        if not self.aws_access_key_id:
-            raise EnvironmentError("AWS_ACCESS_KEY_ID not configured for this workspace")
+        if not self.aws_session:
+            raise EnvironmentError("AWS role not connected for this workspace")
         if not allocation_ids:
             return {"status": "skipped", "reason": "no allocation IDs provided"}
 
+        ec2 = self.aws_session.client("ec2")
         released = []
         errors   = []
         for aid in allocation_ids:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    _AWS_EC2,
-                    headers=_aws_ec2_headers(self.aws_access_key_id, self.aws_secret_access_key),
-                    data={"Action": "ReleaseAddress", "AllocationId": aid, "Version": "2016-11-15"},
-                )
-            if resp.status_code == 200:
+            try:
+                ec2.release_address(AllocationId=aid)
                 released.append(aid)
-            else:
-                errors.append({"allocation_id": aid, "error": resp.text[:100]})
+            except ClientError as exc:
+                errors.append({"allocation_id": aid, "error": str(exc)[:200]})
 
         log.info("[FinOpsTools] Released Elastic IPs: %s", released)
         return {
@@ -527,21 +510,6 @@ def _gcp_headers(token: str) -> dict:
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-    }
-
-
-def _aws_ce_headers(access_key_id: str, secret_key: str) -> dict:
-    return {
-        "Content-Type": "application/x-amz-json-1.1",
-        "X-Amz-Target": "AWSInsightsIndexService.GetCostAndUsage",
-        "X-Amz-Access-Key-Id": access_key_id,
-    }
-
-
-def _aws_ec2_headers(access_key_id: str, secret_key: str) -> dict:
-    return {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Amz-Access-Key-Id": access_key_id,
     }
 
 

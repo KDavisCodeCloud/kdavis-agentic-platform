@@ -95,6 +95,28 @@ class TestGetWorkspace:
         assert bound_hash == _hash_token("cd_ws_plaintext")
         assert bound_hash != "cd_ws_plaintext"
 
+    async def test_select_includes_migration_022_credential_columns(self):
+        """Pins the real SQL shape -- migration 022 added github/aws/azure
+        credential columns to workspaces, and core/workspace_credentials.py's
+        build_agent_credentials() + api/routes/workspace_credentials.py both
+        need get_workspace's dict to actually carry them. Existing tests here
+        all bypass the real query with a hand-built fake dict (_workspace_row),
+        so a dropped column here would pass every other test in this file and
+        only surface as a live KeyError -- same bug class as the one found in
+        kdavis-finops-agent/kdavis-compliance-agent's get_tenant() earlier."""
+        row = _workspace_row("active")
+        request = _make_request("cd_ws_real", row)
+        await get_workspace(request)
+        conn = request.app.state.db_pool.acquire.return_value.__aenter__.return_value
+        sql = conn.fetchrow.await_args.args[0]
+        for column in (
+            "github_pat_encrypted", "github_pat_verified_at",
+            "encrypted_github_webhook_secret", "aws_role_arn", "aws_external_id",
+            "aws_role_verified_at", "azure_tenant_id", "azure_client_id",
+            "azure_client_secret_encrypted", "azure_subscription_id", "azure_verified_at",
+        ):
+            assert column in sql, f"{column} missing from get_workspace's SELECT"
+
 
 class TestGetWorkspaceAllowPendingPayment:
     async def test_pending_payment_passes_through(self):

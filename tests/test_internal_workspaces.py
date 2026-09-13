@@ -143,3 +143,48 @@ class TestRotateToken:
         with pytest.raises(HTTPException) as exc:
             await iw.rotate_workspace_token(str(uuid4()), request, admin=_ADMIN)
         assert exc.value.status_code == 404
+
+
+class TestSetTier:
+    async def test_sets_enterprise_tier(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": workspace_id, "company_name": "Acme", "product_tier": "starter",
+                 "stripe_subscription_status": "active", "created_at": None},
+                {"id": workspace_id, "product_tier": "enterprise"},
+            ]
+        )
+        request = _make_request(conn)
+
+        result = await iw.set_workspace_tier(
+            str(workspace_id), iw.SetTierRequest(tier="enterprise"), request, admin=_ADMIN
+        )
+
+        assert result.product_tier == "enterprise"
+        update_sql, new_tier, bound_id = conn.fetchrow.await_args_list[1].args
+        assert new_tier == "enterprise"
+        assert bound_id == str(workspace_id)
+
+    async def test_invalid_tier_raises_400(self):
+        conn = AsyncMock()
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.set_workspace_tier(
+                str(uuid4()), iw.SetTierRequest(tier="platinum"), request, admin=_ADMIN
+            )
+        assert exc.value.status_code == 400
+        conn.fetchrow.assert_not_awaited()
+
+    async def test_404_when_workspace_missing(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.set_workspace_tier(
+                str(uuid4()), iw.SetTierRequest(tier="growth"), request, admin=_ADMIN
+            )
+        assert exc.value.status_code == 404

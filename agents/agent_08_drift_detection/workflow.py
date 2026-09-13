@@ -160,10 +160,18 @@ class DriftWorkflow(BaseAgent):
 
     AGENT_ID = "agent_08_drift_detection"
 
-    def __init__(self, db_conn, workspace_id: str, checkpointer: AsyncPostgresSaver):
+    def __init__(
+        self,
+        db_conn,
+        workspace_id: str,
+        checkpointer: AsyncPostgresSaver,
+        github_token: Optional[str] = None,
+        aws_session=None,
+        azure_access_token: Optional[str] = None,  # unused -- Agent 08's AWS path is CloudFormation, not ARM
+    ):
         super().__init__(db_conn, workspace_id)
         self._checkpointer    = checkpointer
-        self._tools           = DriftTools()
+        self._tools           = DriftTools(github_token=github_token, aws_session=aws_session)
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph           = self._build_graph()
 

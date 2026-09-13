@@ -14,9 +14,12 @@ These tools are called ONLY after operator approval via POST /incidents/{id}/app
 They never execute autonomously. Governance Rule 11.
 
 Supported clouds:
-  - AWS  — IAM roles, users, customer-managed policies (boto3-style API)
+  - AWS  — IAM roles, users, customer-managed policies (real boto3 calls,
+    using a per-workspace assumed-role session -- see
+    core/workspace_credentials.py)
   - Azure — Azure AD service principals and role assignments (ARM REST API)
-  - GCP  — IAM bindings on project/folder/organization resources
+  - GCP  — IAM bindings on project/folder/organization resources (out of
+    scope for per-workspace credential storage -- still env-var-backed)
 
 Each tool writes the minimized policy or creates a GitHub PR with the policy diff.
 Direct cloud mutations (apply_aws_policy, apply_azure_assignment, apply_gcp_binding)
@@ -29,12 +32,13 @@ import logging
 import os
 from typing import Optional
 
+import boto3
 import httpx
+from botocore.exceptions import ClientError
 
 log = logging.getLogger(__name__)
 
 _GH_API   = "https://api.github.com"
-_AWS_IAM  = "https://iam.amazonaws.com"
 _ARM_API  = "https://management.azure.com"
 _GCP_CRM  = "https://cloudresourcemanager.googleapis.com"
 
@@ -50,16 +54,19 @@ class IAMMinimizeTools:
     def __init__(
         self,
         github_token: Optional[str] = None,
-        aws_access_key_id: Optional[str] = None,
-        aws_secret_access_key: Optional[str] = None,
+        aws_session: Optional[boto3.Session] = None,
         azure_access_token: Optional[str] = None,
         gcp_access_token: Optional[str] = None,
     ):
-        self.github_token         = github_token         or os.environ.get("GITHUB_TOKEN", "")
-        self.aws_access_key_id    = aws_access_key_id    or os.environ.get("AWS_ACCESS_KEY_ID", "")
-        self.aws_secret_access_key = aws_secret_access_key or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-        self.azure_access_token   = azure_access_token   or os.environ.get("AZURE_ACCESS_TOKEN", "")
-        self.gcp_access_token     = gcp_access_token     or os.environ.get("GCP_ACCESS_TOKEN", "")
+        # No env-var fallback for github_token/aws_session/azure_access_token --
+        # these are per-workspace now (core/workspace_credentials.py). A missing
+        # credential raises a clear error at the specific call that needed it,
+        # rather than silently defaulting to a shared server-wide secret. GCP
+        # is out of scope for per-workspace storage -- still env-backed.
+        self.github_token       = github_token or ""
+        self.aws_session        = aws_session
+        self.azure_access_token = azure_access_token or ""
+        self.gcp_access_token   = gcp_access_token or os.environ.get("GCP_ACCESS_TOKEN", "")
 
     # ──────────────────────────────────────────────
     # Read — always safe, no approval needed
@@ -71,45 +78,26 @@ class IAMMinimizeTools:
         Uses the IAM ListPolicyVersions + GetPolicyVersion flow to get the default version.
         Ref: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicyVersion.html
         """
-        if not self.aws_access_key_id:
-            raise EnvironmentError("AWS_ACCESS_KEY_ID not configured for this workspace")
+        if not self.aws_session:
+            raise EnvironmentError("AWS role not connected for this workspace")
 
-        headers = _aws_iam_headers(self.aws_access_key_id, self.aws_secret_access_key)
+        from urllib.parse import unquote
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                _AWS_IAM,
-                headers=headers,
-                params={
-                    "Action": "ListPolicyVersions",
-                    "PolicyArn": policy_arn,
-                    "Version": "2010-05-08",
-                },
-            )
+        iam = self.aws_session.client("iam")
+        try:
+            versions = iam.list_policy_versions(PolicyArn=policy_arn)["Versions"]
+            version_id = next(v["VersionId"] for v in versions if v["IsDefaultVersion"])
+            version = iam.get_policy_version(PolicyArn=policy_arn, VersionId=version_id)
+        except ClientError as exc:
+            raise RuntimeError(f"AWS IAM error fetching policy {policy_arn}: {exc}") from exc
 
-        if resp.status_code != 200:
-            raise RuntimeError(f"AWS IAM ListPolicyVersions error {resp.status_code}: {resp.text[:200]}")
+        document = version["PolicyVersion"]["Document"]
+        # boto3 returns the Document as a URL-encoded JSON string, same as the
+        # raw REST API -- unlike most boto3 responses, this one isn't pre-parsed.
+        if isinstance(document, str):
+            document = json.loads(unquote(document))
 
-        # Parse the default version ID from the XML response
-        version_id = _parse_aws_default_version(resp.text)
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp2 = await client.get(
-                _AWS_IAM,
-                headers=headers,
-                params={
-                    "Action": "GetPolicyVersion",
-                    "PolicyArn": policy_arn,
-                    "VersionId": version_id,
-                    "Version": "2010-05-08",
-                },
-            )
-
-        if resp2.status_code != 200:
-            raise RuntimeError(f"AWS IAM GetPolicyVersion error {resp2.status_code}: {resp2.text[:200]}")
-
-        raw_doc = _parse_aws_policy_document(resp2.text)
-        return {"policy_arn": policy_arn, "version_id": version_id, "document": raw_doc}
+        return {"policy_arn": policy_arn, "version_id": version_id, "document": document}
 
     async def get_azure_role_assignments(self, subscription_id: str, principal_id: str) -> list:
         """
@@ -169,29 +157,33 @@ class IAMMinimizeTools:
         Deletes the oldest non-default version if already at 5-version limit.
         Ref: https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicyVersion.html
         """
-        if not self.aws_access_key_id:
-            raise EnvironmentError("AWS_ACCESS_KEY_ID not configured for this workspace")
+        if not self.aws_session:
+            raise EnvironmentError("AWS role not connected for this workspace")
 
-        headers = _aws_iam_headers(self.aws_access_key_id, self.aws_secret_access_key)
+        iam = self.aws_session.client("iam")
         doc_str = json.dumps(minimized_document)
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                _AWS_IAM,
-                headers=headers,
-                data={
-                    "Action": "CreatePolicyVersion",
-                    "PolicyArn": policy_arn,
-                    "PolicyDocument": doc_str,
-                    "SetAsDefault": "true",
-                    "Version": "2010-05-08",
-                },
+        try:
+            result = iam.create_policy_version(
+                PolicyArn=policy_arn, PolicyDocument=doc_str, SetAsDefault=True
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "LimitExceeded":
+                raise RuntimeError(f"AWS CreatePolicyVersion error for {policy_arn}: {exc}") from exc
+            # IAM allows at most 5 versions per policy -- delete the oldest
+            # non-default version and retry, matching this method's own
+            # documented behavior.
+            versions = iam.list_policy_versions(PolicyArn=policy_arn)["Versions"]
+            oldest = min(
+                (v for v in versions if not v["IsDefaultVersion"]),
+                key=lambda v: v["CreateDate"],
+            )
+            iam.delete_policy_version(PolicyArn=policy_arn, VersionId=oldest["VersionId"])
+            result = iam.create_policy_version(
+                PolicyArn=policy_arn, PolicyDocument=doc_str, SetAsDefault=True
             )
 
-        if resp.status_code != 200:
-            raise RuntimeError(f"AWS CreatePolicyVersion error {resp.status_code}: {resp.text[:200]}")
-
-        version_id = _parse_aws_new_version_id(resp.text)
+        version_id = result["PolicyVersion"]["VersionId"]
         log.info("[IAMTools] AWS policy %s updated — new version %s", policy_arn, version_id)
         return {
             "status": "policy_updated",
@@ -454,50 +446,9 @@ def _gcp_headers(token: str) -> dict:
     }
 
 
-def _aws_iam_headers(access_key_id: str, secret_key: str) -> dict:
-    # Real AWS requests require SigV4 signing; in production this is handled
-    # by boto3 or the AWS SDK. These headers are placeholders so the tool
-    # is testable without boto3 installed. The actual signing would happen
-    # in an AWS-SDK wrapper at the router layer.
-    return {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Amz-Access-Key-Id": access_key_id,
-    }
-
-
 def _short_id() -> str:
     import uuid
     return str(uuid.uuid4())[:8]
-
-
-def _parse_aws_default_version(xml_text: str) -> str:
-    """Extract default policy version ID from AWS IAM XML response."""
-    import re
-    match = re.search(r"<IsDefaultVersion>true</IsDefaultVersion>.*?<VersionId>(v\d+)</VersionId>", xml_text, re.DOTALL)
-    if not match:
-        # Fallback: grab first VersionId
-        match = re.search(r"<VersionId>(v\d+)</VersionId>", xml_text)
-    return match.group(1) if match else "v1"
-
-
-def _parse_aws_policy_document(xml_text: str) -> dict:
-    """Extract URL-encoded policy document from AWS IAM XML response and decode it."""
-    import re
-    from urllib.parse import unquote
-    match = re.search(r"<Document>(.+?)</Document>", xml_text, re.DOTALL)
-    if not match:
-        return {}
-    try:
-        return json.loads(unquote(match.group(1).strip()))
-    except (json.JSONDecodeError, ValueError):
-        return {}
-
-
-def _parse_aws_new_version_id(xml_text: str) -> str:
-    """Extract the new version ID from a CreatePolicyVersion XML response."""
-    import re
-    match = re.search(r"<VersionId>(v\d+)</VersionId>", xml_text)
-    return match.group(1) if match else "v2"
 
 
 def _summarize_permissions(policy_document: dict) -> list[str]:

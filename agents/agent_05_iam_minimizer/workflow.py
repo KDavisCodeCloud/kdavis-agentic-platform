@@ -162,10 +162,20 @@ class IAMMinimizeWorkflow(BaseAgent):
 
     AGENT_ID = "agent_05_iam_minimizer"
 
-    def __init__(self, db_conn, workspace_id: str, checkpointer: AsyncPostgresSaver):
+    def __init__(
+        self,
+        db_conn,
+        workspace_id: str,
+        checkpointer: AsyncPostgresSaver,
+        github_token: Optional[str] = None,
+        aws_session=None,
+        azure_access_token: Optional[str] = None,
+    ):
         super().__init__(db_conn, workspace_id)
         self._checkpointer = checkpointer
-        self._tools = IAMMinimizeTools()
+        self._tools = IAMMinimizeTools(
+            github_token=github_token, aws_session=aws_session, azure_access_token=azure_access_token
+        )
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph = self._build_graph()
 

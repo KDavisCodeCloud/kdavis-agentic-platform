@@ -30,11 +30,11 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import shlex
 from typing import Optional
 
 import httpx
+from botocore.exceptions import ClientError
 
 log = logging.getLogger(__name__)
 
@@ -54,9 +54,13 @@ class DriftTools:
         self,
         github_token: Optional[str] = None,
         allow_kubectl: bool = True,
+        aws_session=None,
     ):
-        self.github_token  = github_token  or os.environ.get("GITHUB_TOKEN", "")
+        # No env-var fallback for github_token/aws_session -- per-workspace
+        # now (core/workspace_credentials.py).
+        self.github_token  = github_token or ""
         self.allow_kubectl = allow_kubectl
+        self.aws_session   = aws_session
 
     # ──────────────────────────────────────────────
     # Optional state fetchers (pre-HITL, read-only)
@@ -98,35 +102,20 @@ class DriftTools:
         except json.JSONDecodeError as exc:
             return {"error": f"kubectl returned invalid JSON: {exc}"}
 
-    async def fetch_cloudformation_stack(
-        self,
-        stack_name: str,
-        aws_access_key: str,
-        aws_secret_key: str,
-        region: str = "us-east-1",
-    ) -> dict:
+    async def fetch_cloudformation_stack(self, stack_name: str) -> dict:
         """
-        Fetch CloudFormation stack resource summary via AWS API.
+        Fetch CloudFormation stack resource summary via a real boto3 call,
+        using this workspace's assumed-role session.
         Returns {"resources": [...], "status": "ok"} or {"error": ...}.
         """
-        if not aws_access_key or not aws_secret_key:
-            raise EnvironmentError("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY required for CloudFormation fetch")
+        if not self.aws_session:
+            return {"error": "AWS role not connected for this workspace"}
 
-        url = f"https://cloudformation.{region}.amazonaws.com/"
-        params = {
-            "Action": "DescribeStackResources",
-            "StackName": stack_name,
-            "Version": "2010-05-15",
-        }
-        # Note: real implementation would use SigV4 signing. For architecture
-        # completeness the interface is defined; production integrations use boto3.
+        cfn = self.aws_session.client("cloudformation")
         try:
-            async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
-                resp = await client.get(url, params=params, auth=(aws_access_key, aws_secret_key))
-            if resp.status_code != 200:
-                return {"error": f"CloudFormation API error {resp.status_code}"}
-            return {"raw": resp.text[:8000], "status": "ok"}
-        except httpx.RequestError as exc:
+            resources = cfn.describe_stack_resources(StackName=stack_name)["StackResources"]
+            return {"resources": resources, "status": "ok"}
+        except ClientError as exc:
             return {"error": str(exc)}
 
     # ──────────────────────────────────────────────

@@ -42,6 +42,7 @@ from agents.agent_07_runbook.workflow import RunbookWorkflow
 from agents.agent_08_drift_detection.workflow import DriftWorkflow
 from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
+from core.workspace_credentials import build_agent_credentials
 
 
 class IncidentRejectRequest(BaseModel):
@@ -68,6 +69,17 @@ _WORKFLOW_CLASSES: dict[str, type] = {
     "agent_08_drift_detection": DriftWorkflow,
     "agent_09_onboarding_buddy": OnboardingWorkflow,
     "agent_10_dependency_patch": DependencyPatchWorkflow,
+}
+
+# Only these four agents' workflow constructors accept the credential kwargs
+# build_agent_credentials() returns (github_token/aws_session/azure_access_token)
+# -- see core/workspace_credentials.py. Every other agent's *Tools() class
+# takes none of these, so passing them unconditionally would raise TypeError.
+_CREDENTIALED_AGENTS = {
+    "agent_01_cicd_triage",
+    "agent_05_iam_minimizer",
+    "agent_06_finops",
+    "agent_08_drift_detection",
 }
 
 
@@ -234,7 +246,11 @@ async def approve_incident(
 
         async def _resume():
             async with db.acquire() as conn:
-                agent = workflow_cls(conn, str(workspace["id"]), checkpointer)
+                if row["agent_id"] in _CREDENTIALED_AGENTS:
+                    creds = await build_agent_credentials(conn, str(workspace["id"]))
+                    agent = workflow_cls(conn, str(workspace["id"]), checkpointer, **creds)
+                else:
+                    agent = workflow_cls(conn, str(workspace["id"]), checkpointer)
                 await agent.resume(incident_id, selected_option)
 
         # Fire and forget — result is polled via GET /incidents/{id}

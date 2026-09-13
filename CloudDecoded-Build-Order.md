@@ -1,8 +1,12 @@
 # Cloud Decoded — Build Order
 **Project:** `theclouddecoded.com`
 **Company:** THD Agentic Systems LLC
-**Last updated:** 2026-07-04
-**Status:** Landing page complete — auth + Stripe next
+**Last updated:** 2026-09-12 (corrected — see `CLAUDE.md`'s CURRENT STATUS
+footer and `CLOUD_DECODED_AUDIT_2026-09-12.md` for the full live-verified
+picture; this file was stale since 2026-07-04, claiming the agent roster
+and MCP status incorrectly and listing Priority 1 as not-yet-done)
+**Status:** Priority 1 (auth + Stripe) is done and live. Priority 2/3
+items below are the real remaining backlog.
 
 ---
 
@@ -23,31 +27,39 @@ A HITL agentic DevOps automation platform targeting mid-market platform engineer
 - Landing page complete (9 sections, SEO/AEO, FAQPage JSON-LD schema) ✅
 - Design system locked: bg `#070910`, blue `#5a96ff`/`#2f6fe6`, amber `#f5a623`, green `#3fd17a` ✅
 - Fonts locked: Space Grotesk, IBM Plex Sans, JetBrains Mono ✅
-- MCP server live at `mcp.theclouddecoded.com` (OAuth 2.1/PKCE primary, workspace API keys fallback, 7 tools) ✅
-- All 10 agents built ✅
+- All 10 agents built ✅ — real roster is `agent_01_cicd_triage` through
+  `agent_10_dependency_patch` (see `CLAUDE.md`'s CURRENT STATUS footer for
+  the corrected list with real names — the "Agent Roster" section below
+  in this file is the old placeholder list, kept below only as a
+  changelog of what this doc used to claim, not current fact)
 - SOC 2 readiness architecture in place (per-tenant pgvector + RLS, DataSanitizationShield, HITL audit log, access controls, incident response, data retention policy) ✅
+- **Auth pages (`/login`, `/signup`) — done and live**, real pages built
+  as part of the 2026-09-12 paywall closure (see
+  `CLOUD_DECODED_AUDIT_2026-09-12.md`), not just Supabase-wired stubs.
+- **Stripe billing — done and live.** Real paywall: every new workspace
+  locks (`pending_payment`) until checkout completes; suspend/reactivate/
+  rotate-token are real, admin UI at `/dashboard/customers`. Verified with
+  real end-to-end test-mode checkouts, not just webhook code review.
+- **MCP server — deployed**, new Railway service `cloud-decoded-mcp`, DNS
+  on `mcp.theclouddecoded.com`, 24 tests. **TLS certificate status:
+  re-check before relying on this** — as of the last live check
+  (2026-09-12) it was still not resolving over HTTPS; this is Railway/
+  Let's Encrypt latency per Railway's own docs, not a config problem, but
+  don't assume it's cleared without checking. Enterprise-tier OAuth 2.1
+  access has no real customer path yet (needs per-customer Supabase Auth
+  accounts — the real auth model today is one shared workspace token per
+  company); Starter/Growth via API key works today.
+- **Azure onboarding + CIS compliance scanning — done and live** across
+  `kdavis-cloud-audit`, `kdavis-finops-agent`, `kdavis-compliance-agent`,
+  and this repo's `AgentConnectFlow.tsx`, alongside the existing AWS path.
+  Not mentioned anywhere in this file's original scope — see
+  `CLOUD_DECODED_AUDIT_2026-09-12.md` section 6 for full detail.
 
 ---
 
 ## Build Order — Remaining
 
-### Priority 1 — Unblocks everything else
-
-**Auth pages: `/signup` + `/login`**
-- Wire to Supabase Auth
-- On signup: create tenant row, provision per-tenant pgvector schema, set RLS policies keyed to `tenant_id`
-- On login: issue JWT with `tenant_id` claim
-- Redirect to `/dashboard` after auth
-- This unblocks: Features page, Comparison page, Security page, Docs, all CTAs
-
-**Stripe billing**
-- Webhook handler: `subscription.created` → activate tenant, `subscription.updated` → update plan tier, `subscription.deleted` → mark churned, `invoice.payment_failed` → log + trigger re-engagement
-- Tie plan tier to agent access (Starter: 5 agents, Growth: all 10, Enterprise: custom)
-- 14-day trial: provision full access, set trial expiry, send conversion email at day 11
-
----
-
-### Priority 2 — After auth is live
+### Priority 2 — real remaining backlog (auth is live, start here)
 
 **og:image**
 - 1200×630 PNG
@@ -112,7 +124,29 @@ Batch review: Similar pending actions grouped by `pattern_hash` (same agent + ac
 
 ---
 
-## Agent Roster (All 10 Built)
+## Agent Roster — CORRECTED 2026-09-12
+
+The 10 names below (from this file's original 2026-07-04 draft) do not
+match what was actually built. The real roster, confirmed directly
+against `agents/agent_01_*` … `agent_10_*` in this repo:
+
+1. CI/CD Triage (`agent_01_cicd_triage`)
+2. Kubernetes Alert Fatigue & Remediation (`agent_02_k8s_alert`)
+3. PR Review — Architecture & Security (`agent_03_pr_review`)
+4. Legacy Code & Infrastructure Migration (`agent_04_migration`, Growth+)
+5. IAM Policy Minimization (`agent_05_iam_minimizer`, Growth+)
+6. FinOps Cost Optimization (`agent_06_finops`, Growth+)
+7. Interactive Runbook Automation (`agent_07_runbook`, Growth+)
+8. Drift Detection & Auto-Correction (`agent_08_drift_detection`, Growth+)
+9. Context-Aware Onboarding & On-Call Buddy (`agent_09_onboarding_buddy`, Growth+)
+10. Dependency & Vulnerability Patching (`agent_10_dependency_patch`, Growth+)
+
+DataSanitizationShield is not a numbered agent — it's shared platform
+infrastructure (`security/sanitizer.py`) every agent runs through, per
+this file's own "Key Constraints" section below.
+
+<details>
+<summary>Original (wrong) 2026-07-04 list — kept for changelog only</summary>
 
 1. CI/CD Triage Agent — detects failures, proposes remediation
 2. PR Review Agent — posts review comments, flags security/quality issues
@@ -124,6 +158,8 @@ Batch review: Similar pending actions grouped by `pattern_hash` (same agent + ac
 8. Deployment Agent — manages rollouts, rollbacks
 9. Capacity Planning Agent — forecasts, recommends scaling
 10. DataSanitizationShield — scrubs client data before any agent embedding
+
+</details>
 
 ---
 

@@ -336,40 +336,44 @@ class TestNormalizeCostData:
 # FinOpsTools — read operations
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _client_error(code: str, operation: str) -> "ClientError":
+    from botocore.exceptions import ClientError
+    return ClientError({"Error": {"Code": code, "Message": "boom"}}, operation)
+
+
 class TestGetAWSCostData:
     @pytest.fixture
-    def tools(self):
-        return FinOpsTools(aws_access_key_id="AKID", aws_secret_access_key="secret")
+    def fake_ce(self):
+        return MagicMock()
 
-    async def test_raises_without_aws_credentials(self):
-        no_creds = FinOpsTools(aws_access_key_id="")
-        with pytest.raises(EnvironmentError, match="AWS_ACCESS_KEY_ID"):
-            await no_creds.get_aws_cost_data("2026-06-01", "2026-06-30")
+    @pytest.fixture
+    def tools(self, fake_ce):
+        session = MagicMock()
+        session.client.return_value = fake_ce
+        return FinOpsTools(aws_session=session)
 
-    async def test_posts_to_cost_explorer_endpoint(self, tools):
-        resp = _make_http_resp(200, SAMPLE_AWS_COST_EXPLORER)
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=resp)
+    async def test_raises_without_aws_session(self):
+        no_session = FinOpsTools(aws_session=None)
+        with pytest.raises(EnvironmentError, match="AWS role not connected"):
+            await no_session.get_aws_cost_data("2026-06-01", "2026-06-30")
 
-        with patch("agents.agent_06_finops.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.get_aws_cost_data("2026-06-01", "2026-06-30")
+    async def test_calls_get_cost_and_usage(self, tools, fake_ce):
+        fake_ce.get_cost_and_usage.return_value = SAMPLE_AWS_COST_EXPLORER
+
+        result = await tools.get_aws_cost_data("2026-06-01", "2026-06-30")
 
         assert "ResultsByTime" in result
-        call_url = ctx.post.call_args.args[0]
-        assert "GetCostAndUsage" in call_url
+        fake_ce.get_cost_and_usage.assert_called_once_with(
+            TimePeriod={"Start": "2026-06-01", "End": "2026-06-30"},
+            Granularity="MONTHLY",
+            GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+            Metrics=["UnblendedCost", "UsageQuantity"],
+        )
 
-    async def test_raises_on_api_error(self, tools):
-        err_resp = _make_http_resp(403, {"message": "AccessDenied"})
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=err_resp)
-
-        with patch("agents.agent_06_finops.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            with pytest.raises(RuntimeError, match="AWS Cost Explorer error"):
-                await tools.get_aws_cost_data("2026-06-01", "2026-06-30")
+    async def test_raises_on_api_error(self, tools, fake_ce):
+        fake_ce.get_cost_and_usage.side_effect = _client_error("AccessDenied", "GetCostAndUsage")
+        with pytest.raises(RuntimeError, match="AWS Cost Explorer error"):
+            await tools.get_aws_cost_data("2026-06-01", "2026-06-30")
 
 
 class TestGetAzureCostData:
@@ -429,92 +433,89 @@ class TestGetGCPCostData:
 
 class TestStopEC2Instances:
     @pytest.fixture
-    def tools(self):
-        return FinOpsTools(aws_access_key_id="AKID", aws_secret_access_key="secret")
+    def fake_ec2(self):
+        return MagicMock()
 
-    async def test_raises_without_credentials(self):
-        no_creds = FinOpsTools(aws_access_key_id="")
-        with pytest.raises(EnvironmentError, match="AWS_ACCESS_KEY_ID"):
-            await no_creds.stop_ec2_instances(["i-0abc123"])
+    @pytest.fixture
+    def tools(self, fake_ec2):
+        session = MagicMock()
+        session.client.return_value = fake_ec2
+        return FinOpsTools(aws_session=session)
+
+    async def test_raises_without_aws_session(self):
+        no_session = FinOpsTools(aws_session=None)
+        with pytest.raises(EnvironmentError, match="AWS role not connected"):
+            await no_session.stop_ec2_instances(["i-0abc123"])
 
     async def test_returns_skipped_when_no_instance_ids(self, tools):
         result = await tools.stop_ec2_instances([])
         assert result["status"] == "skipped"
 
-    async def test_posts_stop_instances_action(self, tools):
-        ok_resp = MagicMock(status_code=200, text="<StopInstancesResponse>...</StopInstancesResponse>")
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=ok_resp)
-
-        with patch("agents.agent_06_finops.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.stop_ec2_instances(["i-0abc123", "i-0def456"])
+    async def test_calls_stop_instances(self, tools, fake_ec2):
+        result = await tools.stop_ec2_instances(["i-0abc123", "i-0def456"])
 
         assert result["status"] == "instances_stopped"
         assert result["instance_ids"] == ["i-0abc123", "i-0def456"]
         assert result["cloud"] == "aws"
-        payload = ctx.post.call_args.kwargs.get("data", {})
-        assert payload.get("Action") == "StopInstances"
+        fake_ec2.stop_instances.assert_called_once_with(InstanceIds=["i-0abc123", "i-0def456"])
 
-    async def test_raises_on_api_error(self, tools):
-        err_resp = MagicMock(status_code=403, text="AccessDenied")
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=err_resp)
-
-        with patch("agents.agent_06_finops.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            with pytest.raises(RuntimeError, match="StopInstances error"):
-                await tools.stop_ec2_instances(["i-0abc123"])
+    async def test_raises_on_api_error(self, tools, fake_ec2):
+        fake_ec2.stop_instances.side_effect = _client_error("AccessDenied", "StopInstances")
+        with pytest.raises(RuntimeError, match="AWS StopInstances error"):
+            await tools.stop_ec2_instances(["i-0abc123"])
 
 
 class TestDeleteUnattachedEBSVolumes:
     @pytest.fixture
-    def tools(self):
-        return FinOpsTools(aws_access_key_id="AKID", aws_secret_access_key="secret")
+    def fake_ec2(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_ec2):
+        session = MagicMock()
+        session.client.return_value = fake_ec2
+        return FinOpsTools(aws_session=session)
 
     async def test_returns_skipped_when_no_volume_ids(self, tools):
         result = await tools.delete_unattached_ebs_volumes([])
         assert result["status"] == "skipped"
 
-    async def test_deletes_each_volume_individually(self, tools):
-        ok_resp = MagicMock(status_code=200, text="<DeleteVolumeResponse/>")
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=ok_resp)
-
-        with patch("agents.agent_06_finops.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.delete_unattached_ebs_volumes(["vol-0abc", "vol-0def"])
+    async def test_deletes_each_volume_individually(self, tools, fake_ec2):
+        result = await tools.delete_unattached_ebs_volumes(["vol-0abc", "vol-0def"])
 
         assert result["status"] == "volumes_deleted"
         assert "vol-0abc" in result["deleted"]
         assert "vol-0def" in result["deleted"]
-        assert ctx.post.call_count == 2
+        assert fake_ec2.delete_volume.call_count == 2
+
+    async def test_records_per_volume_errors_without_raising(self, tools, fake_ec2):
+        fake_ec2.delete_volume.side_effect = _client_error("VolumeInUse", "DeleteVolume")
+        result = await tools.delete_unattached_ebs_volumes(["vol-0abc"])
+        assert result["deleted"] == []
+        assert len(result["errors"]) == 1
 
 
 class TestReleaseElasticIPs:
     @pytest.fixture
-    def tools(self):
-        return FinOpsTools(aws_access_key_id="AKID", aws_secret_access_key="secret")
+    def fake_ec2(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_ec2):
+        session = MagicMock()
+        session.client.return_value = fake_ec2
+        return FinOpsTools(aws_session=session)
 
     async def test_returns_skipped_when_no_allocation_ids(self, tools):
         result = await tools.release_elastic_ips([])
         assert result["status"] == "skipped"
 
-    async def test_releases_each_ip(self, tools):
-        ok_resp = MagicMock(status_code=200, text="<ReleaseAddressResponse/>")
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=ok_resp)
-
-        with patch("agents.agent_06_finops.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.release_elastic_ips(["eipalloc-0abc", "eipalloc-0def"])
+    async def test_releases_each_ip(self, tools, fake_ec2):
+        result = await tools.release_elastic_ips(["eipalloc-0abc", "eipalloc-0def"])
 
         assert result["status"] == "ips_released"
         assert len(result["released"]) == 2
+        assert fake_ec2.release_address.call_count == 2
 
 
 class TestDeallocateAzureVMs:
@@ -676,7 +677,7 @@ class TestExecuteOption:
     @pytest.fixture
     def tools(self):
         return FinOpsTools(
-            aws_access_key_id="AKID", aws_secret_access_key="secret",
+            aws_session=MagicMock(),
             azure_access_token="eyJ0...", gcp_access_token="ya29...",
             github_token="gh_test", slack_webhook_url="https://hooks.slack.com/x",
         )

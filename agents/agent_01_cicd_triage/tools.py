@@ -15,7 +15,6 @@ They never execute autonomously. Governance Rule 11.
 """
 
 import logging
-import os
 from typing import Optional
 
 import httpx
@@ -33,8 +32,15 @@ class CICDTools:
     """
 
     def __init__(self, github_token: Optional[str] = None, azure_token: Optional[str] = None):
-        self.github_token = github_token or os.environ.get("GITHUB_TOKEN", "")
-        self.azure_token = azure_token or os.environ.get("AZURE_DEVOPS_TOKEN", "")
+        # No env-var fallback -- a missing credential should raise a clear
+        # error at the specific call that needed it (see each method below),
+        # not silently fall back to a shared server-wide secret. Per-workspace
+        # github_token comes from core.workspace_credentials.build_agent_credentials;
+        # azure_token (an Azure DevOps PAT, not the ARM Service Principal
+        # bearer token agents 05/06/08 use) has no per-workspace storage yet --
+        # this platform's Agent 01 demo path is GitHub-only for now.
+        self.github_token = github_token or ""
+        self.azure_token = azure_token or ""
 
     # ──────────────────────────────────────────────
     # GitHub Actions tools

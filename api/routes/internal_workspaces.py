@@ -16,11 +16,18 @@ never merged with api/middleware/auth.py's customer auth path. Never
 returns a workspace's token, hashed or raw, in a list/detail response --
 only rotate-token ever hands back a raw token, and only once.
 
-GET  /internal/workspaces                    -- list
-GET  /internal/workspaces/{id}                -- detail
-POST /internal/workspaces/{id}/suspend        -- ToS-violation path
-POST /internal/workspaces/{id}/reactivate     -- reverse a suspension
-POST /internal/workspaces/{id}/rotate-token   -- revoke + reissue
+GET   /internal/workspaces                    -- list
+GET   /internal/workspaces/{id}                -- detail
+POST  /internal/workspaces/{id}/suspend        -- ToS-violation path
+POST  /internal/workspaces/{id}/reactivate     -- reverse a suspension
+POST  /internal/workspaces/{id}/rotate-token   -- revoke + reissue
+PATCH /internal/workspaces/{id}/tier           -- set product_tier without Stripe
+
+PATCH .../tier fills the one real gap in these admin levers: reactivate
+sets stripe_subscription_status, but nothing outside a real Stripe webhook
+(api/routes/stripe_billing.py's checkout/subscription handlers) ever sets
+product_tier. Needed to give an owner/QA workspace Enterprise-tier access
+(all 10 agents, unlimited repos/cloud providers) without a real purchase.
 """
 
 import logging
@@ -31,6 +38,7 @@ from pydantic import BaseModel
 
 from api.middleware.auth import _hash_token
 from api.middleware.internal_auth import get_internal_user
+from core.compliance import WorkspaceComplianceGuard
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/workspaces", tags=["internal-workspaces"])
@@ -61,6 +69,15 @@ class RotateTokenResponse(BaseModel):
     id: str
     workspace_token: str
     warning: str = "Save this token now — it will not be shown again. The previous token no longer works."
+
+
+class SetTierRequest(BaseModel):
+    tier: str
+
+
+class WorkspaceTierResponse(BaseModel):
+    id: str
+    product_tier: str
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -159,3 +176,27 @@ async def rotate_workspace_token(
 
     log.info("[InternalWorkspaces] Workspace=%s token rotated by admin=%s", workspace_id, admin["email"])
     return RotateTokenResponse(id=str(row["id"]), workspace_token=raw_token)
+
+
+@router.patch("/{workspace_id}/tier", response_model=WorkspaceTierResponse)
+async def set_workspace_tier(
+    workspace_id: str,
+    body: SetTierRequest,
+    request: Request,
+    admin: dict = Depends(get_internal_user),
+) -> WorkspaceTierResponse:
+    if body.tier not in WorkspaceComplianceGuard.TIER_LIMITS:
+        valid = ", ".join(sorted(WorkspaceComplianceGuard.TIER_LIMITS))
+        raise HTTPException(status_code=400, detail=f"Invalid tier '{body.tier}' — must be one of: {valid}")
+
+    async with request.app.state.db_pool.acquire() as conn:
+        await _get_workspace_or_404(conn, workspace_id)
+        row = await conn.fetchrow(
+            "UPDATE workspaces SET product_tier = $1, updated_at = NOW() "
+            "WHERE id = $2 RETURNING id, product_tier",
+            body.tier,
+            workspace_id,
+        )
+
+    log.info("[InternalWorkspaces] Workspace=%s tier set to %s by admin=%s", workspace_id, body.tier, admin["email"])
+    return WorkspaceTierResponse(id=str(row["id"]), product_tier=row["product_tier"])

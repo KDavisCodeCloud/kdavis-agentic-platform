@@ -1,6 +1,6 @@
 # CLAUDE.md — KDavis Agentic Platform
 # Master context file. Read this at the start of every Claude Code session.
-# Last updated: 2026-07-01
+# Last updated: 2026-09-12 (CURRENT STATUS footer corrected — see bottom of file)
 # Version: 1.0.0
 
 ---
@@ -3127,19 +3127,52 @@ app.thdstack.com data.
 
 ---
 
-Phase: NOT STARTED
-Next action: Scaffold folder structure (Phase 1, Step 1)
-Last session: —
-Last deploy: —
-Active products: 0
-Platform MRR: $0
-
 ## CURRENT STATUS
 
-Phase: NOT STARTED
-Next action: Scaffold folder structure (Phase 1, Step 1)
-Last session: —
-Last deploy: —
-Active products: 0
-Platform MRR: $0
+**Last updated:** 2026-09-12. This footer was a scaffold placeholder
+("Phase: NOT STARTED") from before Phase 1 build actually started —
+corrected here since it no longer reflects reality. Full detail lives in
+`CLOUD_DECODED_AUDIT_2026-09-12.md` (this repo's root) and the live audit
+artifact; this is a summary pointer, not a duplicate record.
+
+Phase: Live in production (Phase 1 foundation + Cloud Decoded product
+build, not the theoretical Phase 1-5 sequence outlined earlier in this
+file — that sequencing was superseded by building Cloud Decoded directly
+as the first real product).
+
+Active products: 1 — **Cloud Decoded** (`theclouddecoded.com`), paid SaaS,
+Starter/Growth/Enterprise tiers ($299/$699/$2,499 per mo). Real Stripe
+checkout, real paywall (no free self-serve access), real DNS on all
+hostnames.
+
+Agent roster (10 built, matches `agents/agent_01_*` … `agent_10_*`, not
+the placeholder roster named earlier in this file):
+1. CI/CD Triage (`agent_01_cicd_triage`)
+2. Kubernetes Alert Fatigue & Remediation (`agent_02_k8s_alert`)
+3. PR Review — Architecture & Security (`agent_03_pr_review`)
+4. Legacy Code & Infrastructure Migration (`agent_04_migration`, Growth+)
+5. IAM Policy Minimization (`agent_05_iam_minimizer`, Growth+)
+6. FinOps Cost Optimization (`agent_06_finops`, Growth+)
+7. Interactive Runbook Automation (`agent_07_runbook`, Growth+)
+8. Drift Detection & Auto-Correction (`agent_08_drift_detection`, Growth+)
+9. Context-Aware Onboarding & On-Call Buddy (`agent_09_onboarding_buddy`, Growth+)
+10. Dependency & Vulnerability Patching (`agent_10_dependency_patch`, Growth+)
+
+Two paid satellite products extend the same customer base:
+`kdavis-finops-agent` and `kdavis-compliance-agent` (continuous cost/
+security monitoring and CIS compliance reporting), both with real AWS
+and Azure onboarding live in production as of 2026-09-12.
+
+Last deploy: 2026-09-12 (Railway: main platform, `cloud-decoded-mcp`,
+`kdavis-finops-agent`, `kdavis-compliance-agent`; Vercel: frontend).
+
+What's real and live: backend, frontend, Stripe paywall, DNS (all
+hostnames), MCP server (TLS cert was still provisioning as of the last
+audit — check `CLOUD_DECODED_AUDIT_2026-09-12.md` for current state,
+don't assume it's still pending), AWS + Azure onboarding and scanning
+for FinOps and Compliance.
+
+Platform MRR: not tracked in this file — see Stripe dashboard for the
+current, real number rather than a value that will silently go stale
+here.
 Team members: 0

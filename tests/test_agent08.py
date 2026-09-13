@@ -338,6 +338,44 @@ class TestFetchK8sResource:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# DriftTools — fetch_cloudformation_stack()
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestFetchCloudformationStack:
+    @pytest.fixture
+    def fake_cfn(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_cfn):
+        session = MagicMock()
+        session.client.return_value = fake_cfn
+        return DriftTools(aws_session=session)
+
+    async def test_returns_error_without_aws_session(self):
+        no_session = DriftTools(aws_session=None)
+        result = await no_session.fetch_cloudformation_stack("my-stack")
+        assert "error" in result
+
+    async def test_returns_resources_on_success(self, tools, fake_cfn):
+        fake_cfn.describe_stack_resources.return_value = {
+            "StackResources": [{"LogicalResourceId": "MyBucket", "ResourceType": "AWS::S3::Bucket"}]
+        }
+        result = await tools.fetch_cloudformation_stack("my-stack")
+        fake_cfn.describe_stack_resources.assert_called_once_with(StackName="my-stack")
+        assert result["status"] == "ok"
+        assert result["resources"][0]["LogicalResourceId"] == "MyBucket"
+
+    async def test_returns_error_dict_on_client_error(self, tools, fake_cfn):
+        from botocore.exceptions import ClientError
+        fake_cfn.describe_stack_resources.side_effect = ClientError(
+            {"Error": {"Code": "ValidationError", "Message": "does not exist"}}, "DescribeStackResources"
+        )
+        result = await tools.fetch_cloudformation_stack("missing-stack")
+        assert "error" in result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # DriftTools — apply_k8s_manifest()
 # ──────────────────────────────────────────────────────────────────────────────
 

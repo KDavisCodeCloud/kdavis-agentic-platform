@@ -25,9 +25,15 @@ from api.routes import incidents
 from db.models import IncidentApproveRequest
 
 
-def _make_request(fetchrow_return: dict, execute_return=None) -> SimpleNamespace:
+def _make_request(fetchrow_return: dict, execute_return=None, credentials_row=None) -> SimpleNamespace:
+    """credentials_row backs the SECOND conn.fetchrow call -- made by
+    core.workspace_credentials.build_agent_credentials() inside _resume()
+    for the four credentialed agents (01/05/06/08). None (the default)
+    means "no credentials configured", which build_agent_credentials
+    handles by returning all-None credentials -- fine for dispatch tests
+    that only care which workflow class got instantiated."""
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value=fetchrow_return)
+    conn.fetchrow = AsyncMock(side_effect=[fetchrow_return, credentials_row])
     conn.execute = AsyncMock(return_value=execute_return)
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)

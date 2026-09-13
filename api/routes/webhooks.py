@@ -307,6 +307,7 @@ async def _run_cicd_triage(app, workspace: dict, payload: dict, cloud_provider: 
     Compliance and budget checks happen inside the agent workflow.
     """
     from agents.agent_01_cicd_triage.workflow import CICDTriageWorkflow
+    from core.workspace_credentials import build_agent_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -319,7 +320,8 @@ async def _run_cicd_triage(app, workspace: dict, payload: dict, cloud_provider: 
             await compliance.assert_agent_permitted(workspace_id, "agent_01_cicd_triage", cloud_provider)
 
             # Run the agent
-            agent = CICDTriageWorkflow(conn, workspace_id, checkpointer)
+            creds = await build_agent_credentials(conn, workspace_id)
+            agent = CICDTriageWorkflow(conn, workspace_id, checkpointer, **creds)
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 01 triage complete — workspace=%s incident=%s",
@@ -468,6 +470,7 @@ async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider:
     Agent 05 is always manually triggered — no webhook calls this directly.
     """
     from agents.agent_05_iam_minimizer.workflow import IAMMinimizeWorkflow
+    from core.workspace_credentials import build_agent_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -478,7 +481,8 @@ async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider:
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_05_iam_minimizer", cloud_provider)
 
-            agent = IAMMinimizeWorkflow(conn, workspace_id, checkpointer)
+            creds = await build_agent_credentials(conn, workspace_id)
+            agent = IAMMinimizeWorkflow(conn, workspace_id, checkpointer, **creds)
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 05 IAM minimization complete — workspace=%s incident=%s",
@@ -508,6 +512,7 @@ async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) 
     Agent 06 is always manually triggered — no webhook calls this directly.
     """
     from agents.agent_06_finops.workflow import FinOpsWorkflow
+    from core.workspace_credentials import build_agent_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -518,7 +523,8 @@ async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) 
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_06_finops", cloud_provider)
 
-            agent = FinOpsWorkflow(conn, workspace_id, checkpointer)
+            creds = await build_agent_credentials(conn, workspace_id)
+            agent = FinOpsWorkflow(conn, workspace_id, checkpointer, **creds)
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 06 FinOps analysis complete — workspace=%s incident=%s",
@@ -588,6 +594,7 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
     Agent 08 is always manually triggered or CI-scheduled — no inbound webhook calls this directly.
     """
     from agents.agent_08_drift_detection.workflow import DriftWorkflow
+    from core.workspace_credentials import build_agent_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -598,7 +605,8 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_08_drift_detection", cloud_provider)
 
-            agent = DriftWorkflow(conn, workspace_id, checkpointer)
+            creds = await build_agent_credentials(conn, workspace_id)
+            agent = DriftWorkflow(conn, workspace_id, checkpointer, **creds)
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 08 drift detection complete — workspace=%s incident=%s",
