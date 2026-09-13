@@ -60,6 +60,7 @@ from api.routes import workspace_credentials
 from api.routes import audit
 from api.routes import finops_agent
 from api.routes import compliance_agent
+from api.routes import github_app_admin
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +231,7 @@ app.include_router(workspace_credentials.router, prefix="/api/v1")
 app.include_router(audit.router,           prefix="/api/v1")
 app.include_router(finops_agent.router,    prefix="/api/v1")
 app.include_router(compliance_agent.router, prefix="/api/v1")
+app.include_router(github_app_admin.router, prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────

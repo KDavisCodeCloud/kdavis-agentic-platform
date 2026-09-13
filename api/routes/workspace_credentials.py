@@ -25,13 +25,12 @@ workspace route -- a real paying customer uses the same routes Kelvin does.
 
 import logging
 import os
-import secrets
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.middleware.auth import get_workspace
+from core.github_app import build_install_url, sign_workspace_state, verify_workspace_state
 from core.workspace_credentials import (
     AssumeRoleError,
     AzureConnectError,
@@ -115,54 +114,67 @@ async def connect_github(
     request: Request,
     workspace: dict = Depends(get_workspace),
 ) -> ConnectGithubResponse:
-    async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            resp = await client.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {body.github_pat}",
-                    "Accept": "application/vnd.github+json",
-                },
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=400, detail=f"Could not reach GitHub: {exc}") from exc
+    """
+    Retired as of the item 4 GitHub App migration (decided 2026-09-13):
+    PATs are no longer accepted for new connections -- GitHub Apps give
+    fine-grained, revocable, auditable access with short-lived tokens and
+    a per-installation webhook secret instead of one long-lived PAT plus a
+    shared secret. Use GET /workspace/credentials/github-app/install-url
+    instead. A workspace that already stored a PAT before this migration
+    keeps working (core/workspace_credentials.py's build_agent_credentials
+    still reads it as a legacy fallback) -- this route just stops minting
+    new ones.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail="PAT-based GitHub connection is retired. Call "
+               "GET /workspace/credentials/github-app/install-url and install the "
+               "Cloud Decoded GitHub App instead.",
+    )
 
-    if resp.status_code != 200:
-        raise HTTPException(status_code=400, detail=f"GitHub rejected this PAT ({resp.status_code}): {resp.text[:200]}")
 
-    workspace_id = workspace["id"]
-    webhook_secret_raw = None
+@router.get("/github-app/install-url")
+async def get_github_app_install_url(
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> dict:
+    """Returns a one-time install URL for this workspace. The signed state
+    param ties GitHub's install-callback redirect back to this exact
+    workspace without needing an auth header (the callback is a plain
+    browser redirect GitHub controls, not an authenticated API call)."""
+    async with request.app.state.db_pool.acquire() as conn:
+        app_row = await conn.fetchrow("SELECT app_slug FROM github_app_config WHERE id = 'singleton'")
+
+    if not app_row:
+        raise HTTPException(status_code=503, detail="GitHub App not registered yet on this platform")
+
+    state = sign_workspace_state(str(workspace["id"]))
+    return {"install_url": build_install_url(app_row["app_slug"], state)}
+
+
+@router.get("/github-app/callback")
+async def github_app_install_callback(request: Request, installation_id: str, state: str) -> dict:
+    """
+    Public route -- GitHub redirects the customer's own browser here after
+    they click "Install" (this is the App's configured setup_url), with no
+    auth header we control. The signed `state` param (minted by
+    get_github_app_install_url) is the only thing tying this redirect back
+    to a real workspace; verify it instead of trusting installation_id alone.
+    """
+    workspace_id = verify_workspace_state(state)
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="Invalid or expired state -- restart the install flow")
 
     async with request.app.state.db_pool.acquire() as conn:
-        # Mint a webhook secret only if this workspace doesn't already have one --
-        # re-verifying the PAT shouldn't silently invalidate an already-registered
-        # GitHub webhook's secret.
-        existing = await conn.fetchrow(
-            "SELECT encrypted_github_webhook_secret FROM workspaces WHERE id = $1",
+        await conn.execute(
+            "UPDATE workspaces SET github_app_installation_id = $1, github_app_installed_at = NOW() "
+            "WHERE id = $2",
+            installation_id,
             workspace_id,
         )
-        if existing and existing["encrypted_github_webhook_secret"]:
-            await conn.execute(
-                "UPDATE workspaces SET github_pat_encrypted = $1, github_pat_verified_at = NOW() WHERE id = $2",
-                encrypt(body.github_pat),
-                workspace_id,
-            )
-        else:
-            webhook_secret_raw = secrets.token_urlsafe(32)
-            await conn.execute(
-                """
-                UPDATE workspaces
-                SET github_pat_encrypted = $1, github_pat_verified_at = NOW(),
-                    encrypted_github_webhook_secret = $2, github_webhook_secret_created_at = NOW()
-                WHERE id = $3
-                """,
-                encrypt(body.github_pat),
-                encrypt(webhook_secret_raw),
-                workspace_id,
-            )
 
-    log.info("[WorkspaceCredentials] GitHub PAT verified workspace=%s", workspace_id)
-    return ConnectGithubResponse(webhook_secret=webhook_secret_raw)
+    log.info("[WorkspaceCredentials] GitHub App installed workspace=%s installation=%s", workspace_id, installation_id)
+    return {"status": "installed"}
 
 
 @router.post("/aws-role/setup", response_model=AwsRoleSetupResponse)

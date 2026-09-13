@@ -83,7 +83,7 @@ async def _get_workspace_by_mcp_service(request: Request, service_key: str) -> d
         row = await conn.fetchrow(
             "SELECT id, company_name, stripe_subscription_status, product_tier, "
             "encrypted_llm_key, monthly_token_budget_usd, current_month_spend_usd, "
-            "github_pat_encrypted, github_pat_verified_at, "
+            "github_pat_encrypted, github_pat_verified_at, github_app_installation_id, "
             "encrypted_github_webhook_secret, aws_role_arn, aws_external_id, "
             "aws_role_verified_at, azure_tenant_id, azure_client_id, "
             "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at "
@@ -122,7 +122,7 @@ async def _get_workspace_by_token(request: Request, blocked_statuses: tuple[str,
         row = await conn.fetchrow(
             "SELECT id, company_name, stripe_subscription_status, product_tier, "
             "encrypted_llm_key, monthly_token_budget_usd, current_month_spend_usd, "
-            "github_pat_encrypted, github_pat_verified_at, "
+            "github_pat_encrypted, github_pat_verified_at, github_app_installation_id, "
             "encrypted_github_webhook_secret, aws_role_arn, aws_external_id, "
             "aws_role_verified_at, azure_tenant_id, azure_client_id, "
             "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at "

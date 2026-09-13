@@ -18,6 +18,7 @@ from uuid import uuid4
 import pytest
 from botocore.exceptions import ClientError
 
+from core.github_app import GitHubAppError
 from core.workspace_credentials import (
     AssumeRoleError,
     AzureConnectError,
@@ -26,6 +27,7 @@ from core.workspace_credentials import (
     build_trust_policy,
     generate_external_id,
     get_azure_bearer_token,
+    mint_github_app_token,
     resolve_k8s_context,
     verify_role,
     verify_service_principal,
@@ -153,6 +155,7 @@ class TestBuildAgentCredentials:
     async def test_no_credentials_configured_returns_all_none(self):
         conn = await self._conn({
             "github_pat_encrypted": None,
+            "github_app_installation_id": None,
             "aws_role_arn": None,
             "aws_external_id": None,
             "azure_tenant_id": None,
@@ -166,6 +169,7 @@ class TestBuildAgentCredentials:
     async def test_github_pat_decrypted(self):
         conn = await self._conn({
             "github_pat_encrypted": "cipher",
+            "github_app_installation_id": None,
             "aws_role_arn": None, "aws_external_id": None,
             "azure_tenant_id": None, "azure_client_id": None,
             "azure_client_secret_encrypted": None, "azure_subscription_id": None,
@@ -179,6 +183,7 @@ class TestBuildAgentCredentials:
     async def test_aws_role_builds_a_session(self):
         conn = await self._conn({
             "github_pat_encrypted": None,
+            "github_app_installation_id": None,
             "aws_role_arn": "arn:aws:iam::222222222222:role/x", "aws_external_id": "ext-abc",
             "azure_tenant_id": None, "azure_client_id": None,
             "azure_client_secret_encrypted": None, "azure_subscription_id": None,
@@ -192,6 +197,7 @@ class TestBuildAgentCredentials:
     async def test_azure_creds_mint_a_bearer_token(self):
         conn = await self._conn({
             "github_pat_encrypted": None,
+            "github_app_installation_id": None,
             "aws_role_arn": None, "aws_external_id": None,
             "azure_tenant_id": "tid", "azure_client_id": "cid",
             "azure_client_secret_encrypted": "cipher", "azure_subscription_id": "sub",
@@ -208,3 +214,55 @@ class TestBuildAgentCredentials:
         conn = await self._conn(None)
         creds = await build_agent_credentials(conn, str(uuid4()))
         assert creds == {"github_token": None, "aws_session": None, "azure_access_token": None}
+
+    async def test_github_app_installation_takes_priority_over_stored_pat(self):
+        # Item 4 migration decision: App-based access wins over a legacy PAT
+        # when both happen to be present on the same workspace.
+        conn = await self._conn({
+            "github_pat_encrypted": "legacy-cipher",
+            "github_app_installation_id": "inst-123",
+            "aws_role_arn": None, "aws_external_id": None,
+            "azure_tenant_id": None, "azure_client_id": None,
+            "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+        })
+        with patch(
+            "core.workspace_credentials.mint_github_app_token",
+            new=AsyncMock(return_value="ghs_fresh_install_token"),
+        ) as mock_mint:
+            creds = await build_agent_credentials(conn, str(uuid4()))
+        mock_mint.assert_awaited_once_with(conn, "inst-123")
+        assert creds["github_token"] == "ghs_fresh_install_token"
+
+    async def test_falls_back_to_legacy_pat_when_no_app_installation(self):
+        conn = await self._conn({
+            "github_pat_encrypted": "legacy-cipher",
+            "github_app_installation_id": None,
+            "aws_role_arn": None, "aws_external_id": None,
+            "azure_tenant_id": None, "azure_client_id": None,
+            "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+        })
+        with patch("core.workspace_credentials.decrypt", return_value="ghp_legacy_real"):
+            creds = await build_agent_credentials(conn, str(uuid4()))
+        assert creds["github_token"] == "ghp_legacy_real"
+
+
+class TestMintGithubAppToken:
+    async def test_raises_when_app_not_registered(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        with pytest.raises(GitHubAppError):
+            await mint_github_app_token(conn, "inst-123")
+
+    async def test_decrypts_private_key_and_mints_token(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"app_id": "999", "private_key_encrypted": "cipher"})
+        with (
+            patch("core.workspace_credentials.decrypt", return_value="-----BEGIN PEM-----"),
+            patch(
+                "core.workspace_credentials.mint_installation_token",
+                new=AsyncMock(return_value="ghs_fresh"),
+            ) as mock_mint,
+        ):
+            token = await mint_github_app_token(conn, "inst-123")
+        mock_mint.assert_awaited_once_with("999", "-----BEGIN PEM-----", "inst-123")
+        assert token == "ghs_fresh"

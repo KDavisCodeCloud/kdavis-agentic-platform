@@ -241,6 +241,78 @@ async def azure_devops_webhook(
     return {"status": "accepted", "message": "Triage initiated"}
 
 
+@router.post("/github-app")
+async def github_app_webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
+    """
+    Receives events for EVERY installation of the one Cloud Decoded GitHub
+    App (item 4 migration) -- unlike /github's per-workspace query-string
+    token, there is exactly one URL, signed with the App's own single
+    webhook secret (github_app_config, migration 023). The payload's
+    `installation.id` is how a workspace is identified instead.
+
+    This is additive, not a replacement: /github (per-workspace token +
+    per-workspace secret) keeps working for any workspace that connected
+    via PAT before the App existed. New connections go through the App.
+    """
+    payload_bytes = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    event = request.headers.get("X-GitHub-Event", "")
+
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        app_row = await conn.fetchrow(
+            "SELECT webhook_secret_encrypted FROM github_app_config WHERE id = 'singleton'"
+        )
+    if not app_row:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="GitHub App not registered")
+
+    webhook_secret = decrypt(app_row["webhook_secret_encrypted"])
+    if not _verify_github_signature(payload_bytes, signature, webhook_secret):
+        log.warning("[Webhooks] GitHub App signature validation failed")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
+
+    try:
+        payload = json.loads(payload_bytes)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload")
+
+    installation_id = str(payload.get("installation", {}).get("id", ""))
+    if not installation_id:
+        return {"status": "ignored", "reason": "no installation.id in payload"}
+
+    async with db.acquire() as conn:
+        workspace = await conn.fetchrow(
+            "SELECT id, stripe_subscription_status, product_tier, encrypted_llm_key, "
+            "company_name, encrypted_github_webhook_secret FROM workspaces "
+            "WHERE github_app_installation_id = $1",
+            installation_id,
+        )
+    if not workspace:
+        log.warning("[Webhooks] GitHub App event for unknown installation_id=%s", installation_id)
+        return {"status": "ignored", "reason": "installation not linked to any workspace"}
+    workspace = dict(workspace)
+
+    action = payload.get("action", "")
+
+    if event == "workflow_run":
+        conclusion = payload.get("workflow_run", {}).get("conclusion", "")
+        if action != "completed" or conclusion not in ("failure", "timed_out"):
+            return {
+                "status": "ignored",
+                "reason": f"action={action} conclusion={conclusion} — only failure/timed_out triggers triage",
+            }
+        background_tasks.add_task(_run_cicd_triage, request.app, workspace, payload, "github")
+        return {"status": "accepted", "message": "CI/CD triage initiated"}
+
+    if event == "pull_request":
+        if action not in ("opened", "synchronize", "reopened"):
+            return {"status": "ignored", "reason": f"PR action='{action}' — only opened/synchronize/reopened triggers review"}
+        background_tasks.add_task(_run_pr_review, request.app, workspace, payload, "github")
+        return {"status": "accepted", "message": "PR review initiated"}
+
+    return {"status": "ignored", "reason": f"event '{event}' not handled"}
+
+
 @router.post("/aks-alert")
 async def aks_alert_webhook(
     request: Request,
