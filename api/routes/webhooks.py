@@ -289,7 +289,9 @@ async def aks_alert_webhook(
         request.app,
         workspace,
         payload,
-        "azure" if is_azure_monitor else "azure",
+        # Prometheus AlertManager can be watching any cluster (EKS included) --
+        # only the Azure Monitor Common Alert Schema format is actually AKS-specific.
+        "azure" if is_azure_monitor else "aws",
     )
 
     return {"status": "accepted", "message": "K8s alert triage initiated"}

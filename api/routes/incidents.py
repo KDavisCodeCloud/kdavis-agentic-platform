@@ -32,12 +32,43 @@ from db.models import (
     RemediationOption,
 )
 
+from agents.agent_01_cicd_triage.workflow import CICDTriageWorkflow
+from agents.agent_02_k8s_alert.workflow import K8sAlertWorkflow
+from agents.agent_03_pr_review.workflow import PRReviewWorkflow
+from agents.agent_04_migration.workflow import MigrationWorkflow
+from agents.agent_05_iam_minimizer.workflow import IAMMinimizeWorkflow
+from agents.agent_06_finops.workflow import FinOpsWorkflow
+from agents.agent_07_runbook.workflow import RunbookWorkflow
+from agents.agent_08_drift_detection.workflow import DriftWorkflow
+from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
+from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
+
 
 class IncidentRejectRequest(BaseModel):
     reason: str
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/incidents", tags=["incidents"])
+
+# Every agent's workflow class shares an identical constructor shape
+# (WorkflowClass(db_conn, workspace_id, checkpointer)) and .resume(thread_id,
+# selected_option) method -- confirmed directly against each agents/agent_0N_*/
+# workflow.py before writing this table. approve_incident must dispatch on the
+# incident's real agent_id rather than assuming a single agent, or approving a
+# non-Agent-01 incident silently resumes the wrong agent's graph (the bug this
+# table fixes).
+_WORKFLOW_CLASSES: dict[str, type] = {
+    "agent_01_cicd_triage": CICDTriageWorkflow,
+    "agent_02_k8s_alert": K8sAlertWorkflow,
+    "agent_03_pr_review": PRReviewWorkflow,
+    "agent_04_migration": MigrationWorkflow,
+    "agent_05_iam_minimizer": IAMMinimizeWorkflow,
+    "agent_06_finops": FinOpsWorkflow,
+    "agent_07_runbook": RunbookWorkflow,
+    "agent_08_drift_detection": DriftWorkflow,
+    "agent_09_onboarding_buddy": OnboardingWorkflow,
+    "agent_10_dependency_patch": DependencyPatchWorkflow,
+}
 
 
 @router.get("/{incident_id}", response_model=IncidentResponse)
@@ -188,14 +219,22 @@ async def approve_incident(
     if new_status == "executing":
         checkpointer = request.app.state.checkpointer
 
+        workflow_cls = _WORKFLOW_CLASSES.get(row["agent_id"])
+        if workflow_cls is None:
+            # Fail loud, not fail open -- silently resuming some other
+            # agent's graph would run the wrong remediation entirely.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"No workflow class registered for agent_id '{row['agent_id']}'",
+            )
+
         # The thread_id stored in the incident's langgraph_thread_id field
         # For now we use incident_id as thread_id (set during workflow.run())
-        from agents.agent_01_cicd_triage.workflow import CICDTriageWorkflow
         import asyncio
 
         async def _resume():
             async with db.acquire() as conn:
-                agent = CICDTriageWorkflow(conn, str(workspace["id"]), checkpointer)
+                agent = workflow_cls(conn, str(workspace["id"]), checkpointer)
                 await agent.resume(incident_id, selected_option)
 
         # Fire and forget — result is polled via GET /incidents/{id}
