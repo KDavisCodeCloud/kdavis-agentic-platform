@@ -37,6 +37,7 @@ import boto3
 import httpx
 from botocore.exceptions import ClientError
 
+from core.github_app import GitHubAppError, mint_installation_token
 from security.encryption import decrypt
 
 log = logging.getLogger(__name__)
@@ -205,6 +206,20 @@ async def verify_service_principal(tenant_id: str, client_id: str, client_secret
         raise AzureConnectError(f"Could not verify access ({resp.status_code}): {resp.text[:200]}")
 
 
+async def mint_github_app_token(conn, installation_id: str) -> str:
+    """Fresh ~1hr installation token for `installation_id`, using the
+    platform's single GitHub App identity (github_app_config, migration 023).
+    Raises GitHubAppError if the App hasn't been registered yet."""
+    app_row = await conn.fetchrow(
+        "SELECT app_id, private_key_encrypted FROM github_app_config WHERE id = 'singleton'"
+    )
+    if not app_row:
+        raise GitHubAppError("GitHub App not registered yet -- POST /internal/github-app/register first")
+
+    private_key_pem = decrypt(app_row["private_key_encrypted"])
+    return await mint_installation_token(app_row["app_id"], private_key_pem, installation_id)
+
+
 # ── Per-call credential fetch for agents 01/05/06/08 ────────────────────────
 
 async def build_agent_credentials(conn, workspace_id: str) -> dict:
@@ -217,9 +232,17 @@ async def build_agent_credentials(conn, workspace_id: str) -> dict:
 
     Mirrors agents/base_agent.py's _decrypt_byok: decrypt per-call, never
     persist plaintext beyond the request.
+
+    github_token: GitHub App installations (github_app_installation_id) take
+    priority over a legacy stored PAT (github_pat_encrypted) -- as of the
+    item 4 GitHub App migration, PATs are a read-only legacy fallback for
+    whatever workspace connected before the App existed; nothing new is
+    ever stored there. A fresh installation token is minted per call, same
+    discipline as AWS role assumption / Azure token minting below -- never
+    cached beyond the request.
     """
     row = await conn.fetchrow(
-        "SELECT github_pat_encrypted, aws_role_arn, aws_external_id, "
+        "SELECT github_pat_encrypted, github_app_installation_id, aws_role_arn, aws_external_id, "
         "azure_tenant_id, azure_client_id, azure_client_secret_encrypted, "
         "azure_subscription_id FROM workspaces WHERE id = $1",
         UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id,
@@ -233,7 +256,9 @@ async def build_agent_credentials(conn, workspace_id: str) -> dict:
     if not row:
         return credentials
 
-    if row["github_pat_encrypted"]:
+    if row["github_app_installation_id"]:
+        credentials["github_token"] = await mint_github_app_token(conn, row["github_app_installation_id"])
+    elif row["github_pat_encrypted"]:
         credentials["github_token"] = decrypt(row["github_pat_encrypted"])
 
     if row["aws_role_arn"] and row["aws_external_id"]:

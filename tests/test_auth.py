@@ -110,7 +110,7 @@ class TestGetWorkspace:
         conn = request.app.state.db_pool.acquire.return_value.__aenter__.return_value
         sql = conn.fetchrow.await_args.args[0]
         for column in (
-            "github_pat_encrypted", "github_pat_verified_at",
+            "github_pat_encrypted", "github_pat_verified_at", "github_app_installation_id",
             "encrypted_github_webhook_secret", "aws_role_arn", "aws_external_id",
             "aws_role_verified_at", "azure_tenant_id", "azure_client_id",
             "azure_client_secret_encrypted", "azure_subscription_id", "azure_verified_at",

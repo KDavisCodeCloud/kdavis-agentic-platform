@@ -168,3 +168,101 @@ class TestGithubWebhookSignatureValidation:
                 await webhooks.github_webhook(request, bg, token="ws-token")
 
         assert exc.value.status_code == 401
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /webhooks/github-app -- item 4 migration, installation-id-based lookup
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_app_webhook_request(fetchrow_results: list, body: dict, headers: dict) -> SimpleNamespace:
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(side_effect=fetchrow_results)
+    pool_ctx = AsyncMock()
+    pool_ctx.__aenter__ = AsyncMock(return_value=conn)
+    pool_ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=pool_ctx)
+    app = SimpleNamespace(state=SimpleNamespace(db_pool=pool))
+    payload_bytes = json.dumps(body).encode()
+    request = SimpleNamespace(app=app, body=AsyncMock(return_value=payload_bytes), headers=headers)
+    return request, conn
+
+
+class TestGithubAppWebhook:
+    async def test_raises_503_when_app_not_registered(self):
+        body = {"installation": {"id": 123}}
+        request, conn = _make_app_webhook_request([None], body, {
+            "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": "sha256=x",
+        })
+        bg = BackgroundTasks()
+        with pytest.raises(_HTTPException) as exc:
+            await webhooks.github_app_webhook(request, bg)
+        assert exc.value.status_code == 503
+
+    async def test_rejects_invalid_signature(self):
+        from security.encryption import encrypt
+
+        body = {"installation": {"id": 123}}
+        with _patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            app_row = {"webhook_secret_encrypted": encrypt("app-webhook-secret")}
+            request, conn = _make_app_webhook_request([app_row], body, {
+                "X-GitHub-Event": "workflow_run", "X-Hub-Signature-256": "sha256=" + "0" * 64,
+            })
+            bg = BackgroundTasks()
+            with pytest.raises(_HTTPException) as exc:
+                await webhooks.github_app_webhook(request, bg)
+        assert exc.value.status_code == 401
+
+    async def test_ignores_event_for_unknown_installation(self):
+        from security.encryption import encrypt
+
+        body = {"installation": {"id": 123}, "action": "completed",
+                "workflow_run": {"conclusion": "failure"}}
+        body_bytes = json.dumps(body).encode()
+        with _patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            secret = "app-webhook-secret"
+            app_row = {"webhook_secret_encrypted": encrypt(secret)}
+            request, conn = _make_app_webhook_request([app_row, None], body, {
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": _sign_github(body_bytes, secret),
+            })
+            bg = BackgroundTasks()
+            result = await webhooks.github_app_webhook(request, bg)
+        assert result["status"] == "ignored"
+        assert "installation" in result["reason"]
+
+    async def test_accepts_and_dispatches_workflow_run_failure_for_known_installation(self):
+        from security.encryption import encrypt
+
+        body = {"installation": {"id": 123}, "action": "completed",
+                "workflow_run": {"conclusion": "failure", "id": 1}}
+        body_bytes = json.dumps(body).encode()
+        with _patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            secret = "app-webhook-secret"
+            app_row = {"webhook_secret_encrypted": encrypt(secret)}
+            workspace_row = _workspace_row()
+            request, conn = _make_app_webhook_request([app_row, workspace_row], body, {
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": _sign_github(body_bytes, secret),
+            })
+            bg = BackgroundTasks()
+            result = await webhooks.github_app_webhook(request, bg)
+        assert result["status"] == "accepted"
+
+    async def test_ignores_successful_workflow_run(self):
+        from security.encryption import encrypt
+
+        body = {"installation": {"id": 123}, "action": "completed",
+                "workflow_run": {"conclusion": "success", "id": 1}}
+        body_bytes = json.dumps(body).encode()
+        with _patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            secret = "app-webhook-secret"
+            app_row = {"webhook_secret_encrypted": encrypt(secret)}
+            workspace_row = _workspace_row()
+            request, conn = _make_app_webhook_request([app_row, workspace_row], body, {
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": _sign_github(body_bytes, secret),
+            })
+            bg = BackgroundTasks()
+            result = await webhooks.github_app_webhook(request, bg)
+        assert result["status"] == "ignored"

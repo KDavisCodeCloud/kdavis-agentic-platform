@@ -32,57 +32,62 @@ def _make_request(fetchrow_return=None) -> tuple:
     return request, conn
 
 
-def _httpx_ctx(response) -> AsyncMock:
-    ctx = AsyncMock()
-    ctx.__aenter__ = AsyncMock(return_value=ctx)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    ctx.get = AsyncMock(return_value=response)
-    return ctx
-
-
 class TestConnectGithub:
-    async def test_invalid_pat_raises_400(self):
+    # Retired as of the item 4 GitHub App migration (decided 2026-09-13) --
+    # PATCH /workspace/credentials/github no longer accepts new PATs at all,
+    # regardless of whether the PAT itself would have verified. Replaces the
+    # PAT-verify-and-store tests that used to live here.
+    async def test_always_returns_410_pointing_at_the_app_install_flow(self):
         request, conn = _make_request()
-        resp = MagicMock(status_code=401, text="Bad credentials")
-        with patch("api.routes.workspace_credentials.httpx.AsyncClient") as mock_cls:
-            mock_cls.return_value = _httpx_ctx(resp)
+        with pytest.raises(HTTPException) as exc:
+            await wc_routes.connect_github(
+                wc_routes.ConnectGithubRequest(github_pat="ghp_anything"),
+                request,
+                workspace={"id": uuid4()},
+            )
+        assert exc.value.status_code == 410
+        assert "install-url" in exc.value.detail
+        conn.execute.assert_not_awaited()
+
+
+class TestGetGithubAppInstallUrl:
+    async def test_raises_503_when_app_not_registered(self):
+        request, conn = _make_request(fetchrow_return=None)
+        with pytest.raises(HTTPException) as exc:
+            await wc_routes.get_github_app_install_url(request, workspace={"id": uuid4()})
+        assert exc.value.status_code == 503
+
+    async def test_returns_install_url_when_app_registered(self):
+        request, conn = _make_request(fetchrow_return={"app_slug": "cloud-decoded"})
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            result = await wc_routes.get_github_app_install_url(request, workspace={"id": uuid4()})
+        assert "github.com/apps/cloud-decoded/installations/new" in result["install_url"]
+
+
+class TestGithubAppInstallCallback:
+    async def test_stores_installation_id_on_valid_state(self):
+        workspace_id = str(uuid4())
+        request, conn = _make_request()
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            state = wc_routes.sign_workspace_state(workspace_id)
+            result = await wc_routes.github_app_install_callback(
+                request, installation_id="inst-123", state=state,
+            )
+        assert result["status"] == "installed"
+        conn.execute.assert_awaited_once()
+        args = conn.execute.await_args.args
+        assert "inst-123" in args
+        assert workspace_id in args
+
+    async def test_rejects_invalid_state(self):
+        request, conn = _make_request()
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
             with pytest.raises(HTTPException) as exc:
-                await wc_routes.connect_github(
-                    wc_routes.ConnectGithubRequest(github_pat="bad"),
-                    request,
-                    workspace={"id": uuid4()},
+                await wc_routes.github_app_install_callback(
+                    request, installation_id="inst-123", state="garbage",
                 )
         assert exc.value.status_code == 400
-
-    async def test_valid_pat_mints_webhook_secret_first_time(self):
-        request, conn = _make_request(fetchrow_return={"encrypted_github_webhook_secret": None})
-        resp = MagicMock(status_code=200)
-        with (
-            patch("api.routes.workspace_credentials.httpx.AsyncClient") as mock_cls,
-            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
-        ):
-            mock_cls.return_value = _httpx_ctx(resp)
-            result = await wc_routes.connect_github(
-                wc_routes.ConnectGithubRequest(github_pat="ghp_real"),
-                request,
-                workspace={"id": uuid4()},
-            )
-        assert result.webhook_secret is not None
-
-    async def test_valid_pat_does_not_reissue_existing_webhook_secret(self):
-        request, conn = _make_request(fetchrow_return={"encrypted_github_webhook_secret": "already-set"})
-        resp = MagicMock(status_code=200)
-        with (
-            patch("api.routes.workspace_credentials.httpx.AsyncClient") as mock_cls,
-            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
-        ):
-            mock_cls.return_value = _httpx_ctx(resp)
-            result = await wc_routes.connect_github(
-                wc_routes.ConnectGithubRequest(github_pat="ghp_real"),
-                request,
-                workspace={"id": uuid4()},
-            )
-        assert result.webhook_secret is None
+        conn.execute.assert_not_awaited()
 
 
 class TestSetupAwsRole:
