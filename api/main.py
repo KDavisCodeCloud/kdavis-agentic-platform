@@ -73,9 +73,35 @@ logging.basicConfig(
 # Application lifespan — DB pool + LangGraph checkpointer
 # ──────────────────────────────────────────────
 
+def _write_kubeconfig_from_env() -> None:
+    """
+    agents/agent_08_drift_detection/tools.py's fetch_k8s_resource/
+    apply_k8s_manifest run `kubectl` as a subprocess -- kubectl reads its
+    config from the KUBECONFIG env var (a file path), not from env content
+    directly. Railway can't mount an arbitrary file into the container, so
+    this writes KUBECONFIG_YAML's raw content (set as a Railway env var,
+    holding a real cluster's kubeconfig -- e.g. a ServiceAccount token, not
+    a short-lived cloud-CLI-exec-plugin token) to a local file once at
+    startup and points KUBECONFIG at it. No-op if KUBECONFIG_YAML isn't set
+    (kubectl calls then fail with a clear "no configuration" error, same as
+    DriftTools' own allow_kubectl=False graceful-degradation path).
+    """
+    kubeconfig_yaml = os.environ.get("KUBECONFIG_YAML", "")
+    if not kubeconfig_yaml:
+        return
+    path = "/tmp/kubeconfig"
+    with open(path, "w") as f:
+        f.write(kubeconfig_yaml)
+    os.chmod(path, 0o600)
+    os.environ["KUBECONFIG"] = path
+    log.info("[API] KUBECONFIG written from KUBECONFIG_YAML env var")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Set up shared resources on startup; tear down on shutdown."""
+    _write_kubeconfig_from_env()
+
     database_url = os.environ.get("DATABASE_URL", "")
     if not database_url:
         raise EnvironmentError("DATABASE_URL not set")
