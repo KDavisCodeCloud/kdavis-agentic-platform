@@ -31,6 +31,7 @@ Return ONLY valid JSON. No markdown. No preamble.
     "allocation_ids": ["eipalloc-0abc"],
     "vm_names": [],
     "disk_names": [],
+    "resource_group": "",
     "instance_names": []
   },
   "options": [
@@ -118,6 +119,15 @@ Return ONLY valid JSON. No markdown. No preamble.
 - Unattached managed disks (`diskState: Unattached`)
 - Unused public IP addresses
 - Empty resource groups
+
+If any Azure resource goes into `quick_win_resources.vm_names` or
+`disk_names`, you MUST also set `quick_win_resources.resource_group` to
+that resource's resource group name (from the provided inventory) --
+applying a VM deallocate or disk delete requires it, and an empty value
+will fail against the real Azure API. If the inventory lists resources
+across more than one resource group, put only the resources from ONE
+resource group into quick_win_resources and note the rest in
+`recommendations` for manual handling instead.
 
 **Medium-effort wins**:
 - Right-size VMs using Azure Advisor recommendations
