@@ -77,3 +77,94 @@ class TestAksAlertWebhookCloudProviderLabeling:
         task = bg.tasks[0]
         cloud_provider_arg = task.args[-1]
         assert cloud_provider_arg == "azure"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# github_webhook -- per-workspace signature validation, fail closed
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Real bug this section guards against: the GitHub/Azure DevOps webhook
+# handlers validated against a single global env var
+# (GITHUB_WEBHOOK_SECRET/AZURE_DEVOPS_WEBHOOK_SECRET) and, worse, SKIPPED
+# validation entirely if that env var was unset ("if webhook_secret and not
+# _verify..."). Since migration 022 + PATCH /workspace/credentials/github
+# already mint and store a real per-workspace encrypted_github_webhook_secret,
+# the GitHub path now uses that instead and fails closed (403) when a
+# workspace hasn't configured one yet, rather than accepting any payload.
+
+import hashlib
+import hmac as _hmac
+from unittest.mock import patch as _patch
+
+import pytest
+from cryptography.fernet import Fernet as _Fernet
+from fastapi import HTTPException as _HTTPException
+
+_FERNET_KEY = _Fernet.generate_key().decode()
+
+
+def _make_request_with_headers(workspace_row: dict, body: dict, headers: dict) -> SimpleNamespace:
+    request = _make_request(workspace_row, body)
+    request.headers = headers
+    return request
+
+
+def _sign_github(payload_bytes: bytes, secret: str) -> str:
+    return "sha256=" + _hmac.new(secret.encode(), payload_bytes, hashlib.sha256).hexdigest()
+
+
+class TestGithubWebhookSignatureValidation:
+    async def test_rejects_when_no_secret_configured_for_workspace(self):
+        row = _workspace_row()
+        row["encrypted_github_webhook_secret"] = None
+        body = {"action": "completed", "workflow_run": {"conclusion": "failure", "id": 1}}
+        request = _make_request_with_headers(row, body, {
+            "X-GitHub-Event": "workflow_run",
+            "X-Hub-Signature-256": "sha256=irrelevant",
+        })
+        bg = BackgroundTasks()
+
+        with pytest.raises(_HTTPException) as exc:
+            await webhooks.github_webhook(request, bg, token="ws-token")
+
+        assert exc.value.status_code == 403
+
+    async def test_accepts_valid_signature_from_workspace_secret(self):
+        from security.encryption import encrypt
+
+        raw_secret = "real-workspace-secret"
+        row = _workspace_row()
+        with _patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            row["encrypted_github_webhook_secret"] = encrypt(raw_secret)
+
+            body = {"action": "completed", "workflow_run": {"conclusion": "failure", "id": 1}}
+            body_bytes = json.dumps(body).encode()
+            request = _make_request_with_headers(row, body, {
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": _sign_github(body_bytes, raw_secret),
+            })
+            bg = BackgroundTasks()
+
+            result = await webhooks.github_webhook(request, bg, token="ws-token")
+
+        assert result["status"] == "accepted"
+
+    async def test_rejects_wrong_signature(self):
+        from security.encryption import encrypt
+
+        raw_secret = "real-workspace-secret"
+        row = _workspace_row()
+        with _patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            row["encrypted_github_webhook_secret"] = encrypt(raw_secret)
+
+            body = {"action": "completed", "workflow_run": {"conclusion": "failure", "id": 1}}
+            request = _make_request_with_headers(row, body, {
+                "X-GitHub-Event": "workflow_run",
+                "X-Hub-Signature-256": "sha256=" + "0" * 64,
+            })
+            bg = BackgroundTasks()
+
+            with pytest.raises(_HTTPException) as exc:
+                await webhooks.github_webhook(request, bg, token="ws-token")
+
+        assert exc.value.status_code == 401
