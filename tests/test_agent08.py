@@ -414,6 +414,56 @@ class TestApplyK8sManifest:
         result = await no_kubectl.apply_k8s_manifest("apiVersion: apps/v1", "default")
         assert result["status"] == "skipped"
 
+    async def test_deletes_and_recreates_on_immutable_pod_field_rejection(self, tools):
+        # Real Kubernetes behavior, confirmed live against EKS: apply on an
+        # existing Pod whose command/env changed is rejected as immutable.
+        # The recovery path is delete-then-recreate, not --force (which
+        # timed out on Fargate pod deprovisioning in live testing).
+        apply_fail = AsyncMock()
+        apply_fail.returncode = 1
+        apply_fail.communicate = AsyncMock(return_value=(
+            b"", b'The Pod "crash-demo" is invalid: spec: Forbidden: pod updates may not change fields other than `spec.containers[*].image`'
+        ))
+        delete_ok = AsyncMock()
+        delete_ok.returncode = 0
+        delete_ok.communicate = AsyncMock(return_value=(b"pod \"crash-demo\" deleted", b""))
+        apply_ok = AsyncMock()
+        apply_ok.returncode = 0
+        apply_ok.communicate = AsyncMock(return_value=(b"pod/crash-demo created", b""))
+
+        with patch(
+            "agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+            side_effect=[apply_fail, delete_ok, apply_ok],
+        ) as mock_exec:
+            result = await tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        assert result["status"] == "ok"
+        assert "created" in result["stdout"]
+        assert mock_exec.call_count == 3
+        delete_cmd = mock_exec.call_args_list[1].args
+        assert "delete" in delete_cmd
+        assert "--wait=true" in " ".join(delete_cmd)
+
+    async def test_returns_delete_failure_without_retrying_apply(self, tools):
+        apply_fail = AsyncMock()
+        apply_fail.returncode = 1
+        apply_fail.communicate = AsyncMock(return_value=(
+            b"", b"pod updates may not change fields other than image"
+        ))
+        delete_fail = AsyncMock()
+        delete_fail.returncode = 1
+        delete_fail.communicate = AsyncMock(return_value=(b"", b"timed out waiting for deletion"))
+
+        with patch(
+            "agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+            side_effect=[apply_fail, delete_fail],
+        ) as mock_exec:
+            result = await tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        assert result["status"] == "failed"
+        assert "timed out waiting for deletion" in result["stderr"]
+        assert mock_exec.call_count == 2
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # DriftTools — create_drift_pr()

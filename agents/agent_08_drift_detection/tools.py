@@ -122,21 +122,7 @@ class DriftTools:
     # Correction tools (post-HITL only)
     # ──────────────────────────────────────────────
 
-    async def apply_k8s_manifest(
-        self,
-        manifest_yaml: str,
-        namespace: str = "default",
-    ) -> dict:
-        """
-        Apply a Kubernetes manifest to restore desired state.
-        Pipes manifest YAML via stdin — NEVER shell=True.
-        """
-        if not self.allow_kubectl:
-            return {"status": "skipped", "reason": "kubectl disabled for this workspace"}
-
-        cmd = f"kubectl apply -f - -n {namespace}"
-        log.info("[DriftTools] Applying K8s manifest to namespace=%s", namespace)
-
+    async def _run_kubectl(self, cmd: str, manifest_yaml: str) -> dict:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *shlex.split(cmd),
@@ -149,24 +135,68 @@ class DriftTools:
                 timeout=_MAX_KUBECTL_TIMEOUT,
             )
         except asyncio.TimeoutError:
-            return {
-                "status": "failed",
-                "error": f"kubectl apply timed out after {_MAX_KUBECTL_TIMEOUT}s",
-            }
+            return {"status": "failed", "exit_code": None, "stdout": "", "stderr": f"timed out after {_MAX_KUBECTL_TIMEOUT}s"}
         except (OSError, ValueError) as exc:
-            return {"status": "failed", "error": str(exc)}
+            return {"status": "failed", "exit_code": None, "stdout": "", "stderr": str(exc)}
 
         stdout = stdout_bytes.decode(errors="replace").strip()
         stderr = stderr_bytes.decode(errors="replace").strip()
         ok = proc.returncode == 0
-
-        log.info("[DriftTools] kubectl apply exit_code=%d", proc.returncode)
         return {
             "status": "ok" if ok else "failed",
             "exit_code": proc.returncode,
             "stdout": stdout[:2000],
             "stderr": stderr[:500],
         }
+
+    async def apply_k8s_manifest(
+        self,
+        manifest_yaml: str,
+        namespace: str = "default",
+    ) -> dict:
+        """
+        Apply a Kubernetes manifest to restore desired state.
+        Pipes manifest YAML via stdin — NEVER shell=True.
+        """
+        if not self.allow_kubectl:
+            return {"status": "skipped", "reason": "kubectl disabled for this workspace"}
+
+        log.info("[DriftTools] Applying K8s manifest to namespace=%s", namespace)
+        result = await self._run_kubectl(f"kubectl apply -f - -n {namespace}", manifest_yaml)
+
+        if result["status"] == "ok":
+            log.info("[DriftTools] kubectl apply exit_code=0 stdout=%s", result["stdout"])
+            return result
+
+        # Most Pod spec fields (command, env, image only excepted) are
+        # immutable once a Pod is created -- confirmed live against a real
+        # EKS cluster, the API server rejects the patch with exactly this
+        # message. `kubectl apply --force` (delete+recreate in one client
+        # call) timed out on Fargate because pod deprovisioning outlives
+        # kubectl's internal wait, so do the two steps explicitly instead,
+        # with our own bounded --timeout on the delete.
+        if "pod updates may not change fields" in result["stderr"]:
+            log.warning("[DriftTools] Pod spec change rejected as immutable -- deleting and recreating")
+            delete_result = await self._run_kubectl(
+                f"kubectl delete -f - -n {namespace} --wait=true --timeout={_MAX_KUBECTL_TIMEOUT}s",
+                manifest_yaml,
+            )
+            if delete_result["status"] != "ok":
+                log.warning("[DriftTools] kubectl delete (immutable-field fallback) exit_code=%s stderr=%s",
+                            delete_result["exit_code"], delete_result["stderr"])
+                return delete_result
+            result = await self._run_kubectl(f"kubectl apply -f - -n {namespace}", manifest_yaml)
+            if result["status"] == "ok":
+                log.info("[DriftTools] kubectl apply (post-delete recreate) exit_code=0 stdout=%s", result["stdout"])
+                return result
+
+        # stderr is the only place the real reason a real apply failed shows
+        # up -- execution_result isn't persisted anywhere (see core/hitl.py's
+        # mark_executed), so the log line is the only record once this
+        # returns. Found live: a bare exit_code with no stderr logged made a
+        # real failure undiagnosable after the fact.
+        log.warning("[DriftTools] kubectl apply exit_code=%s stderr=%s", result["exit_code"], result["stderr"])
+        return result
 
     async def create_drift_pr(
         self,
