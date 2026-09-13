@@ -5,11 +5,13 @@ import type {
   AuditSubmissionSummary, AuditSubmissionDetail,
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
   DraftSummary, DraftDetail, AzureServicePrincipalInput,
+  ConnectionsStatus, AwsRoleSetup,
 } from './types'
 import {
   getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
   getMockAgentStatus, mockConnectAgent, mockVerifyAgentRole,
   getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
+  getMockConnectionsStatus, mockConnectGithub, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
 } from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -642,7 +644,53 @@ export async function getComplianceReport(token: string): Promise<ComplianceRepo
   return result.report
 }
 
-// ── Health ─────────────────────────────────────────────────────────────
+// -- Workspace connections (core platform's own Agents 01/05/06/08 --
+// api/routes/workspace_credentials.py. Distinct from the FinOps/Compliance
+// functions above, which proxy to the separately-deployed satellite
+// products -- this is the platform's own per-workspace credential store,
+// migration 022) --------------------------------------------------------
+
+export async function getConnectionsStatus(token: string): Promise<ConnectionsStatus> {
+  if (MOCK_MODE) return getMockConnectionsStatus()
+  return request<ConnectionsStatus>('/workspace/credentials/status', token)
+}
+
+export async function connectGithubPat(
+  token: string,
+  githubPat: string,
+): Promise<{ status: string; webhook_secret: string | null }> {
+  if (MOCK_MODE) return mockConnectGithub()
+  return request<{ status: string; webhook_secret: string | null }>('/workspace/credentials/github', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ github_pat: githubPat }),
+  })
+}
+
+export async function setupAwsRole(token: string): Promise<AwsRoleSetup> {
+  if (MOCK_MODE) return mockSetupAwsRole()
+  return request<AwsRoleSetup>('/workspace/credentials/aws-role/setup', token, { method: 'POST' })
+}
+
+export async function connectAwsRole(token: string, roleArn: string): Promise<{ id: string }> {
+  if (MOCK_MODE) return mockConnectAwsRole()
+  return request<{ id: string }>('/workspace/credentials/aws-role', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ role_arn: roleArn }),
+  })
+}
+
+export async function connectAzureServicePrincipal(
+  token: string,
+  body: AzureServicePrincipalInput,
+): Promise<{ id: string }> {
+  if (MOCK_MODE) return mockConnectAzure()
+  return request<{ id: string }>('/workspace/credentials/azure', token, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+// -- Health ---------------------------------------------------------------
 
 export async function healthCheck(): Promise<boolean> {
   try {

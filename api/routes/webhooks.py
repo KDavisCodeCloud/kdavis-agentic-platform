@@ -30,6 +30,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 from core.token_budget import BudgetExceededError
+from security.encryption import decrypt
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -77,7 +78,7 @@ async def _get_workspace_from_token(db_pool, token: str) -> Optional[dict]:
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT id, stripe_subscription_status, product_tier, encrypted_llm_key, "
-            "company_name FROM workspaces WHERE workspace_token = $1",
+            "company_name, encrypted_github_webhook_secret FROM workspaces WHERE workspace_token = $1",
             token_hash,
         )
     return dict(row) if row else None
@@ -113,11 +114,18 @@ async def github_webhook(
     if not workspace:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid workspace token")
 
-    # Validate HMAC signature using workspace's github_webhook_secret
-    # For now the secret comes from env — per-workspace secrets are Phase 4
-    import os
-    webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-    if webhook_secret and not _verify_github_signature(payload_bytes, signature, webhook_secret):
+    # Validate HMAC signature using this workspace's own webhook secret
+    # (minted by PATCH /workspace/credentials/github, core/workspace_credentials.py).
+    # Fail closed: a workspace with no secret configured yet must reject
+    # webhooks, not silently skip validation -- found live, a global env var
+    # fallback meant an unset GITHUB_WEBHOOK_SECRET let ANY caller who knew a
+    # workspace's token forge webhook events for it.
+    encrypted_secret = workspace.get("encrypted_github_webhook_secret")
+    if not encrypted_secret:
+        log.warning("[Webhooks] No GitHub webhook secret configured for workspace %s", workspace["id"])
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webhook not configured for this workspace")
+    webhook_secret = decrypt(encrypted_secret)
+    if not _verify_github_signature(payload_bytes, signature, webhook_secret):
         log.warning("[Webhooks] GitHub signature validation failed for workspace %s", workspace["id"])
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
 
@@ -190,6 +198,13 @@ async def azure_devops_webhook(
     if not workspace:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid workspace token")
 
+    # KNOWN GAP, not fixed here: unlike GitHub (encrypted_github_webhook_secret,
+    # migration 022 + PATCH /workspace/credentials/github), there is no
+    # per-workspace Azure DevOps webhook secret column or connect route yet.
+    # This still validates against a single global env var and, same as
+    # GitHub's old behavior, silently skips validation if that var is unset.
+    # Needs its own migration + workspace_credentials.py addition before this
+    # can fail closed the same way the GitHub path now does.
     import os
     webhook_secret = os.environ.get("AZURE_DEVOPS_WEBHOOK_SECRET", "")
     if webhook_secret and not _verify_azure_signature(payload_bytes, auth_header, webhook_secret):

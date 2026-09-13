@@ -5,7 +5,9 @@ import type {
   AgentConnectionStatus,
   AuditSubmissionDetail,
   AuditSubmissionSummary,
+  AwsRoleSetup,
   ComplianceReportData,
+  ConnectionsStatus,
   FinOpsDashboardData,
   FinOpsHitlItem,
   Incident,
@@ -574,3 +576,42 @@ export function getMockComplianceReport(): ComplianceReportData {
   }
 }
 
+
+// ── Workspace connections (core platform's own Agents 01/05/06/08) ────────
+
+let _connectionsStatus: ConnectionsStatus = {
+  github_connected: false,
+  aws_connected: false,
+  azure_connected: false,
+}
+
+export function getMockConnectionsStatus(): ConnectionsStatus {
+  return _connectionsStatus
+}
+
+export function mockConnectGithub(): { status: string; webhook_secret: string | null } {
+  const firstTime = !_connectionsStatus.github_connected
+  _connectionsStatus = { ..._connectionsStatus, github_connected: true }
+  return { status: 'verified', webhook_secret: firstTime ? 'demo_whsec_' + Math.random().toString(36).slice(2) : null }
+}
+
+export function mockSetupAwsRole(): AwsRoleSetup {
+  return {
+    external_id: 'demo-external-id-' + Math.random().toString(36).slice(2, 10),
+    trust_policy: MOCK_SETUP.aws_trust_policy,
+    permissions_policy: MOCK_SETUP.aws_permissions_policy,
+    instructions:
+      "In AWS: create an IAM role using trust_policy as its trust relationship, and attach " +
+      "permissions_policy as an inline policy. Then call PATCH /workspace/credentials/aws-role with the role's ARN.",
+  }
+}
+
+export function mockConnectAwsRole(): { id: string } {
+  _connectionsStatus = { ..._connectionsStatus, aws_connected: true }
+  return { id: 'demo-workspace-001' }
+}
+
+export function mockConnectAzure(): { id: string } {
+  _connectionsStatus = { ..._connectionsStatus, azure_connected: true }
+  return { id: 'demo-workspace-001' }
+}
