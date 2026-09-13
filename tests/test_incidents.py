@@ -44,7 +44,7 @@ def _make_request(fetchrow_return: dict, execute_return=None, credentials_row=No
     return SimpleNamespace(app=app), conn
 
 
-def _incident_row(agent_id: str, workspace_id) -> dict:
+def _incident_row(agent_id: str, workspace_id, cloud_provider: str = "aws") -> dict:
     return {
         "id": uuid4(),
         "workspace_id": workspace_id,
@@ -52,6 +52,7 @@ def _incident_row(agent_id: str, workspace_id) -> dict:
         "execution_status": "pending_approval",
         "remediation_options": [{"id": "opt_1", "title": "Fix it", "description": "d"}],
         "estimated_duration_seconds": 30,
+        "cloud_provider": cloud_provider,
     }
 
 
@@ -132,6 +133,47 @@ class TestApproveDispatchesToCorrectWorkflow:
 
             MockWorkflow.assert_called_once()
             MockWorkflow.return_value.resume.assert_awaited_once()
+
+    async def test_agent08_resume_resolves_k8s_context_from_stored_cloud_provider(self):
+        # Real bug found live: resume() is a completely separate instantiation
+        # from run() (webhooks.py's _run_drift_detection) and had no idea which
+        # cluster an incident was about -- kubectl always fell back to
+        # KUBECONFIG's default context. An AKS incident's real "Apply
+        # Correction Directly" approval silently no-op'd against EKS instead.
+        # cloud_provider is already persisted on the incident row; resume must
+        # resolve k8s_context from it the same way run() does.
+        workspace_id = uuid4()
+        row = _incident_row("agent_08_drift_detection", workspace_id, cloud_provider="azure")
+        request, conn = _make_request(row)
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+        with (
+            patch.dict(incidents._WORKFLOW_CLASSES, {"agent_08_drift_detection": MockWorkflow}),
+            patch("api.routes.incidents.resolve_k8s_context", return_value="aks-demo") as mock_resolve,
+        ):
+            await _approve(request, str(row["id"]), workspace_id)
+            await _drain_background_tasks()
+
+        mock_resolve.assert_called_once_with("azure")
+        _, kwargs = MockWorkflow.call_args
+        assert kwargs["k8s_context"] == "aks-demo"
+
+    async def test_non_drift_credentialed_agent_resume_does_not_pass_k8s_context(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_06_finops", workspace_id, cloud_provider="azure")
+        request, conn = _make_request(row)
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+        with patch.dict(incidents._WORKFLOW_CLASSES, {"agent_06_finops": MockWorkflow}):
+            await _approve(request, str(row["id"]), workspace_id)
+            await _drain_background_tasks()
+
+        _, kwargs = MockWorkflow.call_args
+        assert "k8s_context" not in kwargs
 
     async def test_unknown_agent_id_raises_500_not_silent_fallback(self):
         workspace_id = uuid4()

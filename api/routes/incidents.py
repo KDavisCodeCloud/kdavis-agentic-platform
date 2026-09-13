@@ -42,7 +42,7 @@ from agents.agent_07_runbook.workflow import RunbookWorkflow
 from agents.agent_08_drift_detection.workflow import DriftWorkflow
 from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
-from core.workspace_credentials import build_agent_credentials
+from core.workspace_credentials import build_agent_credentials, resolve_k8s_context
 
 
 class IncidentRejectRequest(BaseModel):
@@ -149,7 +149,7 @@ async def approve_incident(
         row = await conn.fetchrow(
             """
             SELECT id, workspace_id, agent_id, execution_status, remediation_options,
-                   estimated_duration_seconds
+                   estimated_duration_seconds, cloud_provider
             FROM incidents
             WHERE id = $1 AND workspace_id = $2
             """,
@@ -248,6 +248,16 @@ async def approve_incident(
             async with db.acquire() as conn:
                 if row["agent_id"] in _CREDENTIALED_AGENTS:
                     creds = await build_agent_credentials(conn, str(workspace["id"]))
+                    if row["agent_id"] == "agent_08_drift_detection":
+                        # Resume is a separate instantiation from run() (webhooks.py's
+                        # _run_drift_detection) and previously had no idea which
+                        # cluster this incident was about -- kubectl always fell
+                        # back to KUBECONFIG's default context. Found live: an
+                        # AKS incident's real "Apply Correction Directly" approval
+                        # silently no-op'd against EKS instead. cloud_provider is
+                        # already persisted on the incident row (core/hitl.py's
+                        # create_incident), so resolve it the same way run() does.
+                        creds["k8s_context"] = resolve_k8s_context(row["cloud_provider"])
                     agent = workflow_cls(conn, str(workspace["id"]), checkpointer, **creds)
                 else:
                     agent = workflow_cls(conn, str(workspace["id"]), checkpointer)
