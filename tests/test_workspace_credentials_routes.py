@@ -170,3 +170,30 @@ class TestConnectAzure:
             )
         assert result.id == str(workspace_id)
         conn.execute.assert_awaited_once()
+
+
+class TestGetConnectionsStatus:
+    async def test_reflects_verified_at_columns_directly(self):
+        from datetime import datetime, timezone
+
+        workspace = {
+            "id": uuid4(),
+            "github_pat_verified_at": datetime.now(timezone.utc),
+            "aws_role_verified_at": None,
+            "azure_verified_at": datetime.now(timezone.utc),
+        }
+
+        result = await wc_routes.get_connections_status(workspace=workspace)
+
+        assert result.github_connected is True
+        assert result.aws_connected is False
+        assert result.azure_connected is True
+
+    async def test_all_false_when_nothing_configured(self):
+        workspace = {"id": uuid4()}
+
+        result = await wc_routes.get_connections_status(workspace=workspace)
+
+        assert result.github_connected is False
+        assert result.aws_connected is False
+        assert result.azure_connected is False

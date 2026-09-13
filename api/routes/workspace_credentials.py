@@ -85,7 +85,29 @@ class CredentialStatusResponse(BaseModel):
     status: str = "verified"
 
 
+class ConnectionsStatusResponse(BaseModel):
+    github_connected: bool
+    aws_connected: bool
+    azure_connected: bool
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.get("/status", response_model=ConnectionsStatusResponse)
+async def get_connections_status(
+    workspace: dict = Depends(get_workspace),
+) -> ConnectionsStatusResponse:
+    """
+    Read-only connection state for the Connections settings page. get_workspace
+    (api/middleware/auth.py) already selects every *_verified_at column used
+    here, so this needs no extra DB query.
+    """
+    return ConnectionsStatusResponse(
+        github_connected=bool(workspace.get("github_pat_verified_at")),
+        aws_connected=bool(workspace.get("aws_role_verified_at")),
+        azure_connected=bool(workspace.get("azure_verified_at")),
+    )
+
 
 @router.patch("/github", response_model=ConnectGithubResponse)
 async def connect_github(
