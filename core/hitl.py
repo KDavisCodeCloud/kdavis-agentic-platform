@@ -82,6 +82,13 @@ class HITLGate:
         raw_log_hash = hashlib.sha256(raw_log.encode()).hexdigest()
 
         if incident_id is not None:
+            # ON CONFLICT DO NOTHING: LangGraph re-executes a node's full
+            # function body from the top when resuming past an interrupt()
+            # call inside it (see agents/agent_01_cicd_triage/workflow.py's
+            # _hitl_gate_node) -- this INSERT runs a second time, with the
+            # exact same pre-generated id, on every resume. Without this
+            # guard that's a real UniqueViolationError found live. Idempotent
+            # by design: same id in means same logical incident, not a new one.
             row = await self._db.fetchrow(
                 """
                 INSERT INTO incidents (
@@ -89,6 +96,7 @@ class HITLGate:
                     parsed_error, remediation_options, execution_status,
                     tokens_used, estimated_duration_seconds
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (id) DO NOTHING
                 RETURNING id
                 """,
                 UUID(incident_id),
@@ -122,6 +130,13 @@ class HITLGate:
                 tokens_used,
                 estimated_duration_seconds,
             )
+        if row is None:
+            # ON CONFLICT DO NOTHING fired -- this incident already exists
+            # (a resumed hitl_gate_node re-running its pre-interrupt code).
+            # Same logical incident, not a new one: skip the audit/log noise
+            # a second "created" entry would add and just return the id.
+            return incident_id
+
         created_id = str(row["id"])
         self._write_audit_entry(workspace_id, agent_id, created_id, "created", tokens_used)
         log.info(f"[HITL] Incident {created_id} created — awaiting operator approval")

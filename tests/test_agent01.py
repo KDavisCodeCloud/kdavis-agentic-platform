@@ -844,6 +844,52 @@ class TestHITLGate:
         assert bound_id == incident_uuid
         assert result == str(incident_uuid)
 
+    async def test_create_incident_is_idempotent_on_conflict(self, gate, mock_db, incident_uuid):
+        """Regression test: LangGraph re-executes a node's full function
+        body from the top on every resume past an interrupt() call inside
+        it -- create_incident() gets called a SECOND time with the exact
+        same pre-generated id. Found live: this raised a real
+        asyncpg.exceptions.UniqueViolationError before ON CONFLICT DO
+        NOTHING was added. The second call must return the same id, not
+        raise and not create a duplicate 'created' audit entry."""
+        # First call: real insert, RETURNING id yields a row.
+        mock_db.fetchrow.return_value = {"id": incident_uuid}
+        first_result = await gate.create_incident(
+            incident_id=str(incident_uuid),
+            workspace_id=str(uuid4()),
+            agent_id="agent_01_cicd_triage",
+            raw_log="log",
+            parsed_error="error",
+            remediation_options=[],
+        )
+        assert first_result == str(incident_uuid)
+
+        # Second call, same id: ON CONFLICT DO NOTHING means no row is
+        # returned -- must not raise, must return the same id.
+        mock_db.fetchrow.return_value = None
+        second_result = await gate.create_incident(
+            incident_id=str(incident_uuid),
+            workspace_id=str(uuid4()),
+            agent_id="agent_01_cicd_triage",
+            raw_log="log",
+            parsed_error="error",
+            remediation_options=[],
+        )
+        assert second_result == str(incident_uuid)
+
+    async def test_create_incident_insert_uses_on_conflict_do_nothing(self, gate, mock_db, incident_uuid):
+        mock_db.fetchrow.return_value = {"id": incident_uuid}
+        await gate.create_incident(
+            incident_id=str(incident_uuid),
+            workspace_id=str(uuid4()),
+            agent_id="agent_01_cicd_triage",
+            raw_log="log",
+            parsed_error="error",
+            remediation_options=[],
+        )
+        query = mock_db.fetchrow.call_args.args[0]
+        assert "ON CONFLICT (id) DO NOTHING" in query
+
     async def test_create_incident_without_explicit_id_lets_db_generate_one(self, gate, mock_db, incident_uuid):
         """Backward-compatible path: omitting incident_id keeps the original
         DB-default-generated-id behavior."""
