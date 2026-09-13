@@ -823,6 +823,41 @@ class TestHITLGate:
         expected_hash = hashlib.sha256(raw_log.encode()).hexdigest()
         assert expected_hash in str(call_args)
 
+    async def test_create_incident_with_explicit_id_inserts_that_exact_id(self, gate, mock_db, incident_uuid):
+        """Regression test: every agent's run() pre-generates an id and uses
+        it as BOTH the LangGraph checkpoint thread_id and the incidents.id
+        row, so resume(incident_id, ...) can find the right checkpoint.
+        Passing incident_id must make the INSERT use that exact id, not a
+        DB-generated one."""
+        mock_db.fetchrow.return_value = {"id": incident_uuid}
+        result = await gate.create_incident(
+            incident_id=str(incident_uuid),
+            workspace_id=str(uuid4()),
+            agent_id="agent_01_cicd_triage",
+            raw_log="log",
+            parsed_error="error",
+            remediation_options=[],
+        )
+        query, bound_id, *_ = mock_db.fetchrow.call_args.args
+        assert "INSERT INTO incidents" in query
+        assert "id, workspace_id" in query  # explicit-id INSERT includes the id column
+        assert bound_id == incident_uuid
+        assert result == str(incident_uuid)
+
+    async def test_create_incident_without_explicit_id_lets_db_generate_one(self, gate, mock_db, incident_uuid):
+        """Backward-compatible path: omitting incident_id keeps the original
+        DB-default-generated-id behavior."""
+        mock_db.fetchrow.return_value = {"id": incident_uuid}
+        await gate.create_incident(
+            workspace_id=str(uuid4()),
+            agent_id="agent_01_cicd_triage",
+            raw_log="log",
+            parsed_error="error",
+            remediation_options=[],
+        )
+        query = mock_db.fetchrow.call_args.args[0]
+        assert "id, workspace_id" not in query
+
     async def test_approve_incident_sets_executing_for_valid_option(
         self, gate, mock_db, incident_uuid
     ):

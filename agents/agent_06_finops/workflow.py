@@ -263,7 +263,9 @@ class FinOpsWorkflow(BaseAgent):
             "resource_inventory": sanitized_inv.sanitized_text,
             "total_spend": total_spend,
             "tokens_used": 0,
-            "incident_id": None,
+            # incident_id intentionally NOT returned here -- it's pre-seeded
+            # in run()'s initial_state (== the LangGraph thread_id) and must
+            # survive this node's update untouched, not get reset to None.
             "parsed_error": None,
             "cost_report": None,
             "recommendations": None,
@@ -361,6 +363,7 @@ class FinOpsWorkflow(BaseAgent):
         )
 
         incident_id = await self.hitl.create_incident(
+            incident_id=state["incident_id"],
             workspace_id=self.workspace_id,
             agent_id=self.agent_id,
             raw_log=raw_log,
@@ -492,6 +495,12 @@ class FinOpsWorkflow(BaseAgent):
         """
         import uuid
 
+        # Pre-generate the id BEFORE invoking the graph and use it as BOTH the
+        # LangGraph checkpoint thread_id AND the incidents.id row (see
+        # agents/agent_01_cicd_triage/workflow.py's run() for the full
+        # explanation of the real bug this fixes).
+        thread_id = str(uuid.uuid4())
+
         initial_state: FinOpsState = {
             "workspace_id": self.workspace_id,
             "cloud_provider": cloud_provider,
@@ -503,7 +512,7 @@ class FinOpsWorkflow(BaseAgent):
             "cost_data_summary": "",
             "resource_inventory": "",
             "total_spend": 0.0,
-            "incident_id": None,
+            "incident_id": thread_id,
             "parsed_error": None,
             "cost_report": None,
             "recommendations": None,
@@ -517,26 +526,14 @@ class FinOpsWorkflow(BaseAgent):
             "error": None,
         }
 
-        thread_id = str(uuid.uuid4())
-        config    = {"configurable": {"thread_id": thread_id}}
+        config = {"configurable": {"thread_id": thread_id}}
 
         log.info("[Agent06] Starting FinOps workflow — thread_id=%s", thread_id)
 
-        result = await self._graph.ainvoke(initial_state, config=config)
+        await self._graph.ainvoke(initial_state, config=config)
 
-        interrupt_data = None
-        for task in (self._graph.get_state(config).tasks or []):
-            if hasattr(task, "interrupts") and task.interrupts:
-                interrupt_data = task.interrupts[0].value
-                break
-
-        incident_id = (
-            interrupt_data.get("incident_id") if interrupt_data
-            else result.get("incident_id", thread_id)
-        )
-
-        log.info("[Agent06] Workflow paused at HITL gate — incident_id=%s", incident_id)
-        return incident_id
+        log.info("[Agent06] Workflow paused at HITL gate — incident_id=%s", thread_id)
+        return thread_id
 
     async def resume(self, thread_id: str, selected_option: dict) -> dict:
         """Resume the paused workflow after operator approval."""

@@ -208,7 +208,9 @@ class CICDTriageWorkflow(BaseAgent):
             "log_excerpt": sanitized.sanitized_text,
             "pr_number": pr_number,
             "tokens_used": 0,
-            "incident_id": None,
+            # incident_id intentionally NOT returned here -- it's pre-seeded
+            # in run()'s initial_state (== the LangGraph thread_id) and must
+            # survive this node's update untouched, not get reset to None.
             "parsed_error": None,
             "remediation_options": None,
             "estimated_duration_seconds": None,
@@ -275,8 +277,11 @@ class CICDTriageWorkflow(BaseAgent):
             log.error("[Agent01] Skipping HITL gate due to upstream error: %s", state["error"])
             return {}
 
-        # Save incident to DB before pausing
+        # Save incident to DB before pausing -- incident_id is pre-generated
+        # in run() and equals the LangGraph checkpoint thread_id (see run()'s
+        # comment for why these must be the same value).
         incident_id = await self.hitl.create_incident(
+            incident_id=state["incident_id"],
             workspace_id=self.workspace_id,
             agent_id=self.agent_id,
             raw_log=state["log_excerpt"],
@@ -376,6 +381,19 @@ class CICDTriageWorkflow(BaseAgent):
         Trigger the triage workflow from a webhook payload.
         Returns immediately with incident_id after the HITL gate pause.
         """
+        # Pre-generate the id BEFORE invoking the graph and use it as BOTH the
+        # LangGraph checkpoint thread_id AND the incidents.id row -- these
+        # must be the exact same value. Previously they were two independent
+        # random UUIDs (thread_id here, incident_id generated later inside
+        # hitl_gate_node by the DB's own default), so resume(incident_id, ...)
+        # always looked up a checkpoint under an id the graph was never
+        # invoked with, and LangGraph silently treated it as a fresh
+        # __start__ invocation instead of a real resume. A real bug, found
+        # live: this path had never actually been exercised end-to-end
+        # before this session's real webhook -> approve -> resume test.
+        import uuid
+        thread_id = str(uuid.uuid4())
+
         initial_state: CICDTriageState = {
             "workspace_id": self.workspace_id,
             "cloud_provider": cloud_provider,
@@ -387,7 +405,7 @@ class CICDTriageWorkflow(BaseAgent):
             "owner_or_org": "",
             "log_excerpt": "",
             "pr_number": None,
-            "incident_id": None,
+            "incident_id": thread_id,
             "parsed_error": None,
             "remediation_options": None,
             "estimated_duration_seconds": None,
@@ -397,31 +415,15 @@ class CICDTriageWorkflow(BaseAgent):
             "error": None,
         }
 
-        # Generate a unique thread ID for this workflow run
-        import uuid
-        thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
 
         log.info("[Agent01] Starting triage workflow — thread_id=%s", thread_id)
 
         # Run until the interrupt() pause in hitl_gate_node
-        result = await self._graph.ainvoke(initial_state, config=config)
+        await self._graph.ainvoke(initial_state, config=config)
 
-        # The thread_id IS the incident tracking key for resume
-        # The actual incident_id is stored in the graph state after hitl_gate runs
-        interrupt_data = None
-        for task in (self._graph.get_state(config).tasks or []):
-            if hasattr(task, "interrupts") and task.interrupts:
-                interrupt_data = task.interrupts[0].value
-                break
-
-        incident_id = (
-            interrupt_data.get("incident_id") if interrupt_data
-            else result.get("incident_id", thread_id)
-        )
-
-        log.info("[Agent01] Workflow paused at HITL gate — incident_id=%s", incident_id)
-        return incident_id
+        log.info("[Agent01] Workflow paused at HITL gate — incident_id=%s", thread_id)
+        return thread_id
 
     async def resume(self, thread_id: str, selected_option: dict) -> dict:
         """

@@ -62,36 +62,70 @@ class HITLGate:
         cloud_provider: Optional[str] = None,
         tokens_used: int = 0,
         estimated_duration_seconds: Optional[int] = None,
+        incident_id: Optional[str] = None,
     ) -> str:
         """
         Persist a new incident in pending_approval state and write to audit log.
         Returns the incident UUID string.
+
+        incident_id: pass the same UUID the caller is using as the LangGraph
+        checkpoint thread_id (every agent's run() pre-generates one) so the
+        DB row's id and the graph's thread_id are the SAME value -- without
+        this, resume(incident_id, ...) looks up a checkpoint under an id the
+        graph was never actually invoked with, and LangGraph silently treats
+        the resume as a fresh __start__ invocation instead (a real, previously
+        undiscovered bug found live: every agent's approve->resume path was
+        broken this way since none of them had ever been exercised for real
+        until this session's live end-to-end test). If omitted, the database
+        generates one as before -- kept optional for any other caller.
         """
         raw_log_hash = hashlib.sha256(raw_log.encode()).hexdigest()
 
-        row = await self._db.fetchrow(
-            """
-            INSERT INTO incidents (
-                workspace_id, agent_id, cloud_provider, raw_log_hash,
-                parsed_error, remediation_options, execution_status,
-                tokens_used, estimated_duration_seconds
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING id
-            """,
-            workspace_id,
-            agent_id,
-            cloud_provider,
-            raw_log_hash,
-            parsed_error,
-            json.dumps(remediation_options),
-            STATUS_PENDING,
-            tokens_used,
-            estimated_duration_seconds,
-        )
-        incident_id = str(row["id"])
-        self._write_audit_entry(workspace_id, agent_id, incident_id, "created", tokens_used)
-        log.info(f"[HITL] Incident {incident_id} created — awaiting operator approval")
-        return incident_id
+        if incident_id is not None:
+            row = await self._db.fetchrow(
+                """
+                INSERT INTO incidents (
+                    id, workspace_id, agent_id, cloud_provider, raw_log_hash,
+                    parsed_error, remediation_options, execution_status,
+                    tokens_used, estimated_duration_seconds
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING id
+                """,
+                UUID(incident_id),
+                workspace_id,
+                agent_id,
+                cloud_provider,
+                raw_log_hash,
+                parsed_error,
+                json.dumps(remediation_options),
+                STATUS_PENDING,
+                tokens_used,
+                estimated_duration_seconds,
+            )
+        else:
+            row = await self._db.fetchrow(
+                """
+                INSERT INTO incidents (
+                    workspace_id, agent_id, cloud_provider, raw_log_hash,
+                    parsed_error, remediation_options, execution_status,
+                    tokens_used, estimated_duration_seconds
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING id
+                """,
+                workspace_id,
+                agent_id,
+                cloud_provider,
+                raw_log_hash,
+                parsed_error,
+                json.dumps(remediation_options),
+                STATUS_PENDING,
+                tokens_used,
+                estimated_duration_seconds,
+            )
+        created_id = str(row["id"])
+        self._write_audit_entry(workspace_id, agent_id, created_id, "created", tokens_used)
+        log.info(f"[HITL] Incident {created_id} created — awaiting operator approval")
+        return created_id
 
     async def get_approved_option(self, incident_id: str) -> Optional[dict]:
         """
