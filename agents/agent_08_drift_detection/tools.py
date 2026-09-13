@@ -55,12 +55,24 @@ class DriftTools:
         github_token: Optional[str] = None,
         allow_kubectl: bool = True,
         aws_session=None,
+        k8s_context: Optional[str] = None,
     ):
         # No env-var fallback for github_token/aws_session -- per-workspace
         # now (core/workspace_credentials.py).
         self.github_token  = github_token or ""
         self.allow_kubectl = allow_kubectl
         self.aws_session   = aws_session
+        # Which kubeconfig context to target. Without this, kubectl silently
+        # uses KUBECONFIG's current-context for every cluster regardless of
+        # which one an incident is actually about -- found live: an AKS
+        # incident's "apply directly" reported exit_code=0 "unchanged"
+        # because it had applied against EKS (the kubeconfig's default
+        # context) the whole time, doing nothing to the actually-broken pod.
+        self.k8s_context   = k8s_context
+
+    @property
+    def _context_flag(self) -> str:
+        return f" --context {self.k8s_context}" if self.k8s_context else ""
 
     # ──────────────────────────────────────────────
     # Optional state fetchers (pre-HITL, read-only)
@@ -79,7 +91,7 @@ class DriftTools:
         if not self.allow_kubectl:
             return {"error": "kubectl disabled for this workspace"}
 
-        cmd = f"kubectl get {resource_type} {name} -n {namespace} -o json"
+        cmd = f"kubectl{self._context_flag} get {resource_type} {name} -n {namespace} -o json"
         try:
             proc = await asyncio.create_subprocess_exec(
                 *shlex.split(cmd),
@@ -161,8 +173,8 @@ class DriftTools:
         if not self.allow_kubectl:
             return {"status": "skipped", "reason": "kubectl disabled for this workspace"}
 
-        log.info("[DriftTools] Applying K8s manifest to namespace=%s", namespace)
-        result = await self._run_kubectl(f"kubectl apply -f - -n {namespace}", manifest_yaml)
+        log.info("[DriftTools] Applying K8s manifest to namespace=%s context=%s", namespace, self.k8s_context or "(default)")
+        result = await self._run_kubectl(f"kubectl{self._context_flag} apply -f - -n {namespace}", manifest_yaml)
 
         if result["status"] == "ok":
             log.info("[DriftTools] kubectl apply exit_code=0 stdout=%s", result["stdout"])
@@ -178,14 +190,14 @@ class DriftTools:
         if "pod updates may not change fields" in result["stderr"]:
             log.warning("[DriftTools] Pod spec change rejected as immutable -- deleting and recreating")
             delete_result = await self._run_kubectl(
-                f"kubectl delete -f - -n {namespace} --wait=true --timeout={_MAX_KUBECTL_TIMEOUT}s",
+                f"kubectl{self._context_flag} delete -f - -n {namespace} --wait=true --timeout={_MAX_KUBECTL_TIMEOUT}s",
                 manifest_yaml,
             )
             if delete_result["status"] != "ok":
                 log.warning("[DriftTools] kubectl delete (immutable-field fallback) exit_code=%s stderr=%s",
                             delete_result["exit_code"], delete_result["stderr"])
                 return delete_result
-            result = await self._run_kubectl(f"kubectl apply -f - -n {namespace}", manifest_yaml)
+            result = await self._run_kubectl(f"kubectl{self._context_flag} apply -f - -n {namespace}", manifest_yaml)
             if result["status"] == "ok":
                 log.info("[DriftTools] kubectl apply (post-delete recreate) exit_code=0 stdout=%s", result["stdout"])
                 return result

@@ -26,6 +26,7 @@ from core.workspace_credentials import (
     build_trust_policy,
     generate_external_id,
     get_azure_bearer_token,
+    resolve_k8s_context,
     verify_role,
     verify_service_principal,
 )
@@ -49,6 +50,25 @@ class TestGenerateExternalId:
         a, b = generate_external_id(), generate_external_id()
         assert a != b
         assert len(a) > 16
+
+
+class TestResolveK8sContext:
+    def test_maps_aws_via_env_var(self):
+        with patch.dict("os.environ", {"K8S_CONTEXT_AWS": "eks-demo"}, clear=False):
+            assert resolve_k8s_context("aws") == "eks-demo"
+
+    def test_maps_azure_via_env_var(self):
+        with patch.dict("os.environ", {"K8S_CONTEXT_AZURE": "aks-demo"}, clear=False):
+            assert resolve_k8s_context("azure") == "aks-demo"
+
+    def test_returns_none_when_env_var_unset(self):
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("K8S_CONTEXT_GCP", None)
+            assert resolve_k8s_context("gcp") is None
+
+    def test_returns_none_for_unknown_provider(self):
+        assert resolve_k8s_context("oracle-cloud") is None
 
 
 class TestBuildTrustPolicy:

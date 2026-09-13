@@ -168,10 +168,11 @@ class DriftWorkflow(BaseAgent):
         github_token: Optional[str] = None,
         aws_session=None,
         azure_access_token: Optional[str] = None,  # unused -- Agent 08's AWS path is CloudFormation, not ARM
+        k8s_context: Optional[str] = None,
     ):
         super().__init__(db_conn, workspace_id)
         self._checkpointer    = checkpointer
-        self._tools           = DriftTools(github_token=github_token, aws_session=aws_session)
+        self._tools           = DriftTools(github_token=github_token, aws_session=aws_session, k8s_context=k8s_context)
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph           = self._build_graph()
 

@@ -71,6 +71,24 @@ _PERMISSIONS_POLICY_ACTIONS = [
 ]
 
 
+def resolve_k8s_context(cloud_provider: str) -> Optional[str]:
+    """
+    Maps a drift-detection payload's cloud_provider to a kubeconfig context
+    name, via K8S_CONTEXT_AWS / K8S_CONTEXT_AZURE / K8S_CONTEXT_GCP env vars.
+
+    Stopgap, not the real per-workspace multi-cluster model: today's
+    KUBECONFIG_YAML (api/main.py's _write_kubeconfig_from_env) is one global
+    kubeconfig for the whole platform, not per-workspace. Without this
+    resolver, kubectl always uses KUBECONFIG's current-context regardless of
+    which cluster an incident is actually about -- found live: an AKS
+    incident's "apply directly" silently ran against EKS instead (both
+    contexts happened to exist in the same file) and reported false success.
+    Real per-workspace, per-cluster credential storage is tracked separately.
+    """
+    env_var = {"aws": "K8S_CONTEXT_AWS", "azure": "K8S_CONTEXT_AZURE", "gcp": "K8S_CONTEXT_GCP"}.get(cloud_provider)
+    return os.environ.get(env_var) if env_var else None
+
+
 def generate_external_id() -> str:
     return secrets.token_urlsafe(24)
 

@@ -414,6 +414,59 @@ class TestApplyK8sManifest:
         result = await no_kubectl.apply_k8s_manifest("apiVersion: apps/v1", "default")
         assert result["status"] == "skipped"
 
+    async def test_uses_default_context_when_none_configured(self, tools):
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"pod/x unchanged", b""))
+
+        with patch("agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+                   return_value=mock_proc) as mock_exec:
+            await tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        cmd_args = mock_exec.call_args.args
+        assert "--context" not in cmd_args
+
+    async def test_passes_context_flag_when_configured(self):
+        # Real bug found live: without --context, kubectl silently uses
+        # KUBECONFIG's current-context for every cluster regardless of
+        # which one an incident is about -- an AKS "apply directly" ran
+        # against EKS instead and reported false success.
+        scoped_tools = DriftTools(allow_kubectl=True, k8s_context="aks-demo")
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"pod/crash-demo configured", b""))
+
+        with patch("agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+                   return_value=mock_proc) as mock_exec:
+            await scoped_tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        cmd_args = mock_exec.call_args.args
+        assert "--context" in cmd_args
+        assert "aks-demo" in cmd_args
+
+    async def test_context_flag_also_applied_on_immutable_field_fallback(self):
+        scoped_tools = DriftTools(allow_kubectl=True, k8s_context="aks-demo")
+        apply_fail = AsyncMock()
+        apply_fail.returncode = 1
+        apply_fail.communicate = AsyncMock(return_value=(b"", b"pod updates may not change fields other than image"))
+        delete_ok = AsyncMock()
+        delete_ok.returncode = 0
+        delete_ok.communicate = AsyncMock(return_value=(b"pod deleted", b""))
+        apply_ok = AsyncMock()
+        apply_ok.returncode = 0
+        apply_ok.communicate = AsyncMock(return_value=(b"pod/crash-demo created", b""))
+
+        with patch(
+            "agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+            side_effect=[apply_fail, delete_ok, apply_ok],
+        ) as mock_exec:
+            result = await scoped_tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        assert result["status"] == "ok"
+        for call in mock_exec.call_args_list:
+            assert "--context" in call.args
+            assert "aks-demo" in call.args
+
     async def test_deletes_and_recreates_on_immutable_pod_field_rejection(self, tools):
         # Real Kubernetes behavior, confirmed live against EKS: apply on an
         # existing Pod whose command/env changed is rejected as immutable.

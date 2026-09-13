@@ -594,7 +594,7 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
     Agent 08 is always manually triggered or CI-scheduled — no inbound webhook calls this directly.
     """
     from agents.agent_08_drift_detection.workflow import DriftWorkflow
-    from core.workspace_credentials import build_agent_credentials
+    from core.workspace_credentials import build_agent_credentials, resolve_k8s_context
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -606,7 +606,8 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
             await compliance.assert_agent_permitted(workspace_id, "agent_08_drift_detection", cloud_provider)
 
             creds = await build_agent_credentials(conn, workspace_id)
-            agent = DriftWorkflow(conn, workspace_id, checkpointer, **creds)
+            k8s_context = resolve_k8s_context(cloud_provider)
+            agent = DriftWorkflow(conn, workspace_id, checkpointer, **creds, k8s_context=k8s_context)
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 08 drift detection complete — workspace=%s incident=%s",
