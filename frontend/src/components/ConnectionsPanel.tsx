@@ -6,13 +6,13 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle } from 'lucide-react'
+import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle, Key, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CodeBlock } from '@/components/ui/code-block'
 import { cn } from '@/lib/utils'
 import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
-  connectAzureDevOps, connectK8sCluster,
+  connectAzureDevOps, connectK8sCluster, saveLlmKey,
 } from '@/lib/api'
 import type { ConnectionsStatus, AwsRoleSetup } from '@/lib/types'
 
@@ -101,6 +101,13 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [k8sToken, setK8sToken] = useState('')
   const [k8sCaCert, setK8sCaCert] = useState('')
   const [k8sBusy, setK8sBusy] = useState(false)
+
+  // LLM key (BYOK) -- previously only settable via the disconnected/stale
+  // OnboardingWizard, which re-creates a whole new workspace if reached from
+  // an already-logged-in session. This is the real, safe home for it.
+  const [llmProvider, setLlmProvider] = useState<'anthropic' | 'openai'>('anthropic')
+  const [llmApiKey, setLlmApiKey] = useState('')
+  const [llmBusy, setLlmBusy] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -214,6 +221,20 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
     }
   }
 
+  async function handleSaveLlmKey() {
+    setLlmBusy(true)
+    setError(null)
+    try {
+      await saveLlmKey(token, llmProvider, llmApiKey.trim())
+      setLlmApiKey('')
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not save that LLM key')
+    } finally {
+      setLlmBusy(false)
+    }
+  }
+
   if (loading || !status) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -249,13 +270,26 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
           description="The Cloud Decoded GitHub App -- fine-grained, revocable access to read IaC files and open remediation PRs. Commits are attributed to Cloud Decoded, not a personal token."
           connected={status.github_connected}
         >
+          {status.github_via_legacy_pat && (
+            <div className="mb-3 flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Still connected via a legacy personal access token. Install the GitHub App instead for
+                fine-grained, revocable access and commits attributed to Cloud Decoded.
+              </span>
+            </div>
+          )}
           <Button
             size="sm"
             disabled={githubBusy}
             loading={githubBusy}
             onClick={handleInstallGithubApp}
           >
-            {status.github_connected ? 'Reinstall / manage on GitHub' : 'Install the Cloud Decoded GitHub App'}
+            {status.github_via_legacy_pat
+              ? 'Migrate to the GitHub App'
+              : status.github_connected
+                ? 'Reinstall / manage on GitHub'
+                : 'Install the Cloud Decoded GitHub App'}
           </Button>
         </SectionCard>
 
@@ -426,6 +460,47 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
             >
               {status.k8s_connected ? 'Update' : 'Verify'}
             </Button>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          icon={Key}
+          title="LLM Key"
+          description="Bring your own LLM API key (Anthropic or OpenAI). Encrypted at rest, decrypted only for the duration of the call that needs it."
+          connected={status.llm_configured}
+        >
+          {status.llm_configured && (
+            <p className="mb-3 text-xs text-zinc-500">
+              Currently using <span className="font-mono text-zinc-300">{status.llm_provider}</span>. Save a new
+              key below to replace it.
+            </p>
+          )}
+          <div className="space-y-2">
+            <select
+              value={llmProvider}
+              onChange={e => setLlmProvider(e.target.value as 'anthropic' | 'openai')}
+              className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-200 focus:border-blue-500/60 focus:outline-none"
+            >
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+            </select>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={llmApiKey}
+                onChange={e => setLlmApiKey(e.target.value)}
+                placeholder={llmProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
+                className="flex-1 rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <Button
+                size="sm"
+                disabled={llmBusy || !llmApiKey.trim()}
+                loading={llmBusy}
+                onClick={handleSaveLlmKey}
+              >
+                {status.llm_configured ? 'Update' : 'Save'}
+              </Button>
+            </div>
           </div>
         </SectionCard>
       </div>

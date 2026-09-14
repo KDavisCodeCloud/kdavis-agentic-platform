@@ -75,7 +75,9 @@ class TestCreateWorkspace:
         request, conn = _make_app_with_db(fetchrow_result={"id": fake_id})
 
         result = await workspaces.create_workspace(
-            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering", contact_email="ops@acme.com"),
+            workspaces.CreateWorkspaceRequest(
+                company_name="Acme Engineering", contact_email="ops@acme.com", tos_accepted=True,
+            ),
             request,
         )
 
@@ -85,6 +87,7 @@ class TestCreateWorkspace:
 
         sql, company_name, token_hash, contact_email = conn.fetchrow.await_args.args
         assert "INSERT INTO workspaces" in sql
+        assert "tos_accepted_at" in sql
         assert company_name == "Acme Engineering"
         assert token_hash == _hash_token(result.workspace_token)
         # never store the raw token
@@ -93,22 +96,36 @@ class TestCreateWorkspace:
 
     async def test_missing_company_name_fails_validation(self):
         with pytest.raises(ValidationError):
-            workspaces.CreateWorkspaceRequest(contact_email="ops@acme.com")
+            workspaces.CreateWorkspaceRequest(contact_email="ops@acme.com", tos_accepted=True)
 
     async def test_missing_contact_email_fails_validation(self):
         with pytest.raises(ValidationError):
-            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering")
+            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering", tos_accepted=True)
 
     async def test_invalid_contact_email_fails_validation(self):
         with pytest.raises(ValidationError):
-            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering", contact_email="not-an-email")
+            workspaces.CreateWorkspaceRequest(
+                company_name="Acme Engineering", contact_email="not-an-email", tos_accepted=True,
+            )
+
+    async def test_missing_tos_accepted_fails_validation(self):
+        with pytest.raises(ValidationError):
+            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering", contact_email="ops@acme.com")
+
+    async def test_tos_accepted_false_fails_validation(self):
+        with pytest.raises(ValidationError):
+            workspaces.CreateWorkspaceRequest(
+                company_name="Acme Engineering", contact_email="ops@acme.com", tos_accepted=False,
+            )
 
     async def test_contact_email_normalized_lowercase_and_trimmed(self):
         fake_id = uuid4()
         request, conn = _make_app_with_db(fetchrow_result={"id": fake_id})
 
         await workspaces.create_workspace(
-            workspaces.CreateWorkspaceRequest(company_name="Acme", contact_email="  OPS@Acme.COM  "),
+            workspaces.CreateWorkspaceRequest(
+                company_name="Acme", contact_email="  OPS@Acme.COM  ", tos_accepted=True,
+            ),
             request,
         )
 

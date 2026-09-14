@@ -55,6 +55,11 @@ def _generate_raw_token() -> str:
 class CreateWorkspaceRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=255)
     contact_email: str = Field(..., min_length=3, max_length=255)
+    tos_accepted: bool = Field(
+        ...,
+        description="Must be true -- the signup checkbox's state now actually reaches the backend "
+        "(previously collected client-side and discarded). See migration 028.",
+    )
 
     @field_validator("contact_email")
     @classmethod
@@ -62,6 +67,13 @@ class CreateWorkspaceRequest(BaseModel):
         v = v.strip().lower()
         if not _EMAIL_RE.match(v):
             raise ValueError("contact_email is not a valid email address")
+        return v
+
+    @field_validator("tos_accepted")
+    @classmethod
+    def _must_accept(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("tos_accepted must be true — the Terms of Service must be accepted to create a workspace")
         return v
 
 
@@ -94,8 +106,8 @@ async def create_workspace(
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO workspaces (company_name, workspace_token, contact_email)
-            VALUES ($1, $2, $3)
+            INSERT INTO workspaces (company_name, workspace_token, contact_email, tos_accepted_at)
+            VALUES ($1, $2, $3, NOW())
             RETURNING id
             """,
             body.company_name,

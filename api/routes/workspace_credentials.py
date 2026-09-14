@@ -122,10 +122,13 @@ class CredentialStatusResponse(BaseModel):
 
 class ConnectionsStatusResponse(BaseModel):
     github_connected: bool
+    github_via_legacy_pat: bool
     aws_connected: bool
     azure_connected: bool
     azure_devops_connected: bool
     k8s_connected: bool
+    llm_configured: bool
+    llm_provider: str | None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -138,13 +141,23 @@ async def get_connections_status(
     Read-only connection state for the Connections settings page. get_workspace
     (api/middleware/auth.py) already selects every *_verified_at column used
     here, so this needs no extra DB query.
+
+    github_via_legacy_pat: true only when GitHub access is still the retired
+    PAT path with no App installation on top of it -- surfaced so the
+    dashboard can nudge these workspaces to migrate (GAPS.md: legacy PAT
+    workspaces had no prompted migration to the App).
     """
+    has_app = bool(workspace.get("github_app_installation_id"))
+    has_pat = bool(workspace.get("github_pat_verified_at"))
     return ConnectionsStatusResponse(
-        github_connected=bool(workspace.get("github_pat_verified_at")) or bool(workspace.get("github_app_installation_id")),
+        github_connected=has_app or has_pat,
+        github_via_legacy_pat=has_pat and not has_app,
         aws_connected=bool(workspace.get("aws_role_verified_at")),
         azure_connected=bool(workspace.get("azure_verified_at")),
         azure_devops_connected=bool(workspace.get("azure_devops_pat_verified_at")),
         k8s_connected=bool(workspace.get("k8s_verified_at")),
+        llm_configured=bool(workspace.get("encrypted_llm_key")),
+        llm_provider=workspace.get("llm_provider"),
     )
 
 

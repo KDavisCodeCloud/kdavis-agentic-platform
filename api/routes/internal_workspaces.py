@@ -25,12 +25,25 @@ PATCH /internal/workspaces/{id}/tier           -- set product_tier without Strip
 POST  /internal/workspaces/{id}/mcp-invite     -- provision a Supabase Auth account
                                                    for MCP OAuth 2.1 access (Phase 6,
                                                    connectivity roadmap)
+POST  /internal/workspaces/{id}/purge-data     -- real data deletion (migration 027)
 
 PATCH .../tier fills the one real gap in these admin levers: reactivate
 sets stripe_subscription_status, but nothing outside a real Stripe webhook
 (api/routes/stripe_billing.py's checkout/subscription handlers) ever sets
 product_tier. Needed to give an owner/QA workspace Enterprise-tier access
 (all 10 agents, unlimited repos/cloud providers) without a real purchase.
+
+.../purge-data closes an operational-readiness gap found 2026-09-14:
+Stripe cancellation intentionally preserves all data (see
+stripe_billing.py's _handle_subscription_deleted), but nothing anywhere
+could actually delete a workspace's credentials/PII on request -- a real
+GDPR/CCPA gap. Only allowed once a workspace is canceled or suspended
+(never against a live paying customer), and requires the caller to type
+the workspace's exact company_name as a confirmation -- this is
+destructive and irreversible. Nulls every credential and PII column;
+keeps the workspace row and its audit_log/incident history for billing
+and audit-trail integrity, matching the "archival, not hard deletion"
+model already documented in docs/customer/dpa-outline.md.
 """
 
 import logging
@@ -85,6 +98,15 @@ class SetTierRequest(BaseModel):
 class WorkspaceTierResponse(BaseModel):
     id: str
     product_tier: str
+
+
+class PurgeDataRequest(BaseModel):
+    confirm_company_name: str
+
+
+class PurgeDataResponse(BaseModel):
+    id: str
+    data_purged_at: str
 
 
 class McpInviteRequest(BaseModel):
@@ -223,6 +245,61 @@ async def set_workspace_tier(
 
     log.info("[InternalWorkspaces] Workspace=%s tier set to %s by admin=%s", workspace_id, body.tier, admin["email"])
     return WorkspaceTierResponse(id=str(row["id"]), product_tier=row["product_tier"])
+
+
+_PURGEABLE_STATUSES = ("canceled", "suspended")
+
+# Every credential + PII column across the connector shapes this workspace
+# table has accumulated (migrations 004/021/022/023/024/025/026) -- nulled
+# on purge. workspace_token is deliberately NOT included: a purged workspace
+# still needs to 404/401 cleanly rather than match an empty-string token.
+_PURGE_COLUMNS = (
+    "contact_email",
+    "encrypted_llm_key", "llm_provider",
+    "github_pat_encrypted", "github_pat_verified_at",
+    "encrypted_github_webhook_secret", "github_webhook_secret_created_at",
+    "github_app_installation_id", "github_app_installed_at",
+    "aws_role_arn", "aws_external_id", "aws_role_verified_at",
+    "azure_tenant_id", "azure_client_id", "azure_client_secret_encrypted",
+    "azure_subscription_id", "azure_verified_at",
+    "azure_devops_org", "azure_devops_pat_encrypted", "azure_devops_pat_verified_at",
+    "encrypted_azure_devops_webhook_secret", "azure_devops_webhook_secret_created_at",
+    "k8s_api_url", "k8s_token_encrypted", "k8s_ca_cert_encrypted", "k8s_verified_at",
+)
+
+
+@router.post("/{workspace_id}/purge-data", response_model=PurgeDataResponse)
+async def purge_workspace_data(
+    workspace_id: str,
+    body: PurgeDataRequest,
+    request: Request,
+    admin: dict = Depends(get_internal_user),
+) -> PurgeDataResponse:
+    async with request.app.state.db_pool.acquire() as conn:
+        workspace = await _get_workspace_or_404(conn, workspace_id)
+
+        if workspace["stripe_subscription_status"] not in _PURGEABLE_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Workspace must be canceled or suspended first (currently "
+                       f"'{workspace['stripe_subscription_status']}') -- refusing to purge a live customer's data.",
+            )
+        if body.confirm_company_name != workspace["company_name"]:
+            raise HTTPException(
+                status_code=400,
+                detail="confirm_company_name did not match this workspace's company_name -- this is "
+                       "destructive and irreversible, confirm the exact name before retrying.",
+            )
+
+        set_clause = ", ".join(f"{col} = NULL" for col in _PURGE_COLUMNS)
+        row = await conn.fetchrow(
+            f"UPDATE workspaces SET {set_clause}, data_purged_at = NOW(), updated_at = NOW() "
+            f"WHERE id = $1 RETURNING id, data_purged_at",
+            workspace_id,
+        )
+
+    log.info("[InternalWorkspaces] Workspace=%s data purged by admin=%s", workspace_id, admin["email"])
+    return PurgeDataResponse(id=str(row["id"]), data_purged_at=row["data_purged_at"].isoformat())
 
 
 @router.post("/{workspace_id}/mcp-invite", response_model=McpInviteResponse)

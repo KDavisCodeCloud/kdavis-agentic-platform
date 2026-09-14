@@ -12,7 +12,7 @@ import {
   getMockAgentStatus, mockConnectAgent, mockVerifyAgentRole,
   getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
   getMockConnectionsStatus, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
-  mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s,
+  mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s, mockSaveLlmKey,
 } from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -483,7 +483,7 @@ export async function testMCPConnection(
 
 // ── Workspaces ─────────────────────────────────────────────────────────
 
-export async function createWorkspace(companyName: string, contactEmail: string): Promise<{
+export async function createWorkspace(companyName: string, contactEmail: string, tosAccepted: boolean): Promise<{
   id: string
   workspace_token: string
   warning: string
@@ -491,7 +491,7 @@ export async function createWorkspace(companyName: string, contactEmail: string)
   const res = await fetch(`${API_URL}/api/v1/workspaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company_name: companyName, contact_email: contactEmail }),
+    body: JSON.stringify({ company_name: companyName, contact_email: contactEmail, tos_accepted: tosAccepted }),
   })
 
   if (!res.ok) {
@@ -507,6 +507,7 @@ export async function saveLlmKey(
   provider: 'anthropic' | 'openai',
   apiKey: string,
 ): Promise<{ status: string }> {
+  if (MOCK_MODE) return mockSaveLlmKey(provider)
   return request<{ status: string }>('/workspaces/llm-key', token, {
     method: 'POST',
     body: JSON.stringify({ provider, api_key: apiKey }),

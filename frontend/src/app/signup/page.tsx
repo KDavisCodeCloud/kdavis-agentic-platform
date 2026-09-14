@@ -48,7 +48,7 @@ export default function SignupPage() {
     setSubmitting(true)
     setError('')
     try {
-      const result = await createWorkspace(companyName.trim(), contactEmail.trim())
+      const result = await createWorkspace(companyName.trim(), contactEmail.trim(), agreed)
       sessionStorage.setItem('pending_workspace_token', result.workspace_token)
       router.push('/checkout')
     } catch (err) {
@@ -192,7 +192,14 @@ export default function SignupPage() {
                 style={{ marginTop: 3 }}
               />
               <span style={{ fontSize: 11.5, lineHeight: 1.6, color: 'rgba(232,236,242,.5)' }}>
-                I agree to the Terms of Service and Privacy Policy.
+                I agree to the{' '}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" style={{ color: '#9fc2ff' }}>
+                  Terms of Service
+                </a>{' '}
+                and{' '}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: '#9fc2ff' }}>
+                  Privacy Policy
+                </a>.
               </span>
             </label>
 

@@ -581,10 +581,13 @@ export function getMockComplianceReport(): ComplianceReportData {
 
 let _connectionsStatus: ConnectionsStatus = {
   github_connected: false,
+  github_via_legacy_pat: false,
   aws_connected: false,
   azure_connected: false,
   azure_devops_connected: false,
   k8s_connected: false,
+  llm_configured: false,
+  llm_provider: null,
 }
 
 export function getMockConnectionsStatus(): ConnectionsStatus {
@@ -595,8 +598,13 @@ export function mockGetGithubAppInstallUrl(): { install_url: string } {
   // Demo mode has nowhere real to redirect to -- marks the connection
   // "installed" immediately so the mock dashboard still demonstrates the
   // connected state without a real GitHub round trip.
-  _connectionsStatus = { ..._connectionsStatus, github_connected: true }
+  _connectionsStatus = { ..._connectionsStatus, github_connected: true, github_via_legacy_pat: false }
   return { install_url: 'https://github.com/apps/cloud-decoded-demo/installations/new' }
+}
+
+export function mockSaveLlmKey(provider: string): { status: string } {
+  _connectionsStatus = { ..._connectionsStatus, llm_configured: true, llm_provider: provider }
+  return { status: 'ok' }
 }
 
 export function mockSetupAwsRole(): AwsRoleSetup {

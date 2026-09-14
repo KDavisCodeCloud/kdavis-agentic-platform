@@ -190,6 +190,115 @@ class TestSetTier:
         assert exc.value.status_code == 404
 
 
+class TestPurgeData:
+    # Real data-deletion path (migration 027, GDPR/CCPA gap found in the
+    # 2026-09-14 operational-readiness assessment). Two safety rails:
+    # never against a live customer, and the caller must type the exact
+    # company_name as confirmation.
+
+    def _workspace_row(self, workspace_id, status="canceled", company_name="Acme"):
+        return {
+            "id": workspace_id, "company_name": company_name, "contact_email": "ops@acme.com",
+            "product_tier": "growth", "stripe_subscription_status": status, "created_at": None,
+        }
+
+    async def test_purges_when_canceled_and_confirmed(self):
+        from datetime import datetime, timezone
+
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                self._workspace_row(workspace_id, status="canceled"),
+                {"id": workspace_id, "data_purged_at": datetime.now(timezone.utc)},
+            ]
+        )
+        request = _make_request(conn)
+
+        result = await iw.purge_workspace_data(
+            str(workspace_id), iw.PurgeDataRequest(confirm_company_name="Acme"), request, admin=_ADMIN,
+        )
+
+        assert result.id == str(workspace_id)
+        assert result.data_purged_at
+        update_sql = conn.fetchrow.await_args_list[1].args[0]
+        assert "contact_email = NULL" in update_sql
+        assert "github_app_installation_id = NULL" in update_sql
+        assert "aws_role_arn = NULL" in update_sql
+        assert "k8s_token_encrypted = NULL" in update_sql
+        assert "data_purged_at = NOW()" in update_sql
+        # workspace_token itself must never be nulled -- a purged workspace
+        # still needs to 404/401 cleanly, not match an empty-string token
+        assert "workspace_token" not in update_sql
+
+    async def test_suspended_also_purgeable(self):
+        from datetime import datetime, timezone
+
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                self._workspace_row(workspace_id, status="suspended"),
+                {"id": workspace_id, "data_purged_at": datetime.now(timezone.utc)},
+            ]
+        )
+        request = _make_request(conn)
+
+        result = await iw.purge_workspace_data(
+            str(workspace_id), iw.PurgeDataRequest(confirm_company_name="Acme"), request, admin=_ADMIN,
+        )
+        assert result.id == str(workspace_id)
+
+    async def test_refuses_live_customer(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=self._workspace_row(workspace_id, status="active"))
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.purge_workspace_data(
+                str(workspace_id), iw.PurgeDataRequest(confirm_company_name="Acme"), request, admin=_ADMIN,
+            )
+        assert exc.value.status_code == 409
+        assert conn.fetchrow.await_count == 1  # never reached the UPDATE
+
+    async def test_refuses_pending_payment(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=self._workspace_row(workspace_id, status="pending_payment"))
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.purge_workspace_data(
+                str(workspace_id), iw.PurgeDataRequest(confirm_company_name="Acme"), request, admin=_ADMIN,
+            )
+        assert exc.value.status_code == 409
+
+    async def test_wrong_confirmation_name_raises_400(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=self._workspace_row(workspace_id, status="canceled"))
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.purge_workspace_data(
+                str(workspace_id), iw.PurgeDataRequest(confirm_company_name="Wrong Name"), request, admin=_ADMIN,
+            )
+        assert exc.value.status_code == 400
+        assert conn.fetchrow.await_count == 1  # never reached the UPDATE
+
+    async def test_404_when_workspace_missing(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.purge_workspace_data(
+                str(uuid4()), iw.PurgeDataRequest(confirm_company_name="Acme"), request, admin=_ADMIN,
+            )
+        assert exc.value.status_code == 404
+
+
 class TestInviteMcpUser:
     # Phase 6 (connectivity gaps): provisions a real Supabase Auth account
     # for MCP OAuth 2.1 access. Two Supabase Admin API calls, not one --

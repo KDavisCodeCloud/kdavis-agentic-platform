@@ -118,6 +118,10 @@ export function MarketingFooter() {
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,.05)' }}>
         <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.4)' }}>© 2026 · Built for the 2am page</span>
+        <nav style={{ display: 'flex', gap: 16, fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
+          <a href="/terms" style={{ color: 'rgba(232,236,242,.4)', textDecoration: 'none' }}>Terms</a>
+          <a href="/privacy" style={{ color: 'rgba(232,236,242,.4)', textDecoration: 'none' }}>Privacy</a>
+        </nav>
         <a
           href="mailto:hello@theclouddecoded.com?subject=Enterprise%20inquiry"
           style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.32)', textDecoration: 'none' }}

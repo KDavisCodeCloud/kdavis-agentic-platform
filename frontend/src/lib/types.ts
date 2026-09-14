@@ -185,10 +185,13 @@ export interface K8sClusterInput {
 
 export interface ConnectionsStatus {
   github_connected: boolean
+  github_via_legacy_pat: boolean
   aws_connected: boolean
   azure_connected: boolean
   azure_devops_connected: boolean
   k8s_connected: boolean
+  llm_configured: boolean
+  llm_provider: string | null
 }
 
 export interface AwsRoleSetup {

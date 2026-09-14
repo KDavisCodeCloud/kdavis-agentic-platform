@@ -246,6 +246,7 @@ class TestGetConnectionsStatus:
         result = await wc_routes.get_connections_status(workspace=workspace)
 
         assert result.github_connected is True
+        assert result.github_via_legacy_pat is True
         assert result.aws_connected is False
         assert result.azure_connected is True
         assert result.azure_devops_connected is True
@@ -264,6 +265,24 @@ class TestGetConnectionsStatus:
         result = await wc_routes.get_connections_status(workspace=workspace)
 
         assert result.github_connected is True
+        # App installed -- not the legacy PAT path, no migration nudge needed
+        assert result.github_via_legacy_pat is False
+
+    async def test_legacy_pat_flagged_for_migration_even_if_app_also_present(self):
+        # A workspace mid-migration (kept its old PAT verified while also
+        # installing the App) should not be nudged -- the App takes over.
+        from datetime import datetime, timezone
+
+        workspace = {
+            "id": uuid4(),
+            "github_pat_verified_at": datetime.now(timezone.utc),
+            "github_app_installation_id": "inst-456",
+        }
+
+        result = await wc_routes.get_connections_status(workspace=workspace)
+
+        assert result.github_connected is True
+        assert result.github_via_legacy_pat is False
 
     async def test_all_false_when_nothing_configured(self):
         workspace = {"id": uuid4()}
@@ -271,10 +290,21 @@ class TestGetConnectionsStatus:
         result = await wc_routes.get_connections_status(workspace=workspace)
 
         assert result.github_connected is False
+        assert result.github_via_legacy_pat is False
         assert result.aws_connected is False
         assert result.azure_connected is False
         assert result.azure_devops_connected is False
         assert result.k8s_connected is False
+        assert result.llm_configured is False
+        assert result.llm_provider is None
+
+    async def test_llm_key_configured_reflects_encrypted_key_presence(self):
+        workspace = {"id": uuid4(), "encrypted_llm_key": "gAAAAA...", "llm_provider": "anthropic"}
+
+        result = await wc_routes.get_connections_status(workspace=workspace)
+
+        assert result.llm_configured is True
+        assert result.llm_provider == "anthropic"
 
 
 class TestConnectK8s:

@@ -74,7 +74,10 @@ function CheckoutSuccessGate({ onReady }: { onReady: (token: string) => void }) 
 
   function finish() {
     if (revealedToken) onReady(revealedToken)
-    router.replace('/dashboard')
+    // Land directly on Connections instead of a bare dashboard -- there was
+    // previously no guided path from "just paid" to "has a working connected
+    // workspace" at all.
+    router.replace('/dashboard?tab=connections&welcome=1')
   }
 
   return (
@@ -123,11 +126,28 @@ function CheckoutSuccessGate({ onReady }: { onReady: (token: string) => void }) 
   )
 }
 
+const _VALID_TABS: DashTab[] = [
+  'hitl', 'content', 'outreach', 'integrations', 'audit', 'finops-agent', 'compliance-agent', 'connections',
+]
+
 export default function DashboardPage() {
   const router                        = useRouter()
   const [token, setToken]             = useState<string | null>(null)
   const [hydrated, setHydrated]       = useState(false)
   const [activeTab, setActiveTab]     = useState<DashTab>('hitl')
+  const [showWelcome, setShowWelcome] = useState(false)
+
+  useEffect(() => {
+    // Read once on mount, plain window.location like the checkout_success
+    // check below -- avoids the Suspense boundary useSearchParams() would
+    // otherwise require for this top-level page.
+    const params = new URLSearchParams(window.location.search)
+    const requestedTab = params.get('tab')
+    if (requestedTab && (_VALID_TABS as string[]).includes(requestedTab)) {
+      setActiveTab(requestedTab as DashTab)
+    }
+    if (params.get('welcome') === '1') setShowWelcome(true)
+  }, [])
 
   useEffect(() => {
     if (MOCK_MODE) {
@@ -203,7 +223,12 @@ export default function DashboardPage() {
             size="icon"
             className="h-8 w-8"
             title="Settings"
-            onClick={() => router.push('/onboarding')}
+            // Used to route to /onboarding -- OnboardingWizard independently
+            // creates a NEW workspace when reached from an already-logged-in
+            // session, since it has no notion of the current session. The
+            // Connections tab (LLM key included) is the real, safe settings
+            // surface.
+            onClick={() => setActiveTab('connections')}
           >
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -323,6 +348,22 @@ export default function DashboardPage() {
           </span>
         )}
       </div>
+
+      {showWelcome && activeTab === 'connections' && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-500/20 bg-blue-500/10 px-5 py-2.5 text-xs text-blue-200">
+          <span>
+            <strong className="font-semibold">Trial started.</strong> Connect a repo and a cloud account below
+            so your agents have something real to look at — nothing runs without your approval in the HITL
+            Console.
+          </span>
+          <button
+            onClick={() => setShowWelcome(false)}
+            className="shrink-0 text-blue-300 hover:text-blue-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Main content */}
       <main className="flex-1 overflow-hidden">

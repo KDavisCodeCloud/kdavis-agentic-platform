@@ -80,7 +80,12 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       }
       setSubmitting(true)
       try {
-        const result = await createWorkspace(form.companyName, form.contactEmail)
+        // No ToS checkbox here -- this wizard is orphaned (no nav path
+        // reaches it since dashboard/page.tsx's Settings icon was
+        // repointed at the Connections tab); /signup is the real,
+        // checkbox-gated entry point. Not worth building a duplicate
+        // checkbox for a component nothing links to anymore.
+        const result = await createWorkspace(form.companyName, form.contactEmail, true)
         update({ workspaceToken: result.workspace_token })
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Could not create workspace. Try again.')
