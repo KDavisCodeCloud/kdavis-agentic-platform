@@ -583,16 +583,20 @@ let _connectionsStatus: ConnectionsStatus = {
   github_connected: false,
   aws_connected: false,
   azure_connected: false,
+  azure_devops_connected: false,
+  k8s_connected: false,
 }
 
 export function getMockConnectionsStatus(): ConnectionsStatus {
   return _connectionsStatus
 }
 
-export function mockConnectGithub(): { status: string; webhook_secret: string | null } {
-  const firstTime = !_connectionsStatus.github_connected
+export function mockGetGithubAppInstallUrl(): { install_url: string } {
+  // Demo mode has nowhere real to redirect to -- marks the connection
+  // "installed" immediately so the mock dashboard still demonstrates the
+  // connected state without a real GitHub round trip.
   _connectionsStatus = { ..._connectionsStatus, github_connected: true }
-  return { status: 'verified', webhook_secret: firstTime ? 'demo_whsec_' + Math.random().toString(36).slice(2) : null }
+  return { install_url: 'https://github.com/apps/cloud-decoded-demo/installations/new' }
 }
 
 export function mockSetupAwsRole(): AwsRoleSetup {
@@ -613,5 +617,16 @@ export function mockConnectAwsRole(): { id: string } {
 
 export function mockConnectAzure(): { id: string } {
   _connectionsStatus = { ..._connectionsStatus, azure_connected: true }
+  return { id: 'demo-workspace-001' }
+}
+
+export function mockConnectAzureDevOps(): { status: string; webhook_secret: string | null } {
+  const firstTime = !_connectionsStatus.azure_devops_connected
+  _connectionsStatus = { ..._connectionsStatus, azure_devops_connected: true }
+  return { status: 'verified', webhook_secret: firstTime ? 'demo_ado_whsec_' + Math.random().toString(36).slice(2) : null }
+}
+
+export function mockConnectK8s(): { id: string } {
+  _connectionsStatus = { ..._connectionsStatus, k8s_connected: true }
   return { id: 'demo-workspace-001' }
 }

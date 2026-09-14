@@ -168,7 +168,18 @@ export interface AzureServicePrincipalInput {
   subscription_id: string
 }
 
-// ── Workspace connections (core platform's own Agents 01/05/06/08 --
+export interface AzureDevOpsInput {
+  org: string
+  pat: string
+}
+
+export interface K8sClusterInput {
+  api_url: string
+  token: string
+  ca_cert?: string
+}
+
+// ── Workspace connections (core platform's own Agents 01/02/05/06/08 --
 // api/routes/workspace_credentials.py. Separate from the FinOps/Compliance
 // agent connection types above, which proxy to the satellite products) ────
 
@@ -176,6 +187,8 @@ export interface ConnectionsStatus {
   github_connected: boolean
   aws_connected: boolean
   azure_connected: boolean
+  azure_devops_connected: boolean
+  k8s_connected: boolean
 }
 
 export interface AwsRoleSetup {
