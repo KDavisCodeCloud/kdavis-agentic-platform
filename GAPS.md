@@ -544,3 +544,77 @@ reconciled by editing the live homepage.
 
 Full frontend `next build`: clean, 14 routes, zero warnings. Backend
 suite unaffected by this phase (docs/frontend only): still 1293 passing.
+
+### 13. Operational readiness fixes (Kelvin: "continue with what still needs to be built") — 2026-09-14
+
+Follow-up to a full operational-readiness assessment (not the engineering
+quality — whether the product can onboard/manage/offboard a real paying
+customer without manual intervention). Full findings logged in
+`knowledge/operator/architecture-decisions/2026-09-14-connectivity-roadmap-and-operational-readiness.md`.
+
+**DONE this pass:**
+- `workspaces.contact_email` (migration 026) — required + validated at
+  signup. Root-cause fix: nothing in Cloud Decoded's own code could send
+  a welcome email or an Enterprise MCP-invite alert without an address to
+  send to, and there was no way to identify a customer without going to
+  Stripe directly.
+- Post-checkout flow: `CheckoutSuccessGate` now redirects to
+  `/dashboard?tab=connections&welcome=1` instead of a bare dashboard —
+  there was previously no guided path from "just paid" to "has a working
+  connected workspace" at all.
+- Settings gear icon repointed from `/onboarding` (the stale
+  `OnboardingWizard`, which independently creates a NEW unpaid workspace
+  if reached from an already-logged-in session) to the Connections tab.
+  `OnboardingWizard.tsx` itself is left in place but is now fully
+  orphaned — nothing links to it.
+- LLM key management got a real home: a new "LLM Key" card in
+  `ConnectionsPanel` calling the existing `POST /workspaces/llm-key` —
+  previously the *only* place to set/update it was the broken wizard.
+- Legacy-PAT migration nudge: `GET /workspace/credentials/status` now
+  returns `github_via_legacy_pat`; `ConnectionsPanel`'s GitHub card shows
+  an amber "migrate to the GitHub App" banner when true. Closes the
+  "legacy PAT workspaces have no prompted migration" gap logged
+  previously in this file.
+- Real data-deletion path: `POST /internal/workspaces/{id}/purge-data`
+  (migration 027) — nulls every credential + PII column, refuses to run
+  against a live (non-canceled/suspended) subscription, requires the
+  caller to type the exact `company_name` as confirmation. Closes the
+  GDPR/CCPA gap `docs/customer/dpa-outline.md` and
+  `security-questionnaire-response.md` both flagged as unconfirmed.
+- Click-through ToS acceptance: `workspaces.tos_accepted_at` (migration
+  028), `POST /workspaces` now requires `tos_accepted: true`. Real
+  `/terms` and `/privacy` pages now exist (previously: zero pages, and
+  the signup checkbox's state was collected client-side and silently
+  discarded — never sent to the backend at all). Linked from the signup
+  checkbox and every marketing page's footer.
+- Customer-lifecycle SOPs written: `knowledge/sops/customer-ops/` —
+  onboarding, offboarding (incl. the new purge-data flow), credential
+  rotation, Enterprise MCP invite. Previously zero SOPs existed for any
+  Cloud Decoded customer-lifecycle operation.
+
+Tests: 24 new/updated across `test_workspace_credentials_routes.py`,
+`test_internal_workspaces.py`, `test_workspaces.py`. Full suite: 1305
+passing (was 1293), same 4-5 pre-existing unrelated failures (environment
+gaps in this dev sandbox specifically — missing `boto3`/`python-jose`
+initially, a `libpq`-dependent test file, none of which are code
+regressions; confirmed by installing the two pip-installable ones and
+re-running clean). Frontend `next build`: clean, 18 routes.
+
+**Still open, not built this pass:**
+- Welcome/confirmation email sending — `contact_email` now exists to
+  send to, but no send mechanism (provider/API key) is wired up. Needs a
+  provider decision (e.g. Resend) and a real API key only Kelvin can
+  provision — flagged to him directly rather than guessed at.
+- Enterprise MCP tier-change alert — still fully manual discovery per
+  `enterprise-mcp-invite.md`'s SOP; the email column that would make an
+  automated alert possible now exists, the alert itself doesn't yet.
+- No self-serve "delete my data" button — `purge-data` exists but is
+  admin-only/curl-only today, same shape as the other `/internal/workspaces/*`
+  levers.
+- No per-connector "disconnect" endpoint for an active customer who wants
+  to remove just one credential without a full purge — noted in
+  `credential-rotation.md`.
+- GitHub App "the-cloud-decoded" is registered but still marked private
+  in GitHub's own settings — a private App can only be installed by its
+  owning account. Needs Kelvin to flip it to public (GitHub-side setting,
+  not a code change) before any real customer can install it.
