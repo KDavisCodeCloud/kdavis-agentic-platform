@@ -33,7 +33,12 @@ export const metadata: Metadata = {
     title: 'Cloud Decoded — Human-Gated DevOps Automation for Mid-Market Engineering Teams',
     description:
       'Cloud Decoded detects incidents, triages root cause, and proposes fixes — then waits for a human to approve before anything touches your infrastructure. No vendor lock-in. Azure, AWS, or both.',
-    images: ['/og-image.png'],
+    // No explicit images[] here -- app/opengraph-image.tsx (Next.js's file
+    // convention) generates and serves it, and gets auto-injected into
+    // both og:image and twitter:image. The old value, '/og-image.png',
+    // pointed at a static file that never actually existed in this repo
+    // (no public/ directory at all) -- this page's own og:image meta tag
+    // has been silently broken since the landing page shipped.
   },
   twitter: {
     card: 'summary_large_image',
