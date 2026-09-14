@@ -28,4 +28,15 @@ Full detail: `knowledge/operator/architecture-decisions/2026-09-14-connectivity-
   triggered manually (`railway service source connect` re-trigger,
   `vercel --prod`) from the same pushed commits. Worth checking whether
   the GitHub webhook itself is still correctly configured on both sides.
+  **Confirmed again on a second push later the same session** — not a
+  one-off; genuinely worth Kelvin checking the GitHub webhook config on
+  both Railway's and Vercel's project settings.
+- Follow-on pass same session: guided post-checkout flow, real LLM key
+  management (ConnectionsPanel), legacy-PAT migration nudge, real data
+  deletion (`purge-data`, migration 027), click-through ToS acceptance +
+  real `/terms`/`/privacy` pages (migration 028), and the four
+  customer-lifecycle SOPs. Full detail in the same architecture-decisions
+  file linked above (now has a "Round 2" section). Live-verified after
+  deploy: `/terms`/`/privacy` return 200, `POST /workspaces` 422s on an
+  incomplete body in production.
 

@@ -94,10 +94,49 @@ manual intervention." Findings:
 7. Legacy PAT-based GitHub workspaces have no prompted migration nudge
    to the App.
 
-## Deploy
+## Deploy (round 1 — connectivity roadmap + contact email)
 
 Pushed to `origin/master`. Railway's GitHub webhook auto-deploy did not
 pick up the push within the wait window, so triggered manually via
 `railway up --service kdavis-agentic-platform --environment production`
 from local source at these same commits. Frontend (Vercel) deploys via
 its own GitHub integration on push, unaffected by the Railway path.
+
+## Round 2 — operational-readiness build-out (same session, continued)
+
+Built and shipped the highest-priority items from the still-open list
+above: guided post-checkout flow (`?tab=connections&welcome=1` +
+dismissible banner), Settings icon repointed off the broken
+OnboardingWizard onto Connections, a real "LLM Key" card in
+ConnectionsPanel (previously only settable via the broken wizard),
+legacy-PAT-to-App migration nudge (`github_via_legacy_pat` on
+`GET /workspace/credentials/status`), a real data-deletion path
+(`POST /internal/workspaces/{id}/purge-data`, migration 027 — refuses to
+run against a live subscription, requires typing the exact company_name
+to confirm), and click-through ToS acceptance (`tos_accepted_at`,
+migration 028, plus real `/terms` and `/privacy` pages — previously
+neither page existed and the signup checkbox's state was silently
+discarded). Wrote the four customer-lifecycle SOPs that didn't exist
+(`knowledge/sops/customer-ops/`).
+
+24 new/updated tests, full suite 1305 passing (up from 1293), same
+pre-existing unrelated failures. Frontend `next build` clean, 18 routes.
+
+**Deploy (round 2):** Same pattern as round 1 — Railway's GitHub webhook
+still isn't auto-deploying on push (confirmed twice now; worth a real
+look at whether the webhook itself is still correctly configured on
+GitHub's side, not just re-triggering around it every time). Used
+`railway service source connect --repo ... --branch master` to force a
+fresh GitHub-source build rather than `railway up` (which failed once
+this session with a `mise`/Procfile parsing error caused by something in
+`railway up`'s own local-directory tar/upload path, not the source
+itself — the same commit deployed clean via the GitHub-source path
+immediately after). Vercel: `vercel --prod --yes`, succeeded, aliased to
+theclouddecoded.com. Live-verified post-deploy: `/terms` and `/privacy`
+return 200, and `POST /workspaces` with an incomplete body now correctly
+returns 422 (confirms the new contact_email/tos_accepted validation is
+live in production, not just committed).
+
+**Follow-up worth doing:** figure out why neither Railway's nor Vercel's
+GitHub auto-deploy fired on push this session, twice. Manual triggers
+worked both times, but that shouldn't be the normal path.
