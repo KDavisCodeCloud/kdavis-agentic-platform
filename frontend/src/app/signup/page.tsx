@@ -9,18 +9,24 @@ import { createWorkspace, ApiError } from '@/lib/api'
 // indicator (step 1 of 3) -- which now maps to the real flow exactly,
 // since checkout is a required step, not optional.
 //
-// Only collects company name: the one real field POST /workspaces takes
-// today. No first/last name, email, or password -- there's no per-user
-// account system to store them in, and the handoff's SSO buttons are
-// skipped for the same reason as /login.
+// Collects company name + a contact email -- the two real fields
+// POST /workspaces takes. Email exists so Cloud Decoded's own code has
+// somewhere to send a welcome/confirmation email and an Enterprise MCP
+// invite alert, and so an admin can identify a workspace without going to
+// Stripe's dashboard. No first/last name or password -- there's no
+// per-user account system to store them in, and the handoff's SSO buttons
+// are skipped for the same reason as /login.
 //
 // The new workspace's token comes back locked (pending_payment) and
 // useless until checkout completes, so it's carried to /checkout in
 // sessionStorage rather than shown to the user here.
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 export default function SignupPage() {
   const router = useRouter()
   const [companyName, setCompanyName] = useState('')
+  const [contactEmail, setContactEmail] = useState('')
   const [agreed, setAgreed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -31,6 +37,10 @@ export default function SignupPage() {
       setError('Company name is required')
       return
     }
+    if (!EMAIL_RE.test(contactEmail.trim())) {
+      setError('A valid work email is required')
+      return
+    }
     if (!agreed) {
       setError('Please agree to the Terms of Service and Privacy Policy')
       return
@@ -38,7 +48,7 @@ export default function SignupPage() {
     setSubmitting(true)
     setError('')
     try {
-      const result = await createWorkspace(companyName.trim())
+      const result = await createWorkspace(companyName.trim(), contactEmail.trim())
       sessionStorage.setItem('pending_workspace_token', result.workspace_token)
       router.push('/checkout')
     } catch (err) {
@@ -148,6 +158,24 @@ export default function SignupPage() {
                 onChange={e => { setCompanyName(e.target.value); setError('') }}
                 placeholder="Acme Corp"
                 autoComplete="organization"
+                style={{
+                  width: '100%', boxSizing: 'border-box', background: '#0c111c',
+                  border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+                  fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", padding: '10px 13px', outline: 'none',
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 6 }}>
+                Work email
+              </label>
+              <input
+                type="email"
+                value={contactEmail}
+                onChange={e => { setContactEmail(e.target.value); setError('') }}
+                placeholder="you@acmecorp.com"
+                autoComplete="email"
                 style={{
                   width: '100%', boxSizing: 'border-box', background: '#0c111c',
                   border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',

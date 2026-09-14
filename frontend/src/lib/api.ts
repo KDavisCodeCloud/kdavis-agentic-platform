@@ -4,14 +4,15 @@ import type {
   Incident, ApprovalRequest, ApprovalResponse, AgentsResponse,
   AuditSubmissionSummary, AuditSubmissionDetail,
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
-  DraftSummary, DraftDetail, AzureServicePrincipalInput,
+  DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
   ConnectionsStatus, AwsRoleSetup,
 } from './types'
 import {
   getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
   getMockAgentStatus, mockConnectAgent, mockVerifyAgentRole,
   getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
-  getMockConnectionsStatus, mockConnectGithub, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
+  getMockConnectionsStatus, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
+  mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s,
 } from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -482,7 +483,7 @@ export async function testMCPConnection(
 
 // ── Workspaces ─────────────────────────────────────────────────────────
 
-export async function createWorkspace(companyName: string): Promise<{
+export async function createWorkspace(companyName: string, contactEmail: string): Promise<{
   id: string
   workspace_token: string
   warning: string
@@ -490,7 +491,7 @@ export async function createWorkspace(companyName: string): Promise<{
   const res = await fetch(`${API_URL}/api/v1/workspaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company_name: companyName }),
+    body: JSON.stringify({ company_name: companyName, contact_email: contactEmail }),
   })
 
   if (!res.ok) {
@@ -655,15 +656,13 @@ export async function getConnectionsStatus(token: string): Promise<ConnectionsSt
   return request<ConnectionsStatus>('/workspace/credentials/status', token)
 }
 
-export async function connectGithubPat(
-  token: string,
-  githubPat: string,
-): Promise<{ status: string; webhook_secret: string | null }> {
-  if (MOCK_MODE) return mockConnectGithub()
-  return request<{ status: string; webhook_secret: string | null }>('/workspace/credentials/github', token, {
-    method: 'PATCH',
-    body: JSON.stringify({ github_pat: githubPat }),
-  })
+// Item 4 GitHub App migration -- PATCH /workspace/credentials/github is
+// retired (410); connections go through this install-URL redirect instead.
+// See api/routes/workspace_credentials.py's get_github_app_install_url +
+// github_app_install_callback.
+export async function getGithubAppInstallUrl(token: string): Promise<{ install_url: string }> {
+  if (MOCK_MODE) return mockGetGithubAppInstallUrl()
+  return request<{ install_url: string }>('/workspace/credentials/github-app/install-url', token)
 }
 
 export async function setupAwsRole(token: string): Promise<AwsRoleSetup> {
@@ -685,6 +684,25 @@ export async function connectAzureServicePrincipal(
 ): Promise<{ id: string }> {
   if (MOCK_MODE) return mockConnectAzure()
   return request<{ id: string }>('/workspace/credentials/azure', token, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function connectAzureDevOps(
+  token: string,
+  body: AzureDevOpsInput,
+): Promise<{ status: string; webhook_secret: string | null }> {
+  if (MOCK_MODE) return mockConnectAzureDevOps()
+  return request<{ status: string; webhook_secret: string | null }>('/workspace/credentials/azure-devops', token, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function connectK8sCluster(token: string, body: K8sClusterInput): Promise<{ id: string }> {
+  if (MOCK_MODE) return mockConnectK8s()
+  return request<{ id: string }>('/workspace/credentials/k8s', token, {
     method: 'PATCH',
     body: JSON.stringify(body),
   })

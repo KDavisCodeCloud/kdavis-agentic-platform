@@ -22,6 +22,9 @@ POST  /internal/workspaces/{id}/suspend        -- ToS-violation path
 POST  /internal/workspaces/{id}/reactivate     -- reverse a suspension
 POST  /internal/workspaces/{id}/rotate-token   -- revoke + reissue
 PATCH /internal/workspaces/{id}/tier           -- set product_tier without Stripe
+POST  /internal/workspaces/{id}/mcp-invite     -- provision a Supabase Auth account
+                                                   for MCP OAuth 2.1 access (Phase 6,
+                                                   connectivity roadmap)
 
 PATCH .../tier fills the one real gap in these admin levers: reactivate
 sets stripe_subscription_status, but nothing outside a real Stripe webhook
@@ -31,6 +34,7 @@ product_tier. Needed to give an owner/QA workspace Enterprise-tier access
 """
 
 import logging
+import os
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -39,6 +43,8 @@ from pydantic import BaseModel
 from api.middleware.auth import _hash_token
 from api.middleware.internal_auth import get_internal_user
 from core.compliance import WorkspaceComplianceGuard
+
+_MCP_VALID_SCOPES = frozenset({"mcp:read", "mcp:write"})
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/workspaces", tags=["internal-workspaces"])
@@ -55,6 +61,7 @@ def _generate_raw_token() -> str:
 class WorkspaceSummary(BaseModel):
     id: str
     company_name: str
+    contact_email: str | None = None
     product_tier: str
     stripe_subscription_status: str
     created_at: str
@@ -80,11 +87,25 @@ class WorkspaceTierResponse(BaseModel):
     product_tier: str
 
 
+class McpInviteRequest(BaseModel):
+    email: str
+    name: str | None = None
+    scopes: list[str] = ["mcp:read", "mcp:write"]
+
+
+class McpInviteResponse(BaseModel):
+    user_id: str
+    email: str
+    workspace_id: str
+    scopes: list[str]
+    status: str = "invited"
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 async def _get_workspace_or_404(conn, workspace_id: str) -> dict:
     row = await conn.fetchrow(
-        "SELECT id, company_name, product_tier, stripe_subscription_status, created_at "
+        "SELECT id, company_name, contact_email, product_tier, stripe_subscription_status, created_at "
         "FROM workspaces WHERE id = $1",
         workspace_id,
     )
@@ -111,13 +132,14 @@ async def _set_subscription_status(request: Request, workspace_id: str, new_stat
 async def list_workspaces(request: Request, admin: dict = Depends(get_internal_user)) -> list[WorkspaceSummary]:
     async with request.app.state.db_pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, company_name, product_tier, stripe_subscription_status, created_at "
+            "SELECT id, company_name, contact_email, product_tier, stripe_subscription_status, created_at "
             "FROM workspaces ORDER BY created_at DESC LIMIT 200"
         )
     return [
         WorkspaceSummary(
             id=str(r["id"]),
             company_name=r["company_name"],
+            contact_email=r["contact_email"],
             product_tier=r["product_tier"],
             stripe_subscription_status=r["stripe_subscription_status"],
             created_at=r["created_at"].isoformat(),
@@ -135,6 +157,7 @@ async def get_workspace_detail(
     return WorkspaceSummary(
         id=str(row["id"]),
         company_name=row["company_name"],
+        contact_email=row["contact_email"],
         product_tier=row["product_tier"],
         stripe_subscription_status=row["stripe_subscription_status"],
         created_at=row["created_at"].isoformat(),
@@ -200,3 +223,96 @@ async def set_workspace_tier(
 
     log.info("[InternalWorkspaces] Workspace=%s tier set to %s by admin=%s", workspace_id, body.tier, admin["email"])
     return WorkspaceTierResponse(id=str(row["id"]), product_tier=row["product_tier"])
+
+
+@router.post("/{workspace_id}/mcp-invite", response_model=McpInviteResponse)
+async def invite_mcp_user(
+    workspace_id: str,
+    body: McpInviteRequest,
+    request: Request,
+    admin: dict = Depends(get_internal_user),
+) -> McpInviteResponse:
+    """
+    Provisions a real Supabase Auth account for a named person at this
+    workspace, so they can authenticate to the MCP server
+    (mcp.theclouddecoded.com) via OAuth 2.1 instead of a shared API key --
+    the "per-customer Supabase Auth account" piece mcp/auth/oauth.py's JWT
+    validation has always been ready for (workspace_id/workspace_tier/
+    mcp_scopes in app_metadata) but nothing in this repo ever provisioned.
+
+    Deliberately admin-gated, not self-serve (Kelvin's decision,
+    2026-09-14): Enterprise sells on a 30-90 day B2B cycle to VP-Engineering
+    buyers -- provisioning happens after a deal closes. Same trust model
+    as agents/internal/onboarding_agent.py's internal team invites, but not
+    the same code path (that one's for THD's own team dashboard, a
+    different product/Supabase project relationship).
+
+    Two-step Supabase Admin API call, not one: invite_user_by_email's
+    `options.data` only sets user_metadata (user-editable client-side) --
+    the workspace_id/workspace_tier/mcp_scopes that
+    validate_oauth_token() actually trusts must live in app_metadata,
+    which only update_user_by_id can set. A user who could edit their own
+    workspace_id would be a cross-tenant access hole.
+    """
+    unknown = set(body.scopes) - _MCP_VALID_SCOPES
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown scope(s): {sorted(unknown)} -- must be one of {sorted(_MCP_VALID_SCOPES)}",
+        )
+    if not body.scopes:
+        raise HTTPException(status_code=400, detail="scopes must not be empty")
+
+    async with request.app.state.db_pool.acquire() as conn:
+        workspace = await _get_workspace_or_404(conn, workspace_id)
+
+    # Lazy import -- matches this repo's convention (internal_auth.py,
+    # core/engine.py) of never importing third-party clients at module top
+    # level.
+    from supabase import create_client
+
+    url = os.environ.get("SUPABASE_URL")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+    if not url or not service_key:
+        log.error("[InternalWorkspaces] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured")
+        raise HTTPException(status_code=500, detail="Supabase admin API is not configured on this server")
+
+    client = create_client(url, service_key)
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+
+    try:
+        invite_resp = client.auth.admin.invite_user_by_email(
+            body.email,
+            {"data": ({"name": body.name} if body.name else {}), "redirect_to": f"{frontend_url}/dashboard"},
+        )
+    except Exception as exc:
+        log.error("[InternalWorkspaces] Supabase invite failed for %s: %s", body.email, exc)
+        raise HTTPException(status_code=502, detail=f"Supabase invite failed: {exc}") from exc
+
+    user = getattr(invite_resp, "user", None)
+    if not user:
+        raise HTTPException(status_code=502, detail="Supabase invite returned no user")
+
+    try:
+        client.auth.admin.update_user_by_id(
+            user.id,
+            {"app_metadata": {
+                "workspace_id": workspace_id,
+                "workspace_tier": workspace["product_tier"],
+                "mcp_scopes": body.scopes,
+            }},
+        )
+    except Exception as exc:
+        log.error("[InternalWorkspaces] Failed to link invited user %s to workspace %s: %s", user.id, workspace_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Invite email was sent but linking to the workspace failed: {exc}. "
+                   f"The user exists in Supabase (id={user.id}) but has no workspace_id set -- fix app_metadata "
+                   f"manually or delete and re-invite.",
+        ) from exc
+
+    log.info(
+        "[InternalWorkspaces] MCP OAuth user invited email=%s workspace=%s scopes=%s by admin=%s",
+        body.email, workspace_id, body.scopes, admin["email"],
+    )
+    return McpInviteResponse(user_id=str(user.id), email=body.email, workspace_id=workspace_id, scopes=body.scopes)

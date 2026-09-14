@@ -10,6 +10,10 @@ What this file validates:
     again by that token.
   - create_workspace: missing company_name fails Pydantic validation (422
     at the FastAPI layer) before the handler ever runs.
+  - create_workspace: missing/invalid contact_email fails Pydantic
+    validation the same way (added 2026-09-14 — see GAPS.md: no email
+    column meant Cloud Decoded's own code had no address to send a welcome
+    email or an Enterprise MCP-invite alert to).
   - save_llm_key: happy path encrypts the raw key (ciphertext written to the
     DB is never the plaintext) and stores the chosen provider, scoped to
     the authenticated workspace's id.
@@ -71,7 +75,7 @@ class TestCreateWorkspace:
         request, conn = _make_app_with_db(fetchrow_result={"id": fake_id})
 
         result = await workspaces.create_workspace(
-            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering"),
+            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering", contact_email="ops@acme.com"),
             request,
         )
 
@@ -79,16 +83,37 @@ class TestCreateWorkspace:
         assert result.workspace_token.startswith("cd_ws_")
         assert "not be shown again" in result.warning
 
-        sql, company_name, token_hash = conn.fetchrow.await_args.args
+        sql, company_name, token_hash, contact_email = conn.fetchrow.await_args.args
         assert "INSERT INTO workspaces" in sql
         assert company_name == "Acme Engineering"
         assert token_hash == _hash_token(result.workspace_token)
         # never store the raw token
         assert token_hash != result.workspace_token
+        assert contact_email == "ops@acme.com"
 
     async def test_missing_company_name_fails_validation(self):
         with pytest.raises(ValidationError):
-            workspaces.CreateWorkspaceRequest()
+            workspaces.CreateWorkspaceRequest(contact_email="ops@acme.com")
+
+    async def test_missing_contact_email_fails_validation(self):
+        with pytest.raises(ValidationError):
+            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering")
+
+    async def test_invalid_contact_email_fails_validation(self):
+        with pytest.raises(ValidationError):
+            workspaces.CreateWorkspaceRequest(company_name="Acme Engineering", contact_email="not-an-email")
+
+    async def test_contact_email_normalized_lowercase_and_trimmed(self):
+        fake_id = uuid4()
+        request, conn = _make_app_with_db(fetchrow_result={"id": fake_id})
+
+        await workspaces.create_workspace(
+            workspaces.CreateWorkspaceRequest(company_name="Acme", contact_email="  OPS@Acme.COM  "),
+            request,
+        )
+
+        _, _, _, contact_email = conn.fetchrow.await_args.args
+        assert contact_email == "ops@acme.com"
 
 
 class TestSaveLlmKey:

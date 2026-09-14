@@ -15,11 +15,14 @@ type Step = 1 | 2 | 3
 
 interface FormData {
   companyName: string
+  contactEmail: string
   workspaceToken: string
   llmProvider: 'anthropic' | 'openai'
   llmApiKey: string
   cloudProviders: string[]
 }
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const STEPS = [
   { id: 1 as Step, label: 'Workspace', icon: Zap },
@@ -31,6 +34,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const [step, setStep]         = useState<Step>(1)
   const [form, setForm]         = useState<FormData>({
     companyName:    '',
+    contactEmail:   '',
     workspaceToken: '',
     llmProvider:    'anthropic',
     llmApiKey:      '',
@@ -61,7 +65,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   }
 
   function canAdvance(): boolean {
-    if (step === 1) return form.companyName.length > 0
+    if (step === 1) return form.companyName.length > 0 && EMAIL_RE.test(form.contactEmail)
     if (step === 2) return form.llmApiKey.length > 0
     return true
   }
@@ -70,9 +74,13 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
     setError(null)
 
     if (step === 1 && !form.workspaceToken) {
+      if (!EMAIL_RE.test(form.contactEmail)) {
+        setError('Enter a valid contact email')
+        return
+      }
       setSubmitting(true)
       try {
-        const result = await createWorkspace(form.companyName)
+        const result = await createWorkspace(form.companyName, form.contactEmail)
         update({ workspaceToken: result.workspace_token })
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Could not create workspace. Try again.')
@@ -172,6 +180,20 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                     value={form.companyName}
                     onChange={e => update({ companyName: e.target.value })}
                     placeholder="Acme Engineering"
+                    disabled={!!form.workspaceToken}
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+                    Contact Email
+                  </label>
+                  <input
+                    type="email"
+                    value={form.contactEmail}
+                    onChange={e => update({ contactEmail: e.target.value })}
+                    placeholder="you@acme.com"
                     disabled={!!form.workspaceToken}
                     className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none disabled:opacity-60"
                   />

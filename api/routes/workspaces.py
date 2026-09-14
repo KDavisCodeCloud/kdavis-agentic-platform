@@ -24,10 +24,11 @@ Security rules:
 """
 
 import logging
+import re
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.middleware.auth import _hash_token, get_workspace
 from api.middleware.rate_limiter import limiter
@@ -38,6 +39,11 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 _TOKEN_PREFIX = "cd_ws_"
 _VALID_PROVIDERS = frozenset({"anthropic", "openai"})
+# Deliberately simple shape check, not full RFC 5322 -- this is the only
+# contact address Cloud Decoded's own code has for a customer (no
+# email-validator dependency in this codebase), so reject obvious garbage
+# without rejecting a real address on an edge case the regex misses.
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def _generate_raw_token() -> str:
@@ -48,6 +54,15 @@ def _generate_raw_token() -> str:
 
 class CreateWorkspaceRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=255)
+    contact_email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("contact_email")
+    @classmethod
+    def _valid_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("contact_email is not a valid email address")
+        return v
 
 
 class CreateWorkspaceResponse(BaseModel):
@@ -79,15 +94,19 @@ async def create_workspace(
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO workspaces (company_name, workspace_token)
-            VALUES ($1, $2)
+            INSERT INTO workspaces (company_name, workspace_token, contact_email)
+            VALUES ($1, $2, $3)
             RETURNING id
             """,
             body.company_name,
             token_hash,
+            body.contact_email,
         )
 
-    log.info("[Workspaces] Created workspace=%s company=%s", row["id"], body.company_name)
+    log.info(
+        "[Workspaces] Created workspace=%s company=%s contact=%s",
+        row["id"], body.company_name, body.contact_email,
+    )
 
     return CreateWorkspaceResponse(id=str(row["id"]), workspace_token=raw_token)
 
