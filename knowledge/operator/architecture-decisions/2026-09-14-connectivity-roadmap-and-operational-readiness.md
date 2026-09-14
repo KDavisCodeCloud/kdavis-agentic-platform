@@ -140,3 +140,32 @@ live in production, not just committed).
 **Follow-up worth doing:** figure out why neither Railway's nor Vercel's
 GitHub auto-deploy fired on push this session, twice. Manual triggers
 worked both times, but that shouldn't be the normal path.
+
+## Round 3 — email sending + GitHub App made public (same session)
+
+Kelvin provided a Resend API key directly in chat and confirmed the
+GitHub App is now public.
+
+- Set `RESEND_API_KEY` on the Railway service via the Railway MCP tool
+  (`set-variables`) — never written to any file or committed to git,
+  matching CLAUDE.md's "no hardcoded secrets, env vars only" rule.
+- Added `core/email.py`: `send_email()` (Resend REST API via httpx, no
+  new dependency), `EmailError`, and two HTML builders. Skips the send
+  (logs a warning) if `RESEND_API_KEY` is unset rather than raising —
+  every call site treats a send failure as non-fatal.
+- Wired into two call sites: `_handle_checkout_completed`
+  (stripe_billing.py) sends a welcome email; `set_workspace_tier`
+  (internal_workspaces.py) alerts `OWNER_ALERT_EMAIL` only on a real
+  transition *into* enterprise (not every PATCH, not if already
+  enterprise). Both closed real gaps flagged in this same file's Round 1
+  section.
+- Verified GitHub App is publicly reachable:
+  `https://github.com/apps/the-cloud-decoded` → 200.
+- 21 new tests (`tests/test_email.py`, plus additions to
+  `test_internal_workspaces.py`/`test_stripe_billing.py` covering the
+  alert-only-fires-on-real-transition and non-fatal-on-failure behavior).
+  Full suite: 1320 passing, same pre-existing unrelated failures.
+- Updated the two SOPs this closed
+  (`knowledge/sops/customer-ops/customer-onboarding.md`,
+  `enterprise-mcp-invite.md`) and GAPS.md to move these from "still open"
+  to "closed."

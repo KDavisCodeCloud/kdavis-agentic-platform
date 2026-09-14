@@ -158,14 +158,91 @@ class TestSetTier:
         )
         request = _make_request(conn)
 
-        result = await iw.set_workspace_tier(
-            str(workspace_id), iw.SetTierRequest(tier="enterprise"), request, admin=_ADMIN
-        )
+        with patch.object(iw, "send_email", new=AsyncMock()):
+            result = await iw.set_workspace_tier(
+                str(workspace_id), iw.SetTierRequest(tier="enterprise"), request, admin=_ADMIN
+            )
 
         assert result.product_tier == "enterprise"
         update_sql, new_tier, bound_id = conn.fetchrow.await_args_list[1].args
         assert new_tier == "enterprise"
         assert bound_id == str(workspace_id)
+
+    async def test_enterprise_transition_fires_owner_alert(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": workspace_id, "company_name": "Acme", "contact_email": "ops@acme.com", "product_tier": "growth",
+                 "stripe_subscription_status": "active", "created_at": None},
+                {"id": workspace_id, "product_tier": "enterprise"},
+            ]
+        )
+        request = _make_request(conn)
+
+        with patch.object(iw, "send_email", new=AsyncMock()) as mock_send:
+            await iw.set_workspace_tier(
+                str(workspace_id), iw.SetTierRequest(tier="enterprise"), request, admin=_ADMIN
+            )
+
+        mock_send.assert_awaited_once()
+        assert "Acme" in mock_send.await_args.kwargs["subject"]
+
+    async def test_already_enterprise_does_not_refire_alert(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": workspace_id, "company_name": "Acme", "contact_email": "ops@acme.com", "product_tier": "enterprise",
+                 "stripe_subscription_status": "active", "created_at": None},
+                {"id": workspace_id, "product_tier": "enterprise"},
+            ]
+        )
+        request = _make_request(conn)
+
+        with patch.object(iw, "send_email", new=AsyncMock()) as mock_send:
+            await iw.set_workspace_tier(
+                str(workspace_id), iw.SetTierRequest(tier="enterprise"), request, admin=_ADMIN
+            )
+
+        mock_send.assert_not_called()
+
+    async def test_non_enterprise_tier_change_does_not_fire_alert(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": workspace_id, "company_name": "Acme", "contact_email": "ops@acme.com", "product_tier": "starter",
+                 "stripe_subscription_status": "active", "created_at": None},
+                {"id": workspace_id, "product_tier": "growth"},
+            ]
+        )
+        request = _make_request(conn)
+
+        with patch.object(iw, "send_email", new=AsyncMock()) as mock_send:
+            await iw.set_workspace_tier(
+                str(workspace_id), iw.SetTierRequest(tier="growth"), request, admin=_ADMIN
+            )
+
+        mock_send.assert_not_called()
+
+    async def test_alert_failure_does_not_raise(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"id": workspace_id, "company_name": "Acme", "contact_email": "ops@acme.com", "product_tier": "starter",
+                 "stripe_subscription_status": "active", "created_at": None},
+                {"id": workspace_id, "product_tier": "enterprise"},
+            ]
+        )
+        request = _make_request(conn)
+
+        with patch.object(iw, "send_email", new=AsyncMock(side_effect=iw.EmailError("down"))):
+            result = await iw.set_workspace_tier(  # must not raise
+                str(workspace_id), iw.SetTierRequest(tier="enterprise"), request, admin=_ADMIN
+            )
+        assert result.product_tier == "enterprise"
 
     async def test_invalid_tier_raises_400(self):
         conn = AsyncMock()

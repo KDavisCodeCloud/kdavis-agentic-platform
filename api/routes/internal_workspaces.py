@@ -44,6 +44,12 @@ destructive and irreversible. Nulls every credential and PII column;
 keeps the workspace row and its audit_log/incident history for billing
 and audit-trail integrity, matching the "archival, not hard deletion"
 model already documented in docs/customer/dpa-outline.md.
+
+PATCH .../tier also fires a best-effort email (core/email.py) to
+OWNER_ALERT_EMAIL (defaults to Kelvin's own address) the moment a
+workspace's tier actually changes to enterprise -- previously this was
+"purely manual discovery," per knowledge/sops/customer-ops/
+enterprise-mcp-invite.md, which this closes.
 """
 
 import logging
@@ -56,6 +62,7 @@ from pydantic import BaseModel
 from api.middleware.auth import _hash_token
 from api.middleware.internal_auth import get_internal_user
 from core.compliance import WorkspaceComplianceGuard
+from core.email import EmailError, enterprise_alert_html, send_email
 
 _MCP_VALID_SCOPES = frozenset({"mcp:read", "mcp:write"})
 
@@ -235,7 +242,7 @@ async def set_workspace_tier(
         raise HTTPException(status_code=400, detail=f"Invalid tier '{body.tier}' — must be one of: {valid}")
 
     async with request.app.state.db_pool.acquire() as conn:
-        await _get_workspace_or_404(conn, workspace_id)
+        workspace = await _get_workspace_or_404(conn, workspace_id)
         row = await conn.fetchrow(
             "UPDATE workspaces SET product_tier = $1, updated_at = NOW() "
             "WHERE id = $2 RETURNING id, product_tier",
@@ -244,7 +251,27 @@ async def set_workspace_tier(
         )
 
     log.info("[InternalWorkspaces] Workspace=%s tier set to %s by admin=%s", workspace_id, body.tier, admin["email"])
+
+    if body.tier == "enterprise" and workspace["product_tier"] != "enterprise":
+        await _send_enterprise_alert(workspace_id, workspace["company_name"], workspace.get("contact_email"))
+
     return WorkspaceTierResponse(id=str(row["id"]), product_tier=row["product_tier"])
+
+
+async def _send_enterprise_alert(workspace_id: str, company_name: str, contact_email: str | None) -> None:
+    """Best-effort alert to the platform owner when a workspace becomes
+    Enterprise-eligible -- closes the "purely manual discovery" gap
+    knowledge/sops/customer-ops/enterprise-mcp-invite.md documented.
+    Never allowed to fail the tier change itself."""
+    owner_email = os.environ.get("OWNER_ALERT_EMAIL", "kdav2k5@gmail.com")
+    try:
+        await send_email(
+            to=owner_email,
+            subject=f"Enterprise tier: {company_name}",
+            html=enterprise_alert_html(company_name, workspace_id, contact_email),
+        )
+    except EmailError as exc:
+        log.warning("[InternalWorkspaces] Enterprise alert email failed for workspace=%s: %s", workspace_id, exc)
 
 
 _PURGEABLE_STATUSES = ("canceled", "suspended")

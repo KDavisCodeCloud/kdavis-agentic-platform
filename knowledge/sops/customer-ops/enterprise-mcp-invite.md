@@ -1,25 +1,27 @@
 # SOP: Enterprise MCP Invite (Cloud Decoded)
 Date created: 2026-09-14
+Updated: 2026-09-14 (alerting automated same day)
 Product: Cloud Decoded
-Status: Live (provisioning), alerting not yet automated
+Status: Live (provisioning + alerting)
 
 ## When this applies
 An Enterprise-tier customer needs per-user MCP OAuth 2.1 access (Claude
 Code / Claude Desktop connecting directly via `mcp.theclouddecoded.com`)
 instead of the shared workspace-token model Starter/Growth use.
 
-## How you find out this is needed (currently manual)
-As of 2026-09-14 there is **no automated alert** when a workspace becomes
-Enterprise-eligible or when someone actually asks for MCP access — this
-is discovered by:
-- A direct customer request (email/call), or
-- You noticing a workspace's `product_tier` is `enterprise` while
-  checking `GET /internal/workspaces`.
+## How you find out this is needed
+As of 2026-09-14, `PATCH /internal/workspaces/{id}/tier` fires a
+best-effort email (`core/email.py`, via Resend) to `OWNER_ALERT_EMAIL`
+the moment a workspace's tier actually transitions to `enterprise` — not
+on every PATCH, only a real change. That covers the case where you (or
+sales) set the tier. It does NOT cover a customer emailing/calling and
+asking for MCP access on a workspace that's already Enterprise-tier —
+that still only shows up when they reach out directly, which is expected
+(you can't alert on an event that hasn't happened).
 
-`workspaces.contact_email` (migration 026) exists now specifically so
-this loop can eventually be closed with a real alert — see GAPS.md for
-the "wire a notification on tier change" item. Until that's built, check
-manually.
+If `RESEND_API_KEY` is ever unset on the Railway service, sends are
+silently skipped (logged, not raised) — check `GET /internal/workspaces`
+manually if you suspect alerts have gone quiet.
 
 ## Provisioning the invite
 1. Confirm the workspace is actually Enterprise:

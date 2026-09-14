@@ -39,4 +39,10 @@ Full detail: `knowledge/operator/architecture-decisions/2026-09-14-connectivity-
   file linked above (now has a "Round 2" section). Live-verified after
   deploy: `/terms`/`/privacy` return 200, `POST /workspaces` 422s on an
   incomplete body in production.
+- Round 3, same session: Kelvin provided a Resend API key (set on Railway
+  via the MCP tool, never in code) and confirmed the GitHub App is now
+  public. `core/email.py` added — welcome email on checkout, owner alert
+  on a real transition to Enterprise tier. Both were "still open" items
+  from Round 1/2, now closed. See the architecture-decisions file's
+  "Round 3" section.
 

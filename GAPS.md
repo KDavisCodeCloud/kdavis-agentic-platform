@@ -601,20 +601,27 @@ regressions; confirmed by installing the two pip-installable ones and
 re-running clean). Frontend `next build`: clean, 18 routes.
 
 **Still open, not built this pass:**
-- Welcome/confirmation email sending — `contact_email` now exists to
-  send to, but no send mechanism (provider/API key) is wired up. Needs a
-  provider decision (e.g. Resend) and a real API key only Kelvin can
-  provision — flagged to him directly rather than guessed at.
-- Enterprise MCP tier-change alert — still fully manual discovery per
-  `enterprise-mcp-invite.md`'s SOP; the email column that would make an
-  automated alert possible now exists, the alert itself doesn't yet.
 - No self-serve "delete my data" button — `purge-data` exists but is
   admin-only/curl-only today, same shape as the other `/internal/workspaces/*`
   levers.
 - No per-connector "disconnect" endpoint for an active customer who wants
   to remove just one credential without a full purge — noted in
   `credential-rotation.md`.
-- GitHub App "the-cloud-decoded" is registered but still marked private
-  in GitHub's own settings — a private App can only be installed by its
-  owning account. Needs Kelvin to flip it to public (GitHub-side setting,
-  not a code change) before any real customer can install it.
+
+**CLOSED same day (2026-09-14, follow-up pass):**
+- Welcome/confirmation email + Enterprise MCP tier-change alert — Kelvin
+  provided a Resend API key (set as `RESEND_API_KEY` on the Railway
+  service, never committed to code). `core/email.py` added:
+  `_handle_checkout_completed` (stripe_billing.py) now sends a welcome
+  email; `set_workspace_tier` (internal_workspaces.py) now alerts
+  `OWNER_ALERT_EMAIL` the moment a workspace's tier actually transitions
+  to `enterprise` (not on every PATCH — only a real transition). Both
+  call sites treat a send failure as non-fatal (log + continue), matching
+  the "a broken email provider must never break checkout or a tier
+  change" discipline stated in `core/email.py`'s own docstring. 21 new
+  tests (`tests/test_email.py` + additions to
+  `tests/test_internal_workspaces.py`/`tests/test_stripe_billing.py`).
+  Full suite: 1320 passing.
+- GitHub App "the-cloud-decoded" — Kelvin confirmed it's now public.
+  Live-verified: `https://github.com/apps/the-cloud-decoded` returns 200.
+  Real customers can now install it.

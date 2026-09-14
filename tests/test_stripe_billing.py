@@ -290,12 +290,19 @@ class TestUpdateWorkspaceBilling:
 
 class TestWebhookHandlers:
     async def test_checkout_completed_missing_workspace_id_logs_and_skips(self):
-        with patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update:
+        with (
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
+            patch.object(billing, "_send_welcome_email", new=AsyncMock()) as mock_welcome,
+        ):
             await billing._handle_checkout_completed(MagicMock(), {"customer": "cus_1", "metadata": {"tier": "growth"}})
         mock_update.assert_not_called()
+        mock_welcome.assert_not_called()
 
     async def test_checkout_completed_unrecognized_tier_defaults_to_starter(self):
-        with patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update:
+        with (
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
+            patch.object(billing, "_send_welcome_email", new=AsyncMock()) as mock_welcome,
+        ):
             await billing._handle_checkout_completed(
                 MagicMock(),
                 {"client_reference_id": "ws-1", "customer": "cus_1", "metadata": {"tier": "not_a_tier"}},
@@ -303,6 +310,38 @@ class TestWebhookHandlers:
         mock_update.assert_awaited_once()
         kwargs = mock_update.await_args.kwargs
         assert kwargs["tier"] == "starter"
+        mock_welcome.assert_awaited_once()
+
+
+class TestSendWelcomeEmail:
+    async def test_sends_when_contact_email_present(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"company_name": "Acme", "contact_email": "ops@acme.com"})
+        pool = _pool_with_conn(conn)
+
+        with patch.object(billing, "send_email", new=AsyncMock()) as mock_send:
+            await billing._send_welcome_email(pool, str(uuid4()))
+
+        mock_send.assert_awaited_once()
+        assert mock_send.await_args.kwargs["to"] == "ops@acme.com"
+
+    async def test_noop_when_no_contact_email(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"company_name": "Acme", "contact_email": None})
+        pool = _pool_with_conn(conn)
+
+        with patch.object(billing, "send_email", new=AsyncMock()) as mock_send:
+            await billing._send_welcome_email(pool, str(uuid4()))
+
+        mock_send.assert_not_called()
+
+    async def test_send_failure_is_swallowed_not_raised(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"company_name": "Acme", "contact_email": "ops@acme.com"})
+        pool = _pool_with_conn(conn)
+
+        with patch.object(billing, "send_email", new=AsyncMock(side_effect=billing.EmailError("down"))):
+            await billing._send_welcome_email(pool, str(uuid4()))  # must not raise
 
     async def test_subscription_updated_no_workspace_found_is_a_noop(self):
         with patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=None)):

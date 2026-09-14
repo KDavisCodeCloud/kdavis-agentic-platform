@@ -25,14 +25,14 @@ mostly automatic — this SOP is what to check/do, not a manual setup process.
    is required for a Starter/Growth signup to become fully connected.
 
 ## What to check as the operator
-- **No welcome/confirmation email is sent yet** (as of 2026-09-14 — no
-  email-sending infrastructure exists in the codebase). If a customer says
-  they don't know what to do next, that's why — there's nothing wrong on
-  their end. Until email sending is built, proactively check
-  `GET /internal/workspaces` after a signup you notice in Stripe and reach
-  out manually if a workspace has been `active` for a day+ with no
-  connections configured (`GET /workspace/credentials/status` per workspace,
-  or just ask).
+- **Welcome email**: as of 2026-09-14 (later same day), `checkout.session.completed`
+  fires a real welcome email (`core/email.py`, via Resend) to the
+  workspace's `contact_email` pointing them at the Connections tab. It's
+  best-effort — a send failure is logged, not retried. If a customer says
+  they never got it, or if `RESEND_API_KEY` is ever unset on Railway,
+  fall back to checking manually: `GET /internal/workspaces` and reach
+  out if a workspace has been `active` for a day+ with no connections
+  configured (`GET /workspace/credentials/status` per workspace).
 - **Enterprise signups**: there is no self-serve Enterprise checkout tier
   — `/checkout` only offers Starter/Growth. An Enterprise deal is closed
   manually (sales conversation), then:
@@ -45,6 +45,6 @@ mostly automatic — this SOP is what to check/do, not a manual setup process.
   unless they ask for help.
 
 ## What's still manual (known gaps, tracked in GAPS.md / DECISIONS.md)
-- No welcome email automation.
 - No proactive "workspace signed up but never connected anything" alert —
-  you have to check `GET /internal/workspaces` yourself.
+  you have to check `GET /internal/workspaces` yourself. (Welcome email
+  itself is automated as of 2026-09-14 — see above.)

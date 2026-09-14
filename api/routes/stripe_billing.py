@@ -18,6 +18,9 @@ Design notes:
   and is used for all subsequent portal and subscription event lookups.
 - On cancellation/downgrade: workspace data is NEVER deleted. Only
   stripe_subscription_status and product_tier are updated.
+- checkout.session.completed also fires a best-effort welcome email
+  (core/email.py) to the workspace's contact_email -- a send failure is
+  logged and never allowed to fail the webhook itself.
 """
 
 import logging
@@ -31,6 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment, get_workspace_any_status
+from core.email import EmailError, send_email, welcome_email_html
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -402,6 +406,30 @@ async def _handle_checkout_completed(db_pool, session: dict) -> None:
         tier=tier,
         subscription_status="active",
     )
+
+    await _send_welcome_email(db_pool, workspace_id)
+
+
+async def _send_welcome_email(db_pool, workspace_id: str) -> None:
+    """Best-effort welcome email now that the workspace is active. Never
+    allowed to fail the webhook -- a broken email provider must not turn
+    into a Stripe webhook retry storm or a customer stuck mid-checkout."""
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT company_name, contact_email FROM workspaces WHERE id = $1",
+            UUID(workspace_id),
+        )
+    if not row or not row["contact_email"]:
+        return
+
+    try:
+        await send_email(
+            to=row["contact_email"],
+            subject="Welcome to Cloud Decoded",
+            html=welcome_email_html(row["company_name"]),
+        )
+    except EmailError as exc:
+        log.warning("[Billing] Welcome email failed for workspace=%s: %s", workspace_id, exc)
 
 
 async def _handle_subscription_updated(db_pool, subscription: dict) -> None:
