@@ -208,3 +208,339 @@ ship silently: `_tier_limit(request)` looked correct read as a plain
 Python function and nothing ever actually invoked it through slowapi in a
 test. 9 new tests, full suite still 997 passing (same 4 pre-existing,
 unrelated failures in `test_agent01_local.py`/`test_security.py`).
+
+## Manually surfaced during item 5 (Azure DevOps connectivity, 2026-09-14)
+
+### 6. `ConnectionsPanel.tsx`'s GitHub card still submits a PAT that the backend retired -- RESOLVED (Phase 3)
+
+Found while adding the Azure DevOps card to this same file, not fixed here
+(out of scope for item 5, and a UI-only change deserves its own session).
+`PATCH /workspace/credentials/github` was retired to a `410` in the item 4
+GitHub App migration (`api/routes/workspace_credentials.py`'s
+`connect_github` now always raises, pointing callers at
+`GET /workspace/credentials/github-app/install-url` instead) -- but
+`ConnectionsPanel.tsx`'s GitHub `SectionCard` still renders a PAT input
+wired to `connectGithubPat`/`POST` against that same retired route. Any
+real customer who hasn't already connected via a legacy PAT gets a 410
+error with no visible path to the actual install flow. Needs: swap the
+GitHub card's PAT form for a "Install the Cloud Decoded GitHub App" button
+that calls `GET .../github-app/install-url` and redirects, mirroring the
+callback handling `github_app_install_callback` already does server-side.
+
+While in the same file: also noticed (and fixed, since it's the exact
+response object item 5 was already editing) that `get_connections_status`
+computed `github_connected` from `github_pat_verified_at` alone -- a
+workspace that connected via the App (no PAT at all) would have shown as
+"Not connected" despite being fully connected. Now
+`bool(github_pat_verified_at) or bool(github_app_installation_id)`.
+
+### 7. Agents 04 (Migration) & 10 (Dependency Patch) never received a workspace's real GitHub credential -- CRITICAL, two paid tiers
+
+**RESOLVED same session it was found (Phase 1 of the connectivity gap
+roadmap, 2026-09-14).** Found while inventorying item 5's blast radius.
+
+`agents/agent_04_migration/workflow.py`'s and
+`agents/agent_10_dependency_patch/workflow.py`'s `__init__` used to accept
+only `(db_conn, workspace_id, checkpointer)` -- no credential kwargs at
+all, unlike agents 01/05/06/08. `api/routes/webhooks.py`'s `_run_migration`
+and `_run_dependency_patch` instantiated both workflows with zero
+credentials, never calling `build_agent_credentials()`. Worse: **the actual
+write action (`create_migration_pr`/`create_patch_pr`) runs on *resume*,
+after HITL approval** -- `api/routes/incidents.py`'s `_resume()` -- and
+`agent_04_migration`/`agent_10_dependency_patch` were also missing from
+`_CREDENTIALED_AGENTS` there, so even a caller who fixed only the
+webhooks.py side would still have hit the same gap on approval. Both call
+sites needed the fix, not just one.
+
+`MigrationTools`/`DependencyPatchTools` filled the gap with
+`os.environ.get("GITHUB_TOKEN", "")` -- the exact env-var-fallback pattern
+`core/workspace_credentials.py` deliberately removed everywhere else. Every
+real Growth+ customer's migration or dependency-patch PR was either created
+using **the platform's own token** against whatever repos it could reach
+(a cross-tenant credential leak, if that env var was ever set to anything
+real) or failed outright (if unset). Live since these two agents were
+built -- not introduced by any change this session.
+
+Fixed: both workflow constructors now accept the same uniform
+`github_token`/`aws_session`/`azure_access_token`/`azure_devops_token`
+shape every other credentialed agent's constructor accepts (only
+`github_token` is actually used by either agent's tools -- the rest are
+accepted-and-ignored for uniform `**creds` spreading, matching agents
+05/06/08's own convention). `_run_migration`/`_run_dependency_patch` now
+call `build_agent_credentials()`. `_CREDENTIALED_AGENTS` in
+`api/routes/incidents.py` now includes both agent IDs. The
+`os.environ.get("GITHUB_TOKEN", "")` fallback is removed from both
+`tools.py` files -- no env-var fallback, matching `CICDTools`/`DriftTools`.
+
+8 new tests: `tests/test_agent04.py`/`test_agent10.py` (constructor threads
+`github_token` through, no env fallback even with `GITHUB_TOKEN` set in the
+environment), `tests/test_incidents.py` (resume passes the real per-
+workspace token, and `None` when unconfigured -- not a borrowed platform
+token), `tests/test_webhooks.py` (initial run calls
+`build_agent_credentials` and spreads the result). Full suite: 1248
+passing (was 1240; same 5 pre-existing, unrelated failures in
+`test_agent01_local.py`/`test_internal_agents.py`/`test_security.py`).
+
+**Not done here, tracked separately (Phase 2 of the connectivity roadmap):**
+`MigrationTools.create_migration_pr`/`DependencyPatchTools.create_patch_pr`
+are still their own hand-rolled direct GitHub REST implementations, a third
+copy of the same 5-step flow `core/repo_tools.py`'s `GitHubRepoTools`
+already centralizes (alongside `agent_08_drift_detection`'s
+`create_drift_pr`). Neither can target Azure DevOps yet despite this
+session's `AzureDevOpsRepoTools` existing. Phase 1 only closed the
+credential-safety gap; Phase 2 is what makes the `RepoTools` abstraction
+(and Azure DevOps support) actually load-bearing for these two agents.
+
+**RESOLVED (Phase 2, same session, 2026-09-14).** `MigrationTools.create_migration_pr`,
+`DriftTools.create_drift_pr`, and `DependencyPatchTools.create_patch_pr` no
+longer have their own direct GitHub REST implementations -- all three now
+delegate branch-creation/commit/PR-open to `core/repo_tools.py` via a new
+provider-selection factory, `get_repo_tools(github_token, azure_devops_token,
+azure_devops_org) -> RepoTools` (GitHub takes priority when both happen to
+be configured; raises the new `NoRepoCredentialError` when neither is).
+This is the same real, already-working logic (same branch-naming, same
+commit messages, same return shapes -- `MigrationTools` keeps its
+historical `"pr_opened"` status string, the other two keep `"pr_created"`),
+just reshaped behind the interface instead of three copies of it.
+
+`azure_devops_org` is now also part of `build_agent_credentials()`'s
+returned dict (a new `workspaces.azure_devops_org` SELECT column) --
+Azure DevOps needs org+PAT together to address a repo, unlike GitHub where
+the token alone is enough. Every workflow that receives `**creds` from
+`build_agent_credentials()` (agents 01/04/05/06/08/10) had to accept this
+new key too, even where unused, to avoid a `TypeError` from the uniform
+spread -- same discipline as the other accept-and-ignore creds.
+
+Issue/work-item creation (`create_github_issue`, `create_drift_issue`,
+`create_vulnerability_issue`) is deliberately **not** touched -- `RepoTools`
+has no issue-creation operation (Azure DevOps "work items" are a different,
+larger API shape than GitHub issues), and none of this session's plan
+called for adding one. Those three methods stay direct, GitHub-only REST
+calls.
+
+18 new/rewritten tests: `tests/test_repo_tools.py` (`get_repo_tools`
+provider selection, 5 tests), `tests/test_agent04.py`/`test_agent08.py`/
+`test_agent10.py` (each `create_*_pr` rewritten to assert delegation to a
+mocked `RepoTools` instance instead of asserting raw httpx call sequences
+-- that lower-level behavior is `test_repo_tools.py`'s job now, not
+duplicated here -- plus new `azure_devops_org`/`azure_devops_token`
+constructor-wiring tests for all three workflows). Full suite: 1256
+passing (was 1248; same 5 pre-existing, unrelated failures).
+
+### 8. Phase 3 -- GitHub Connections card fixed, plus a second dead-end found in the same flow
+
+**RESOLVED (Phase 3, same session, 2026-09-14).** `ConnectionsPanel.tsx`'s
+GitHub card no longer renders a PAT input. It now calls
+`GET /workspace/credentials/github-app/install-url` and navigates the
+browser there directly (`window.location.href`), matching the item 4 App
+flow. `connectGithubPat`/`mockConnectGithub` (frontend) were dead code
+after the swap -- deleted rather than left orphaned, since nothing else
+referenced them.
+
+**Second bug found while wiring this up, in the same flow:**
+`github_app_install_callback` (the route GitHub's own `setup_url` redirect
+lands the customer's real browser on after they click "Install") returned
+a bare JSON dict, `{"status": "installed"}`. That's fine for an API call a
+frontend `fetch`s and reads a body from -- it is not fine for an actual
+browser navigation, which would have shown the customer a blank JSON page
+with no way back into the dashboard. Fixed to a real `RedirectResponse` to
+`{FRONTEND_URL}/dashboard?connected=github`, matching the exact convention
+`api/routes/content.py`'s LinkedIn/X OAuth callbacks already use.
+
+Not done: the dashboard doesn't read `?connected=github` (or LinkedIn/X's
+existing `?connected=linkedin`/`?connected=x`, which have the same
+non-wired gap already) to auto-select the Connections tab -- landing back
+on the dashboard root instead of directly on the tab that shows the new
+"Connected" status. Minor, consistent with how the two pre-existing
+integrations already behave, not introduced here -- left as its own
+small follow-up rather than building new tab-deep-linking behavior nobody
+asked for as a side effect of this fix.
+
+3 tests updated/added (`tests/test_workspace_credentials_routes.py`'s
+callback test now asserts a redirect, not a JSON body). Full frontend
+`next build` clean; full backend suite still 1256 passing.
+
+### 9. Phase 4 -- real per-workspace Kubernetes credentials, plus a critical Agent 02 gap found along the way
+
+**RESOLVED (Phase 4, same session, 2026-09-14).** Replaced the global
+`KUBECONFIG_YAML` + `K8S_CONTEXT_AWS`/`K8S_CONTEXT_AZURE` stopgap with real
+per-workspace cluster credentials (migration 025:
+`k8s_api_url`/`k8s_token_encrypted`/`k8s_ca_cert_encrypted`/`k8s_verified_at`)
+and a new `PATCH /workspace/credentials/k8s` verify-then-store route
+(`core.workspace_credentials.verify_k8s_connection`, an authenticated read
+against the cluster's `/api` discovery endpoint).
+
+**Second critical gap found while scoping this, same class as GAPS.md #7**:
+Agent 02 (K8s Alert Fatigue & Remediation -- available at every tier,
+including Starter, unlike agents 04/10 which are Growth+) had *never*
+received a per-workspace credential of any kind. `K8sAlertWorkflow.__init__`
+took zero credential params; `K8sTools` fell back to
+`os.environ["K8S_API_URL"]`/`["K8S_TOKEN"]`/`["GITHUB_TOKEN"]` for
+literally every real customer, on both the initial run (`webhooks.py`'s
+`_run_k8s_alert_triage`) and the resume path where the actual K8s API
+writes and GitOps PR execute (`incidents.py`'s `_resume()` -- agent_02
+wasn't even in `_CREDENTIALED_AGENTS`). Same failure mode as #7: broken
+outright if the env vars were unset, or a cross-tenant leak if they held
+anything real. Fixed identically -- `build_agent_credentials()`/
+`build_k8s_credentials()` wired into both call sites, `agent_02_k8s_alert`
+added to `_CREDENTIALED_AGENTS`, env-var fallback removed from `K8sTools`.
+
+While already touching `K8sTools`, also routed `create_gitops_pr` through
+`core.repo_tools` (the same duplicate-GitHub-implementation treatment
+Phase 2 gave agents 04/08/10) and added `k8s_ca_cert` support to its REST
+calls (`_verify` property, a per-instance temp CA file) -- without it,
+Agent 02 could authenticate but never actually pass TLS verification
+against a private-CA cluster (EKS/AKS typical), while `verify_k8s_connection`
+at connect-time would have succeeded with the same cert. Never silently
+skip TLS verification, so this had to be consistent both places.
+
+Agent 08 (`DriftTools`, kubectl subprocess-based, not REST) keeps its
+`k8s_context`/global-kubeconfig fallback for workspaces that haven't
+connected their own cluster yet -- `_cluster_flag` (renamed from
+`_context_flag`) now prefers a per-workspace kubeconfig
+(`core.workspace_credentials.build_kubeconfig`, written to a lazily-created
+temp file, `--kubeconfig`) over `--context` when real credentials are
+present. `build_kubeconfig` never sets `insecure-skip-tls-verify` either --
+omits CA data entirely when none is configured, so kubectl falls back to
+the system trust store, same discipline as the REST path.
+
+24 new/updated tests across `tests/test_workspace_credentials.py`
+(`verify_k8s_connection`, `build_kubeconfig`, `build_k8s_credentials`),
+`tests/test_agent02.py` (credential wiring, `create_gitops_pr` delegation,
+the `_verify` property), `tests/test_agent08.py` (`_cluster_flag`
+priority), `tests/test_incidents.py`/`test_webhooks.py` (both call sites
+for both agents), `tests/test_workspace_credentials_routes.py` (the new
+connect route), `tests/test_auth.py` (pinned SQL shape). Full frontend
+`next build` clean (new Kubernetes connections card). Full backend suite:
+1280 passing (was 1256), same 5 pre-existing unrelated failures.
+
+### 10. Phase 5 -- `workspaces.llm_provider`/BYOK key were never read by any agent, not just the provider preference
+
+**RESOLVED (Phase 5, same session, 2026-09-14).** Scoped in the roadmap as
+"wire `llm_provider` into agent LLM routing" -- turned out both halves of
+BYOK were dead. `POST /workspaces/llm-key` stores `encrypted_llm_key` +
+`llm_provider` at onboarding; `agents/base_agent.py`'s `call_llm()` already
+had full `provider_override`/`byok_encrypted_key` plumbing (including a
+thread-safe `_byok_env_override` context manager) -- but **every single
+diagnose call across all 10 agents left both params at their defaults**,
+so every workspace, regardless of what it configured, always ran on the
+platform's own Anthropic key. `byok_encrypted_key` was accepted as a
+parameter on every workflow's `run()` method but never once read after
+that -- not stored, not threaded into the diagnose node, not passed to
+`call_llm()`. A fully-built feature with no wire connecting it to anything.
+
+Fixed by making `BaseAgent.__init__` accept `llm_provider`/
+`byok_encrypted_key` and store them as instance defaults that `call_llm()`
+falls back to when a caller doesn't explicitly override -- rather than
+editing every one of the 10 diagnose nodes individually, each of the 10
+workflow constructors (already being threaded with credentials all session)
+now also accepts and forwards these two to `super().__init__()`. `llm_provider`
+added to `workspaces` SELECT queries in both `api/middleware/auth.py` (the
+manual-trigger path, `api/routes/agents.py`) and `api/routes/webhooks.py`
+(both the per-workspace-token and GitHub-App-installation lookup) so
+`workspace.get("llm_provider")` resolves on every dispatch path; all 10
+`agent = WorkflowClass(...)` constructor call sites in `webhooks.py` now
+pass both. Resume doesn't need this -- confirmed no `_execute_node` across
+any of the 10 agents calls `call_llm` (diagnosis only happens once, in
+`run()`, before the HITL gate).
+
+**Scripting error caught before it shipped**: an initial sed-free Python
+rewrite of all 10 constructors' closing `):` accidentally deleted it in 7
+of them (the two new params merged into `super().__init__(...)` as if it
+were a 3rd parameter, no syntax boundary between signature and body) --
+`py_compile` caught all 7 immediately; fixed with a second scripted pass
+restoring the closing paren before running anything else. Full suite run
+immediately after confirmed zero regressions -- worth noting only because
+it's a real example of "verify programmatic edits before trusting them,"
+not because it shipped.
+
+16 new tests: `tests/test_agent01.py` (`call_llm`'s three-tier fallback --
+explicit override > workspace default > platform default; BYOK decryption
+invoked when only the workspace-level key is set), `tests/test_agent04.py`
+(constructor threads both through to `self._llm_provider`/
+`self._byok_encrypted_key`), `tests/test_webhooks.py` (constructor call
+site receives them from the real `workspace` dict), `tests/test_auth.py`
+(pinned SELECT shape). The 10 `webhooks.py` call sites were also reformatted
+to multi-line (168-213 char single lines afterward) for readability.
+Full backend suite: 1286 passing (was 1280), same 5 pre-existing unrelated
+failures.
+
+### 11. Phase 6 -- Enterprise MCP OAuth 2.1 provisioning built; TLS still externally blocked
+
+**PARTIALLY RESOLVED (Phase 6, same session, 2026-09-14).** Two halves,
+one closed, one genuinely can't be from inside a coding session:
+
+**Closed**: `mcp/auth/oauth.py`'s Supabase JWT validation was fully built
+and correct (workspace_id/workspace_tier/mcp_scopes read from
+`app_metadata`) but nothing in the repo could ever get a real customer
+INTO that state -- the only existing Supabase Auth admin-invite code
+(`agents/internal/onboarding_agent.py`) is for THD's own internal team
+dashboard, a different product/trust relationship entirely. Added
+`POST /internal/workspaces/{id}/mcp-invite` to `api/routes/internal_workspaces.py`
+(admin-gated via the same `get_internal_user` every other admin lever in
+that file already uses) -- a two-step Supabase Admin API call
+(`invite_user_by_email` then `update_user_by_id`), not one, because
+`invite_user_by_email`'s `options.data` only sets user-editable
+`user_metadata`; the `app_metadata` `validate_oauth_token()` actually
+trusts can only be set via `update_user_by_id`. Decision (Kelvin,
+2026-09-14): admin-provisioned, not self-serve -- Enterprise sells on a
+30-90 day B2B cycle to VP-Eng buyers, provisioning happens after a deal
+closes. No frontend UI built for this (out of scope for what was asked --
+Kelvin can call it directly until/unless a dashboard button is wanted;
+`/dashboard/customers` referenced in earlier audit notes doesn't appear to
+exist as an actual route in this frontend as of this session, so there
+was no natural existing page to bolt a button onto anyway).
+
+**Still open, not fixable from here**: `mcp.theclouddecoded.com`'s TLS
+certificate is still `CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP` --
+checked live at the start of this session and again just now, unchanged
+across the whole session's duration. DNS has been `PROPAGATED` the entire
+time. This is now well past Railway's own stated "normally under an hour,
+up to 72" window. Needs a Railway support ticket from Kelvin's own
+account -- not something a coding session can file. Until it clears, the
+final live SSE MCP tool-call verification (queued since the 2026-09-12
+audit) and any real end-to-end test of this session's new OAuth invite
+flow both stay blocked.
+
+10 new tests in `tests/test_internal_workspaces.py` (invite + app_metadata
+linking, read-only-scope request, unknown-scope 400, missing-workspace 404,
+unconfigured-Supabase 500, invite-failure 502, app_metadata-link-failure
+502 with the orphaned-user id surfaced in the error for manual recovery).
+Full backend suite: 1293 passing (was 1286), same 5 pre-existing unrelated
+failures.
+
+### 12. Phase 7 doc reconciliation + Phases 8-9 GTM content (Kelvin: "draft it all now")
+
+**DONE (same session, 2026-09-14).** `CloudDecoded-Build-Order.md`
+reconciled: corrected the MCP TLS claim, corrected a stale claim that a
+`/dashboard/customers` admin UI existed (it doesn't — zero frontend code
+calls any `/internal/workspaces/*` route; the backend levers are real and
+tested but curl-only today), and summarized the whole connectivity build
+sequence with GAPS.md cross-references.
+
+Priority 2 (og:image, Features, 10-problems AEO, Comparison, Security)
+and Priority 3 (setup guide, agent reference, workflow how-tos, Loom
+script, security questionnaire draft, DPA outline) both drafted in full.
+Real bug found and fixed while building the og:image: `page.tsx`'s
+metadata referenced `/og-image.png`, a file that never existed anywhere
+in this repo (no `public/` directory at all) — the homepage's social
+share image has been silently broken since the landing page shipped.
+Replaced with `app/opengraph-image.tsx` (Next.js's dynamic `ImageResponse`
+file convention — generated from the real design tokens, not a static
+asset that can drift from them).
+
+Deliberate scope boundaries, not oversights: the Comparison page sticks
+to architecture/positioning claims about Microsoft Copilot and AWS
+AgentCore rather than specific technical claims about either that
+couldn't be verified; the DPA file is explicitly an outline for a real
+attorney conversation, not usable contract language, and says so
+repeatedly; the security questionnaire response doc marks its
+not-yet-confirmed fields (data residency, current sub-processor list,
+real incident-response SLA) rather than inventing specifics. The
+Features page shows all 10 real agents against the homepage's own
+narrower "5 shipping, more in private beta" framing — flagged as a
+positioning inconsistency worth a real decision, not silently
+reconciled by editing the live homepage.
+
+Full frontend `next build`: clean, 14 routes, zero warnings. Backend
+suite unaffected by this phase (docs/frontend only): still 1293 passing.

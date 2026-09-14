@@ -1,12 +1,16 @@
 # Cloud Decoded — Build Order
 **Project:** `theclouddecoded.com`
 **Company:** THD Agentic Systems LLC
-**Last updated:** 2026-09-12 (corrected — see `CLAUDE.md`'s CURRENT STATUS
-footer and `CLOUD_DECODED_AUDIT_2026-09-12.md` for the full live-verified
-picture; this file was stale since 2026-07-04, claiming the agent roster
-and MCP status incorrectly and listing Priority 1 as not-yet-done)
-**Status:** Priority 1 (auth + Stripe) is done and live. Priority 2/3
-items below are the real remaining backlog.
+**Last updated:** 2026-09-14 (corrected again — see `GAPS.md` entries #6-11
+for the full record of what changed and why; this file was stale since
+2026-09-12, predating the entire connectivity build sequence below, item
+5's Azure DevOps support, and six numbered "Phase" sessions that closed
+real credential/security gaps agents 02/04/08/10 had carried since they
+were first built)
+**Status:** Priority 1 (auth + Stripe) is done and live. The connectivity
+build sequence (GitHub App, Azure DevOps, real per-workspace K8s creds,
+BYOK routing, MCP OAuth provisioning) is done except one externally-blocked
+item (MCP TLS). Priority 2/3 items below are the real remaining backlog.
 
 ---
 
@@ -38,75 +42,120 @@ A HITL agentic DevOps automation platform targeting mid-market platform engineer
   `CLOUD_DECODED_AUDIT_2026-09-12.md`), not just Supabase-wired stubs.
 - **Stripe billing — done and live.** Real paywall: every new workspace
   locks (`pending_payment`) until checkout completes; suspend/reactivate/
-  rotate-token are real, admin UI at `/dashboard/customers`. Verified with
-  real end-to-end test-mode checkouts, not just webhook code review.
+  rotate-token/set-tier/mcp-invite are real, tested backend admin levers
+  in `api/routes/internal_workspaces.py`. **Correction (2026-09-14): there
+  is no actual `/dashboard/customers` frontend page** — this file and the
+  2026-09-12 audit both claimed one existed; a repo-wide search found zero
+  frontend code calling any `/internal/workspaces/*` route. The backend is
+  real and tested; reaching it today means calling the API directly
+  (curl/Postman) until a dashboard page is built. Verified with real
+  end-to-end test-mode checkouts, not just webhook code review.
 - **MCP server — deployed**, new Railway service `cloud-decoded-mcp`, DNS
-  on `mcp.theclouddecoded.com`, 24 tests. **TLS certificate status:
-  re-check before relying on this** — as of the last live check
-  (2026-09-12) it was still not resolving over HTTPS; this is Railway/
-  Let's Encrypt latency per Railway's own docs, not a config problem, but
-  don't assume it's cleared without checking. Enterprise-tier OAuth 2.1
-  access has no real customer path yet (needs per-customer Supabase Auth
-  accounts — the real auth model today is one shared workspace token per
-  company); Starter/Growth via API key works today.
+  on `mcp.theclouddecoded.com`, 24+ tests. **TLS certificate still not
+  issued as of 2026-09-14** — `CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP`,
+  DNS `PROPAGATED` the entire time since 2026-09-12. This is now past
+  Railway's own stated "up to 72 hours" window; needs a Railway support
+  ticket from Kelvin's account, not fixable from a coding session. Blocks
+  the final live SSE tool-call verification.
+- **Enterprise-tier OAuth 2.1 — provisioning route built 2026-09-14**,
+  `POST /internal/workspaces/{id}/mcp-invite` (admin-gated, two-step
+  Supabase Admin API call setting `app_metadata.workspace_id`/
+  `workspace_tier`/`mcp_scopes`, the fields `mcp/auth/oauth.py`'s JWT
+  validation already trusted but nothing could ever populate). Real,
+  unit-tested, not live-verified end-to-end yet — blocked on the same MCP
+  TLS gap above. Starter/Growth via API key works today, unaffected.
 - **Azure onboarding + CIS compliance scanning — done and live** across
   `kdavis-cloud-audit`, `kdavis-finops-agent`, `kdavis-compliance-agent`,
   and this repo's `AgentConnectFlow.tsx`, alongside the existing AWS path.
   Not mentioned anywhere in this file's original scope — see
   `CLOUD_DECODED_AUDIT_2026-09-12.md` section 6 for full detail.
+- **Connectivity build sequence — done except the MCP TLS item above.**
+  GitHub App (item 4), Azure DevOps support incl. `AzureDevOpsRepoTools`
+  (item 5), per-workspace webhook secrets, and a six-session "Phase"
+  cleanup (2026-09-14) that found and fixed real gaps along the way:
+  agents 02/04/10 were silently running on a shared platform GitHub/K8s
+  token instead of each customer's own (GAPS.md #7, #9 — a correctness
+  and cross-tenant-leak risk, not just a missing feature); three duplicate
+  hand-rolled GitHub PR implementations collapsed onto `core/repo_tools.py`
+  (GAPS.md #8); the K8s global-`KUBECONFIG_YAML` stopgap replaced with
+  real per-workspace cluster credentials for Agents 02/08 (GAPS.md #9);
+  `workspaces.llm_provider`/BYOK were stored at onboarding but never once
+  read by any of the 10 agents until now (GAPS.md #10). Full detail,
+  including a self-caught scripting bug during the BYOK wiring pass, lives
+  in `GAPS.md` entries #6 through #11 — read those before assuming any of
+  this is still broken or still needs building.
 
 ---
 
 ## Build Order — Remaining
 
-### Priority 2 — real remaining backlog (auth is live, start here)
+### Priority 2 — done 2026-09-14 (Phases 8-9, same connectivity session)
 
-**og:image**
-- 1200×630 PNG
-- Wordmark + tagline: "Your 2am incident, already triaged."
-- Eyebrow label on design system background
-- Export and add to landing page meta
+All five items below shipped in the same session as the connectivity
+build sequence, per Kelvin's "draft it all now" decision when asked how
+to handle GTM content:
 
-**Features page**
-- All 10 agent workflows with console UI previews
-- CTAs point to `/signup`
-- Matches locked design system
+- ✅ **Admin workspace UI** — still open, genuinely not built (see
+  `GAPS.md` #11 and the correction above). Kept here as the one real
+  Priority 2 gap: `api/routes/internal_workspaces.py`'s levers
+  (list/suspend/reactivate/rotate-token/set-tier/mcp-invite) are real
+  and tested but curl-only. Matters more once MCP TLS clears.
+- ✅ **og:image** — `frontend/src/app/opengraph-image.tsx`, Next.js's
+  dynamic `ImageResponse` file convention (1200×630, generated from JSX
+  using the real design tokens) rather than a static PNG. Found and
+  fixed a real pre-existing bug while building it: `page.tsx`'s metadata
+  referenced `/og-image.png`, a file that never existed anywhere in this
+  repo (no `public/` directory at all) — the homepage's social share
+  image has been silently broken since it shipped.
+- ✅ **Features page** — `frontend/src/app/features/page.tsx`, all 10
+  real agents (not the homepage's narrower "5 shipping" framing — see
+  note below), tier-badged, matches the locked design system exactly
+  (same inline-style approach as the homepage, shared nav/footer
+  extracted to `components/marketing/SiteChrome.tsx`).
+- ✅ **10-problems AEO page** — `frontend/src/app/problems/page.tsx`,
+  one direct question+answer per problem, FAQPage JSON-LD schema.
+- ✅ **Comparison page** — `frontend/src/app/comparison/page.tsx`,
+  Cloud Decoded vs Microsoft Copilot vs AWS AgentCore. Deliberately
+  scoped to architecture/positioning claims (cloud dependency, approval
+  gate, buying motion) rather than specific unverifiable technical
+  claims about either named competitor.
+- ✅ **Security page** — `frontend/src/app/security/page.tsx`, SOC 2
+  readiness (explicitly *not* an attestation claim), tenant isolation,
+  HITL audit trail, data retention, "request the questionnaire" CTA.
 
-**10-problems AEO page**
-- One H2 per problem
-- One citable, specific claim per section
-- Structured for LLM answer extraction (answers questions like "what does Cloud Decoded do")
-
-**Comparison page**
-- Cloud Decoded vs Microsoft Copilot vs AWS AgentCore
-- No lock-in angle is the lead
-- Factual, specific, no puffery
-
-**Security page**
-- SOC 2 readiness posture (not attestation — readiness)
-- Per-tenant RLS architecture
-- HITL audit trail
-- Data retention and deletion policy summary
-- "Security questionnaire available on request" CTA
+**Note on the Features page vs. the homepage:** `page.tsx`'s own
+"Workflows" section says "five production workflows... more in private
+beta." The Features page shows all 10, because all 10 are real, built,
+and tested (confirmed directly this session, including live EKS/AKS
+verification for two of them last session) — the homepage's "5 shipping"
+framing reads as stale marketing conservatism from before all 10 were
+finished, not a technical reality. Not reconciled here (out of scope for
+what was asked — the homepage itself wasn't touched); worth a real
+decision on whether to update the homepage copy to match.
 
 ---
 
-### Priority 3 — After first client is close
+### Priority 3 — drafted 2026-09-14, same session
 
-**Docs**
-- Setup guide (written — no video)
-- How-to per agent workflow (written — no video)
-- Agent reference (what each agent does, what it touches, what it requires approval for)
-- Video reserved for sales demo page only
-
-**Loom demo**
-- 2-minute template: Hook (0:00–0:15, "2am production incident" narrative) → Solution in action (0:15–1:30) → Outcome + CTA (1:30–2:00)
-- Record after infrastructure is stood up
-- CI/CD failure triage is the first proof-of-concept scenario
-
-**Security questionnaire response doc**
-- Required to unblock mid-market deals before formal SOC 2 attestation
-- DPA template (shared with MSE legal)
+- ✅ **Docs** — `docs/customer/setup-guide.md`, `agent-reference.md`,
+  `workflow-howtos.md`. Grounded directly in the real connect routes
+  built this same session (GitHub App, AWS role, Azure SP, Azure DevOps
+  PAT, Kubernetes cluster creds) — not generic filler.
+- ✅ **Loom demo script** — `docs/customer/loom-demo-script.md`, the
+  exact Hook/Solution/Outcome template from this file, CI/CD triage
+  scenario, shot-by-shot with production notes. The recording itself
+  still needs a human with a camera — this is the script only.
+- ✅ **Security questionnaire response doc (draft)** —
+  `docs/customer/security-questionnaire-response.md`. Marked explicitly
+  as draft-not-yet-sent, with placeholder markers for the items that
+  need a real confirmed answer (data residency, current sub-processor
+  list, real incident-response SLA) rather than fabricated specifics.
+- ✅ **DPA — outline only, not a real DPA** —
+  `docs/customer/dpa-outline.md`. Deliberately NOT drafted as usable
+  contract language — a real DPA needs an actual attorney (GDPR/CCPA
+  clauses, jurisdiction-specific terms) who knows the current data flows.
+  This file is what to bring to that conversation with MSE legal, not a
+  substitute for it. Do not send this file to a customer.
 
 ---
 
