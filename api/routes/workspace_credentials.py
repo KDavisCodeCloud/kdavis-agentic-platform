@@ -25,8 +25,10 @@ workspace route -- a real paying customer uses the same routes Kelvin does.
 
 import logging
 import os
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from api.middleware.auth import get_workspace
@@ -34,9 +36,13 @@ from core.github_app import build_install_url, sign_workspace_state, verify_work
 from core.workspace_credentials import (
     AssumeRoleError,
     AzureConnectError,
+    AzureDevOpsConnectError,
+    K8sConnectError,
     build_permissions_policy,
     build_trust_policy,
     generate_external_id,
+    verify_azure_devops_pat,
+    verify_k8s_connection,
     verify_role,
     verify_service_principal,
 )
@@ -44,6 +50,10 @@ from security.encryption import encrypt
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/workspace/credentials", tags=["workspace-credentials"])
+
+# Same env var + /dashboard?connected=<provider> redirect convention already
+# used by api/routes/content.py's LinkedIn/X OAuth callbacks.
+_FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -79,6 +89,32 @@ class ConnectAzureRequest(BaseModel):
     subscription_id: str = Field(..., min_length=1)
 
 
+class ConnectAzureDevOpsRequest(BaseModel):
+    org: str = Field(..., min_length=1)
+    pat: str = Field(..., min_length=1)
+
+
+class ConnectAzureDevOpsResponse(BaseModel):
+    status: str = "verified"
+    webhook_secret: str | None = Field(
+        default=None,
+        description="Only present the first time a webhook secret is minted for this "
+        "workspace -- save it now, register it as the Azure DevOps service hook's Basic "
+        "auth password, it will not be shown again.",
+    )
+
+
+class ConnectK8sRequest(BaseModel):
+    api_url: str = Field(..., min_length=1)
+    token: str = Field(..., min_length=1)
+    ca_cert: str | None = Field(
+        default=None,
+        description="PEM-encoded cluster CA certificate. Required for most real clusters "
+        "(EKS/AKS control planes typically use a private CA) -- omit only if the API server "
+        "is fronted by a publicly-trusted certificate.",
+    )
+
+
 class CredentialStatusResponse(BaseModel):
     id: str
     status: str = "verified"
@@ -88,6 +124,8 @@ class ConnectionsStatusResponse(BaseModel):
     github_connected: bool
     aws_connected: bool
     azure_connected: bool
+    azure_devops_connected: bool
+    k8s_connected: bool
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -102,9 +140,11 @@ async def get_connections_status(
     here, so this needs no extra DB query.
     """
     return ConnectionsStatusResponse(
-        github_connected=bool(workspace.get("github_pat_verified_at")),
+        github_connected=bool(workspace.get("github_pat_verified_at")) or bool(workspace.get("github_app_installation_id")),
         aws_connected=bool(workspace.get("aws_role_verified_at")),
         azure_connected=bool(workspace.get("azure_verified_at")),
+        azure_devops_connected=bool(workspace.get("azure_devops_pat_verified_at")),
+        k8s_connected=bool(workspace.get("k8s_verified_at")),
     )
 
 
@@ -153,13 +193,19 @@ async def get_github_app_install_url(
 
 
 @router.get("/github-app/callback")
-async def github_app_install_callback(request: Request, installation_id: str, state: str) -> dict:
+async def github_app_install_callback(request: Request, installation_id: str, state: str):
     """
     Public route -- GitHub redirects the customer's own browser here after
     they click "Install" (this is the App's configured setup_url), with no
     auth header we control. The signed `state` param (minted by
     get_github_app_install_url) is the only thing tying this redirect back
     to a real workspace; verify it instead of trusting installation_id alone.
+
+    Returns a real browser redirect back into the dashboard, not bare JSON --
+    this is the customer's actual browser navigating here (GitHub's setup_url
+    flow), not an API call a frontend can read a JSON body from. A JSON
+    response would just render as a blank page. Same /dashboard?connected=X
+    convention api/routes/content.py's LinkedIn/X OAuth callbacks already use.
     """
     workspace_id = verify_workspace_state(state)
     if not workspace_id:
@@ -174,7 +220,7 @@ async def github_app_install_callback(request: Request, installation_id: str, st
         )
 
     log.info("[WorkspaceCredentials] GitHub App installed workspace=%s installation=%s", workspace_id, installation_id)
-    return {"status": "installed"}
+    return RedirectResponse(f"{_FRONTEND_URL}/dashboard?connected=github")
 
 
 @router.post("/aws-role/setup", response_model=AwsRoleSetupResponse)
@@ -282,4 +328,101 @@ async def connect_azure(
         )
 
     log.info("[WorkspaceCredentials] Azure Service Principal verified workspace=%s", workspace_id)
+    return CredentialStatusResponse(id=str(workspace_id))
+
+
+@router.patch("/azure-devops", response_model=ConnectAzureDevOpsResponse)
+async def connect_azure_devops(
+    body: ConnectAzureDevOpsRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> ConnectAzureDevOpsResponse:
+    """
+    Verify-then-store a workspace's Azure DevOps PAT (item 5, migration 024).
+    No App/OAuth flow exists for this provider yet (see core/repo_tools.py's
+    module docstring for why) -- a PAT is the real, documented mechanism,
+    not a stopgap, so this route is not scheduled to be retired the way
+    PATCH /workspace/credentials/github was.
+
+    Mints a per-workspace webhook secret on first connect, same idempotent
+    pattern GitHub's PAT route used before its retirement -- closes
+    api/routes/webhooks.py's azure_devops_webhook "no per-workspace secret
+    yet, fails open" gap.
+    """
+    try:
+        await verify_azure_devops_pat(body.org, body.pat)
+    except AzureDevOpsConnectError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not verify Azure DevOps access: {exc}") from exc
+
+    workspace_id = workspace["id"]
+
+    async with request.app.state.db_pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT encrypted_azure_devops_webhook_secret FROM workspaces WHERE id = $1", workspace_id
+        )
+
+        webhook_secret_raw = None
+        if existing and existing["encrypted_azure_devops_webhook_secret"]:
+            # Already minted on a prior connect -- reconnecting (e.g. a
+            # rotated PAT) must not silently invalidate an already-registered
+            # Azure DevOps service hook's secret.
+            await conn.execute(
+                "UPDATE workspaces SET azure_devops_org = $1, azure_devops_pat_encrypted = $2, "
+                "azure_devops_pat_verified_at = NOW() WHERE id = $3",
+                body.org,
+                encrypt(body.pat),
+                workspace_id,
+            )
+        else:
+            webhook_secret_raw = secrets.token_urlsafe(32)
+            await conn.execute(
+                "UPDATE workspaces SET azure_devops_org = $1, azure_devops_pat_encrypted = $2, "
+                "azure_devops_pat_verified_at = NOW(), encrypted_azure_devops_webhook_secret = $3, "
+                "azure_devops_webhook_secret_created_at = NOW() WHERE id = $4",
+                body.org,
+                encrypt(body.pat),
+                encrypt(webhook_secret_raw),
+                workspace_id,
+            )
+
+    log.info("[WorkspaceCredentials] Azure DevOps PAT verified workspace=%s org=%s", workspace_id, body.org)
+    return ConnectAzureDevOpsResponse(webhook_secret=webhook_secret_raw)
+
+
+@router.patch("/k8s", response_model=CredentialStatusResponse)
+async def connect_k8s(
+    body: ConnectK8sRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> CredentialStatusResponse:
+    """
+    Verify-then-store a workspace's Kubernetes cluster credentials
+    (Phase 4, migration 025) -- a service-account bearer token plus the
+    cluster's API server URL, same shape Agents 02/08 already expect
+    (core.workspace_credentials.build_k8s_credentials). Replaces the global
+    KUBECONFIG_YAML + K8S_CONTEXT_* stopgap for any workspace that connects
+    its own cluster here.
+    """
+    try:
+        await verify_k8s_connection(body.api_url, body.token, body.ca_cert)
+    except K8sConnectError as exc:
+        raise HTTPException(status_code=400, detail=f"Could not verify cluster access: {exc}") from exc
+
+    workspace_id = workspace["id"]
+
+    async with request.app.state.db_pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE workspaces
+            SET k8s_api_url = $1, k8s_token_encrypted = $2, k8s_ca_cert_encrypted = $3,
+                k8s_verified_at = NOW()
+            WHERE id = $4
+            """,
+            body.api_url,
+            encrypt(body.token),
+            encrypt(body.ca_cert) if body.ca_cert else None,
+            workspace_id,
+        )
+
+    log.info("[WorkspaceCredentials] Kubernetes cluster verified workspace=%s", workspace_id)
     return CredentialStatusResponse(id=str(workspace_id))

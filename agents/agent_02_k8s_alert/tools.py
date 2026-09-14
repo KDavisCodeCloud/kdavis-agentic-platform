@@ -15,14 +15,14 @@ They never execute autonomously. Governance Rule 11.
 """
 
 import logging
-import os
-from typing import Optional
+import tempfile
+from typing import Optional, Union
 
 import httpx
 
-log = logging.getLogger(__name__)
+from core.repo_tools import RepoTools, get_repo_tools
 
-_GH_API = "https://api.github.com"
+log = logging.getLogger(__name__)
 
 
 class K8sTools:
@@ -37,10 +37,48 @@ class K8sTools:
         k8s_api_url: Optional[str] = None,
         k8s_token: Optional[str] = None,
         github_token: Optional[str] = None,
+        azure_devops_token: Optional[str] = None,
+        azure_devops_org: Optional[str] = None,
+        k8s_ca_cert: Optional[str] = None,
     ):
-        self.k8s_api_url = (k8s_api_url or os.environ.get("K8S_API_URL", "")).rstrip("/")
-        self.k8s_token = k8s_token or os.environ.get("K8S_TOKEN", "")
-        self.github_token = github_token or os.environ.get("GITHUB_TOKEN", "")
+        # No env-var fallback -- a missing credential should raise a clear
+        # error at the specific call that needed it, not silently fall back
+        # to a shared server-wide secret (same discipline as every other
+        # *Tools class in this codebase). Credentials come from
+        # core.workspace_credentials.build_agent_credentials/build_k8s_credentials.
+        self.k8s_api_url        = (k8s_api_url or "").rstrip("/")
+        self.k8s_token          = k8s_token or ""
+        self.github_token       = github_token or ""
+        self.azure_devops_token = azure_devops_token or ""
+        self.azure_devops_org   = azure_devops_org or ""
+        self._k8s_ca_cert       = k8s_ca_cert
+        self._k8s_ca_cert_path: Optional[str] = None
+
+    def _repo_tools(self) -> RepoTools:
+        """Provider selection (Phase 4, same as Phase 2's agents 04/08/10) --
+        GitHub or Azure DevOps, whichever this workspace has connected.
+        See core.repo_tools.get_repo_tools."""
+        return get_repo_tools(
+            github_token=self.github_token,
+            azure_devops_token=self.azure_devops_token,
+            azure_devops_org=self.azure_devops_org,
+        )
+
+    @property
+    def _verify(self) -> Union[bool, str]:
+        """httpx `verify` value for K8s API calls -- a per-workspace CA cert
+        (Phase 4, migration 025) when the cluster uses a private CA
+        (typical for EKS/AKS control planes), else the standard system CA
+        trust store. Never silently skips TLS verification -- same
+        discipline as core.workspace_credentials.verify_k8s_connection /
+        build_kubeconfig."""
+        if not self._k8s_ca_cert:
+            return True
+        if not self._k8s_ca_cert_path:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as f:
+                f.write(self._k8s_ca_cert)
+                self._k8s_ca_cert_path = f.name
+        return self._k8s_ca_cert_path
 
     # ──────────────────────────────────────────────
     # Kubernetes API tools
@@ -92,7 +130,7 @@ class K8sTools:
             }
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=self._verify) as client:
             resp = await client.patch(url, headers=headers, json=patch_body)
 
         if resp.status_code in (200, 201):
@@ -166,7 +204,7 @@ class K8sTools:
             },
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=self._verify) as client:
             resp = await client.post(url, headers=headers, json=hpa_manifest)
 
         if resp.status_code in (200, 201):
@@ -184,7 +222,7 @@ class K8sTools:
         if resp.status_code == 409:
             replace_url = f"{url}/{deployment_name}"
             hpa_manifest["metadata"]["resourceVersion"] = "0"  # required for replace
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=30, verify=self._verify) as client:
                 resp = await client.put(replace_url, headers=headers, json=hpa_manifest)
             if resp.status_code in (200, 201):
                 return {
@@ -217,7 +255,7 @@ class K8sTools:
         }
 
         # Fetch current revision so we can undo to (revision - 1)
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=self._verify) as client:
             get_resp = await client.get(url, headers={**headers, "Content-Type": "application/json"})
 
         if get_resp.status_code != 200:
@@ -249,7 +287,7 @@ class K8sTools:
             },
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=self._verify) as client:
             resp = await client.patch(url, headers=headers, json=patch_body)
 
         if resp.status_code in (200, 201):
@@ -282,93 +320,27 @@ class K8sTools:
         base_branch: str = "main",
     ) -> dict:
         """
-        Create a GitHub PR with a modified k8s manifest file.
-        Used when the workspace uses GitOps (ArgoCD/Flux) rather than direct kubectl.
-        Ref: https://docs.github.com/en/rest/contents/contents#create-or-update-file-contents
+        Open a PR with a modified k8s manifest file, against whichever
+        provider (GitHub or Azure DevOps) this workspace has connected.
+        Used when the workspace uses GitOps (ArgoCD/Flux) rather than direct
+        kubectl. Delegates to core.repo_tools (Phase 4, same treatment
+        Phase 2 gave agents 04/08/10) -- this used to be its own direct
+        GitHub implementation.
         """
-        if not self.github_token:
-            raise EnvironmentError("GITHUB_TOKEN not configured for this workspace")
+        repo_tools = self._repo_tools()
 
-        import base64
-
-        headers = {
-            "Authorization": f"Bearer {self.github_token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-
-        # 1. Get the current file SHA (required for PATCH)
-        file_url = f"{_GH_API}/repos/{owner}/{repo}/contents/{file_path}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            get_resp = await client.get(file_url, headers=headers)
-
-        file_sha = get_resp.json().get("sha") if get_resp.status_code == 200 else None
-
-        # 2. Create a feature branch
         branch_name = f"cloud-decoded/k8s-fix-{_short_id()}"
-        ref_url = f"{_GH_API}/repos/{owner}/{repo}/git/refs"
-        main_sha_url = f"{_GH_API}/repos/{owner}/{repo}/git/ref/heads/{base_branch}"
+        await repo_tools.create_branch(owner, repo, branch_name, base_branch)
+        await repo_tools.push_commit(owner, repo, branch_name, {file_path: new_content}, commit_message)
+        pr = await repo_tools.create_pr(owner, repo, branch_name, pr_title, pr_body, base=base_branch)
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            main_resp = await client.get(main_sha_url, headers=headers)
-
-        main_sha = main_resp.json()["object"]["sha"]
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            branch_resp = await client.post(
-                ref_url,
-                headers=headers,
-                json={"ref": f"refs/heads/{branch_name}", "sha": main_sha},
-            )
-
-        if branch_resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to create branch: {branch_resp.status_code} {branch_resp.text[:200]}")
-
-        # 3. Commit the updated file
-        encoded = base64.b64encode(new_content.encode()).decode()
-        put_payload = {
-            "message": commit_message,
-            "content": encoded,
+        log.info("[K8sTools] GitOps PR opened: %s", pr.get("pr_url"))
+        return {
+            "status": "pr_opened",
+            "pr_url": pr.get("pr_url", ""),
+            "pr_number": pr.get("pr_number"),
             "branch": branch_name,
         }
-        if file_sha:
-            put_payload["sha"] = file_sha
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            put_resp = await client.put(
-                f"{_GH_API}/repos/{owner}/{repo}/contents/{file_path}",
-                headers=headers,
-                json=put_payload,
-            )
-
-        if put_resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to commit file: {put_resp.status_code} {put_resp.text[:200]}")
-
-        # 4. Open the PR
-        pr_url = f"{_GH_API}/repos/{owner}/{repo}/pulls"
-        async with httpx.AsyncClient(timeout=30) as client:
-            pr_resp = await client.post(
-                pr_url,
-                headers=headers,
-                json={
-                    "title": pr_title,
-                    "body": pr_body,
-                    "head": branch_name,
-                    "base": base_branch,
-                },
-            )
-
-        if pr_resp.status_code in (200, 201):
-            pr_data = pr_resp.json()
-            log.info("[K8sTools] GitOps PR opened: %s", pr_data.get("html_url"))
-            return {
-                "status": "pr_opened",
-                "pr_url": pr_data.get("html_url", ""),
-                "pr_number": pr_data.get("number"),
-                "branch": branch_name,
-            }
-
-        raise RuntimeError(f"GitHub PR error {pr_resp.status_code}: {pr_resp.text[:200]}")
 
     # ──────────────────────────────────────────────
     # Routing — dispatch to correct tool

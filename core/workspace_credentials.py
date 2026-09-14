@@ -27,6 +27,7 @@ Two differences from that proven pattern, both deliberate:
   any of agents 01/05/06/08.
 """
 
+import base64
 import logging
 import os
 import secrets
@@ -35,6 +36,7 @@ from uuid import UUID
 
 import boto3
 import httpx
+import yaml
 from botocore.exceptions import ClientError
 
 from core.github_app import GitHubAppError, mint_installation_token
@@ -49,6 +51,7 @@ _DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
 _AZURE_TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 _ARM_RESOURCE = "https://management.azure.com/"
+_AZURE_DEVOPS_API = "https://dev.azure.com"
 
 _PERMISSIONS_POLICY_ACTIONS = [
     # Agent 05 -- IAM policy minimization
@@ -88,6 +91,100 @@ def resolve_k8s_context(cloud_provider: str) -> Optional[str]:
     """
     env_var = {"aws": "K8S_CONTEXT_AWS", "azure": "K8S_CONTEXT_AZURE", "gcp": "K8S_CONTEXT_GCP"}.get(cloud_provider)
     return os.environ.get(env_var) if env_var else None
+
+
+class K8sConnectError(Exception):
+    """Raised when a workspace's Kubernetes API credentials can't reach the
+    cluster or lack access -- wraps the underlying API server error."""
+
+
+async def verify_k8s_connection(api_url: str, token: str, ca_cert: Optional[str] = None) -> None:
+    """Raises K8sConnectError if the cluster's API server can't be reached
+    or the token lacks access. One cheap authenticated read (the API
+    discovery endpoint) confirms both connectivity and that the token
+    actually has some RBAC access, not just that the URL resolves.
+
+    ca_cert (PEM), if given, is used for TLS verification -- most real
+    clusters (EKS/AKS control planes especially) use a private CA a
+    customer must supply. If omitted, falls back to the standard system CA
+    trust store, same as any normal HTTPS client -- never silently skips
+    verification."""
+    verify: bool | str = True
+    if ca_cert:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as f:
+            f.write(ca_cert)
+            verify = f.name
+        try:
+            await _verify_k8s_connection(api_url, token, verify)
+        finally:
+            os.unlink(verify)
+    else:
+        await _verify_k8s_connection(api_url, token, verify)
+
+
+async def _verify_k8s_connection(api_url: str, token: str, verify) -> None:
+    async with httpx.AsyncClient(timeout=15, verify=verify) as client:
+        try:
+            resp = await client.get(
+                f"{api_url.rstrip('/')}/api",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except httpx.RequestError as exc:
+            raise K8sConnectError(f"Could not reach Kubernetes API server: {exc}") from exc
+
+    if resp.status_code != 200:
+        raise K8sConnectError(f"Could not verify cluster access ({resp.status_code}): {resp.text[:200]}")
+
+
+def build_kubeconfig(api_url: str, token: str, ca_cert: Optional[str] = None) -> str:
+    """Generates a minimal single-cluster kubeconfig YAML for kubectl
+    subprocess use (agent_08_drift_detection's DriftTools) -- a bearer
+    token plus optional CA cert is enough; no client certs needed.
+
+    Omits certificate-authority-data when ca_cert is None rather than
+    setting insecure-skip-tls-verify -- kubectl then verifies against the
+    system trust store, consistent with verify_k8s_connection's own
+    fallback above. Never silently skip TLS verification."""
+    cluster: dict = {"server": api_url}
+    if ca_cert:
+        cluster["certificate-authority-data"] = base64.b64encode(ca_cert.encode()).decode()
+
+    config = {
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{"name": "workspace-cluster", "cluster": cluster}],
+        "users": [{"name": "workspace-user", "user": {"token": token}}],
+        "contexts": [{
+            "name": "workspace-context",
+            "context": {"cluster": "workspace-cluster", "user": "workspace-user"},
+        }],
+        "current-context": "workspace-context",
+    }
+    return yaml.safe_dump(config)
+
+
+async def build_k8s_credentials(conn, workspace_id: str) -> dict:
+    """Fetches and decrypts a workspace's stored Kubernetes cluster
+    credentials (migration 025). Separate from build_agent_credentials()
+    (not merged into its uniform dict) -- only agents 02/08 touch
+    Kubernetes, matching the existing precedent of resolve_k8s_context
+    being its own call rather than a build_agent_credentials() key."""
+    row = await conn.fetchrow(
+        "SELECT k8s_api_url, k8s_token_encrypted, k8s_ca_cert_encrypted FROM workspaces WHERE id = $1",
+        UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id,
+    )
+
+    credentials: dict[str, Optional[str]] = {"k8s_api_url": None, "k8s_token": None, "k8s_ca_cert": None}
+    if not row or not row["k8s_api_url"] or not row["k8s_token_encrypted"]:
+        return credentials
+
+    credentials["k8s_api_url"] = row["k8s_api_url"]
+    credentials["k8s_token"] = decrypt(row["k8s_token_encrypted"])
+    if row["k8s_ca_cert_encrypted"]:
+        credentials["k8s_ca_cert"] = decrypt(row["k8s_ca_cert_encrypted"])
+
+    return credentials
 
 
 def generate_external_id() -> str:
@@ -206,6 +303,33 @@ async def verify_service_principal(tenant_id: str, client_id: str, client_secret
         raise AzureConnectError(f"Could not verify access ({resp.status_code}): {resp.text[:200]}")
 
 
+class AzureDevOpsConnectError(Exception):
+    """Raised when a workspace's Azure DevOps PAT can't authenticate against
+    its org, or lacks access -- wraps the underlying Azure DevOps error."""
+
+
+async def verify_azure_devops_pat(org: str, pat: str) -> None:
+    """Raises AzureDevOpsConnectError if the PAT can't authenticate against
+    `org`. Azure DevOps PATs use HTTP Basic auth with an empty username --
+    ref: https://learn.microsoft.com/en-us/azure/devops/integrate/how-to/authorize-with-pat
+    One cheap read (list projects) confirms both that the token is valid and
+    that it actually has access to this specific org, same verify-then-store
+    discipline as verify_role / verify_service_principal above."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            resp = await client.get(
+                f"{_AZURE_DEVOPS_API}/{org}/_apis/projects?api-version=7.1",
+                auth=("", pat),
+            )
+        except httpx.RequestError as exc:
+            raise AzureDevOpsConnectError(f"Could not reach Azure DevOps: {exc}") from exc
+
+    if resp.status_code != 200:
+        raise AzureDevOpsConnectError(
+            f"Could not verify access to org '{org}' ({resp.status_code}): {resp.text[:200]}"
+        )
+
+
 async def mint_github_app_token(conn, installation_id: str) -> str:
     """Fresh ~1hr installation token for `installation_id`, using the
     platform's single GitHub App identity (github_app_config, migration 023).
@@ -240,11 +364,26 @@ async def build_agent_credentials(conn, workspace_id: str) -> dict:
     ever stored there. A fresh installation token is minted per call, same
     discipline as AWS role assumption / Azure token minting below -- never
     cached beyond the request.
+
+    azure_devops_token: a workspace's stored Azure DevOps PAT (migration 024),
+    decrypted per-call same as every other credential here. Distinct from
+    azure_access_token -- that's an ARM bearer token from an Azure Service
+    Principal (agents 05/06/08's cloud-resource path); this is a Personal
+    Access Token scoped to one Azure DevOps org's repos (agent 01's
+    CI/CD-triage-for-Azure-DevOps path, CICDTools.azure_token; agents
+    04/08/10's core.repo_tools.get_repo_tools() provider selection, Phase 2).
+
+    azure_devops_org: returned alongside azure_devops_token -- unlike GitHub
+    (a token alone is enough to address any repo the App/PAT can reach),
+    Azure DevOps addresses a repo as org/project/repo, and the org isn't
+    derivable from the PAT itself. get_repo_tools() needs both together to
+    construct an AzureDevOpsRepoTools.
     """
     row = await conn.fetchrow(
         "SELECT github_pat_encrypted, github_app_installation_id, aws_role_arn, aws_external_id, "
         "azure_tenant_id, azure_client_id, azure_client_secret_encrypted, "
-        "azure_subscription_id FROM workspaces WHERE id = $1",
+        "azure_subscription_id, azure_devops_pat_encrypted, azure_devops_org "
+        "FROM workspaces WHERE id = $1",
         UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id,
     )
 
@@ -252,6 +391,8 @@ async def build_agent_credentials(conn, workspace_id: str) -> dict:
         "github_token": None,
         "aws_session": None,
         "azure_access_token": None,
+        "azure_devops_token": None,
+        "azure_devops_org": None,
     }
     if not row:
         return credentials
@@ -270,5 +411,9 @@ async def build_agent_credentials(conn, workspace_id: str) -> dict:
             row["azure_client_id"],
             decrypt(row["azure_client_secret_encrypted"]),
         )
+
+    if row["azure_devops_pat_encrypted"]:
+        credentials["azure_devops_token"] = decrypt(row["azure_devops_pat_encrypted"])
+        credentials["azure_devops_org"] = row["azure_devops_org"]
 
     return credentials

@@ -147,10 +147,24 @@ class MigrationWorkflow(BaseAgent):
 
     AGENT_ID = "agent_04_migration"
 
-    def __init__(self, db_conn, workspace_id: str, checkpointer: AsyncPostgresSaver):
-        super().__init__(db_conn, workspace_id)
+    def __init__(
+        self,
+        db_conn,
+        workspace_id: str,
+        checkpointer: AsyncPostgresSaver,
+        github_token: Optional[str] = None,
+        aws_session=None,  # unused -- Agent 04 has no AWS path; accepted for uniform **creds spreading
+        azure_access_token: Optional[str] = None,  # unused -- Agent 04 has no Azure path; accepted for uniform **creds spreading
+        azure_devops_token: Optional[str] = None,  # Phase 2 -- routed into MigrationTools' get_repo_tools() provider selection
+        azure_devops_org: Optional[str] = None,
+        llm_provider: Optional[str] = None,  # Phase 5 -- workspaces.llm_provider, routed into BaseAgent.call_llm()'s defaults
+        byok_encrypted_key: Optional[str] = None,  # Phase 5 -- workspaces.encrypted_llm_key
+    ):
+        super().__init__(db_conn, workspace_id, llm_provider=llm_provider, byok_encrypted_key=byok_encrypted_key)
         self._checkpointer = checkpointer
-        self._tools = MigrationTools()
+        self._tools = MigrationTools(
+            github_token=github_token, azure_devops_token=azure_devops_token, azure_devops_org=azure_devops_org,
+        )
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph = self._build_graph()
 

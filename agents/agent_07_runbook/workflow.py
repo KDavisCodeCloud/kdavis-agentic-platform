@@ -150,8 +150,15 @@ class RunbookWorkflow(BaseAgent):
 
     AGENT_ID = "agent_07_runbook"
 
-    def __init__(self, db_conn, workspace_id: str, checkpointer: AsyncPostgresSaver):
-        super().__init__(db_conn, workspace_id)
+    def __init__(
+        self,
+        db_conn,
+        workspace_id: str,
+        checkpointer: AsyncPostgresSaver,
+        llm_provider: Optional[str] = None,  # Phase 5 -- workspaces.llm_provider, routed into BaseAgent.call_llm()'s defaults
+        byok_encrypted_key: Optional[str] = None,  # Phase 5 -- workspaces.encrypted_llm_key
+    ):
+        super().__init__(db_conn, workspace_id, llm_provider=llm_provider, byok_encrypted_key=byok_encrypted_key)
         self._checkpointer = checkpointer
         self._tools = RunbookTools()
         self._diagnose_prompt = _load_diagnose_prompt()

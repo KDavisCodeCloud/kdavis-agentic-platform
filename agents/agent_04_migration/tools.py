@@ -14,12 +14,12 @@ These tools are called ONLY after operator approval via POST /incidents/{id}/app
 They never execute autonomously. Governance Rule 11.
 """
 
-import base64
 import logging
-import os
 from typing import Optional
 
 import httpx
+
+from core.repo_tools import RepoTools, get_repo_tools
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +32,29 @@ class MigrationTools:
     Creates GitHub PRs and issues — never modifies files without operator approval.
     """
 
-    def __init__(self, github_token: Optional[str] = None):
-        self.github_token = github_token or os.environ.get("GITHUB_TOKEN", "")
+    def __init__(
+        self,
+        github_token: Optional[str] = None,
+        azure_devops_token: Optional[str] = None,
+        azure_devops_org: Optional[str] = None,
+    ):
+        # No env-var fallback -- a missing credential should raise a clear
+        # error at the specific call that needed it, not silently fall back
+        # to a shared server-wide secret (same discipline as CICDTools /
+        # DriftTools). Credentials come from
+        # core.workspace_credentials.build_agent_credentials.
+        self.github_token       = github_token or ""
+        self.azure_devops_token = azure_devops_token or ""
+        self.azure_devops_org   = azure_devops_org or ""
+
+    def _repo_tools(self) -> RepoTools:
+        """Provider selection (Phase 2) -- GitHub or Azure DevOps, whichever
+        this workspace has connected. See core.repo_tools.get_repo_tools."""
+        return get_repo_tools(
+            github_token=self.github_token,
+            azure_devops_token=self.azure_devops_token,
+            azure_devops_org=self.azure_devops_org,
+        )
 
     # ──────────────────────────────────────────────
     # Post-approval execution tools
@@ -50,83 +71,26 @@ class MigrationTools:
         base_branch: str = "main",
     ) -> dict:
         """
-        Open a GitHub PR with the LLM-generated migrated code.
-        Creates a feature branch, commits the file, and opens the PR.
-        Ref: https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request
+        Open a PR with the LLM-generated migrated code, against whichever
+        provider (GitHub or Azure DevOps) this workspace has connected.
+        Creates a feature branch, commits the file, and opens the PR via
+        core.repo_tools (Phase 2) -- this used to be its own direct GitHub
+        implementation.
         """
-        if not self.github_token:
-            raise EnvironmentError("GITHUB_TOKEN not configured for this workspace")
+        repo_tools = self._repo_tools()
 
-        headers = _gh_headers(self.github_token)
-
-        # 1. Get HEAD SHA of base branch
-        ref_url = f"{_GH_API}/repos/{owner}/{repo}/git/ref/heads/{base_branch}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            ref_resp = await client.get(ref_url, headers=headers)
-
-        if ref_resp.status_code != 200:
-            raise RuntimeError(f"GitHub get ref error {ref_resp.status_code}: {ref_resp.text[:200]}")
-
-        base_sha = ref_resp.json()["object"]["sha"]
-
-        # 2. Create feature branch
         branch_name = f"cloud-decoded/migrate-{_short_id()}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            branch_resp = await client.post(
-                f"{_GH_API}/repos/{owner}/{repo}/git/refs",
-                headers=headers,
-                json={"ref": f"refs/heads/{branch_name}", "sha": base_sha},
-            )
+        await repo_tools.create_branch(owner, repo, branch_name, base_branch)
+        await repo_tools.push_commit(owner, repo, branch_name, {file_path: new_content}, f"chore(migration): {pr_title}")
+        pr = await repo_tools.create_pr(owner, repo, branch_name, pr_title, pr_body, base=base_branch)
 
-        if branch_resp.status_code not in (200, 201):
-            raise RuntimeError(f"GitHub create branch error {branch_resp.status_code}: {branch_resp.text[:200]}")
-
-        # 3. Get current file SHA (if it exists — required for update)
-        file_url = f"{_GH_API}/repos/{owner}/{repo}/contents/{file_path}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            file_resp = await client.get(file_url, headers=headers, params={"ref": base_branch})
-
-        file_sha = file_resp.json().get("sha") if file_resp.status_code == 200 else None
-
-        # 4. Commit the migrated file
-        put_payload = {
-            "message": f"chore(migration): {pr_title}",
-            "content": base64.b64encode(new_content.encode()).decode(),
+        log.info("[MigrationTools] Migration PR opened: %s", pr.get("pr_url"))
+        return {
+            "status": "pr_opened",
+            "pr_url": pr.get("pr_url", ""),
+            "pr_number": pr.get("pr_number"),
             "branch": branch_name,
         }
-        if file_sha:
-            put_payload["sha"] = file_sha
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            put_resp = await client.put(file_url, headers=headers, json=put_payload)
-
-        if put_resp.status_code not in (200, 201):
-            raise RuntimeError(f"GitHub commit file error {put_resp.status_code}: {put_resp.text[:200]}")
-
-        # 5. Open PR
-        async with httpx.AsyncClient(timeout=30) as client:
-            pr_resp = await client.post(
-                f"{_GH_API}/repos/{owner}/{repo}/pulls",
-                headers=headers,
-                json={
-                    "title": pr_title,
-                    "body": pr_body,
-                    "head": branch_name,
-                    "base": base_branch,
-                },
-            )
-
-        if pr_resp.status_code in (200, 201):
-            pr_data = pr_resp.json()
-            log.info("[MigrationTools] Migration PR opened: %s", pr_data.get("html_url"))
-            return {
-                "status": "pr_opened",
-                "pr_url": pr_data.get("html_url", ""),
-                "pr_number": pr_data.get("number"),
-                "branch": branch_name,
-            }
-
-        raise RuntimeError(f"GitHub PR error {pr_resp.status_code}: {pr_resp.text[:200]}")
 
     async def create_github_issue(
         self,

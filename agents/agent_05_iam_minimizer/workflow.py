@@ -170,8 +170,12 @@ class IAMMinimizeWorkflow(BaseAgent):
         github_token: Optional[str] = None,
         aws_session=None,
         azure_access_token: Optional[str] = None,
+        azure_devops_token: Optional[str] = None,  # unused -- Agent 05 has no repo path; accepted for uniform **creds spreading
+        azure_devops_org: Optional[str] = None,  # unused -- Agent 05 has no repo path; accepted for uniform **creds spreading
+        llm_provider: Optional[str] = None,  # Phase 5 -- workspaces.llm_provider, routed into BaseAgent.call_llm()'s defaults
+        byok_encrypted_key: Optional[str] = None,  # Phase 5 -- workspaces.encrypted_llm_key
     ):
-        super().__init__(db_conn, workspace_id)
+        super().__init__(db_conn, workspace_id, llm_provider=llm_provider, byok_encrypted_key=byok_encrypted_key)
         self._checkpointer = checkpointer
         self._tools = IAMMinimizeTools(
             github_token=github_token, aws_session=aws_session, azure_access_token=azure_access_token

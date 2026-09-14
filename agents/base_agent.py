@@ -109,7 +109,13 @@ class BaseAgent(ABC):
 
     AGENT_ID: str = "base_agent"  # override in each subclass
 
-    def __init__(self, db_conn, workspace_id: str):
+    def __init__(
+        self,
+        db_conn,
+        workspace_id: str,
+        llm_provider: Optional[str] = None,
+        byok_encrypted_key: Optional[str] = None,
+    ):
         self.db = db_conn
         self.workspace_id = workspace_id
         self.agent_id = self.__class__.AGENT_ID
@@ -117,6 +123,17 @@ class BaseAgent(ABC):
         self.compliance = WorkspaceComplianceGuard(db_conn)
         self.budget = TokenBudgetGuard(db_conn)
         self._router = _load_router()
+        # A workspace's stored BYOK provider preference (workspaces.llm_provider)
+        # + encrypted key (workspaces.encrypted_llm_key) -- set once here from
+        # whichever workspace row the caller (webhooks.py/agents.py) already
+        # has in hand, so every subclass's diagnose node gets real BYOK
+        # routing "for free" through call_llm()'s defaults below, without
+        # every one of the 10 agents' diagnose nodes needing to pass these
+        # explicitly. Real bug this closes: llm_provider was stored at
+        # onboarding (POST /workspaces/llm-key) but never read anywhere --
+        # every agent always defaulted to the platform's own Anthropic key.
+        self._llm_provider = llm_provider
+        self._byok_encrypted_key = byok_encrypted_key
 
     # ──────────────────────────────────────────────
     # Core LLM call — the ONLY entry point to the router
@@ -156,7 +173,11 @@ class BaseAgent(ABC):
             sp_result = shield.sanitize(system_prompt, context=f"{self.agent_id}:system_prompt")
             system_prompt = sp_result.sanitized_text
 
-        # Resolve BYOK key if present
+        # Resolve BYOK key if present -- explicit call-site args win, then
+        # this workspace's stored provider/key (set in __init__), then the
+        # platform default.
+        provider_override = provider_override or self._llm_provider
+        byok_encrypted_key = byok_encrypted_key or self._byok_encrypted_key
         decrypted_key = None
         provider = provider_override or "anthropic"
         if byok_encrypted_key:

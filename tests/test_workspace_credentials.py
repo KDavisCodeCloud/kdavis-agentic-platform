@@ -11,24 +11,33 @@ since this module deliberately does a raw httpx call instead of the
 azure-identity SDK.
 """
 
+import base64
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+import yaml
 from botocore.exceptions import ClientError
 
 from core.github_app import GitHubAppError
 from core.workspace_credentials import (
     AssumeRoleError,
     AzureConnectError,
+    AzureDevOpsConnectError,
+    K8sConnectError,
     build_agent_credentials,
+    build_k8s_credentials,
+    build_kubeconfig,
     build_permissions_policy,
     build_trust_policy,
     generate_external_id,
     get_azure_bearer_token,
     mint_github_app_token,
     resolve_k8s_context,
+    verify_azure_devops_pat,
+    verify_k8s_connection,
     verify_role,
     verify_service_principal,
 )
@@ -71,6 +80,114 @@ class TestResolveK8sContext:
 
     def test_returns_none_for_unknown_provider(self):
         assert resolve_k8s_context("oracle-cloud") is None
+
+
+class TestVerifyK8sConnection:
+    async def test_raises_on_auth_failure(self):
+        resp = MagicMock(status_code=401, text="Unauthorized")
+        with patch("core.workspace_credentials.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _httpx_ctx(resp)
+            with pytest.raises(K8sConnectError):
+                await verify_k8s_connection("https://cluster.example.com", "bad-token")
+
+    async def test_raises_on_request_error(self):
+        import httpx as real_httpx
+
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        ctx.get = AsyncMock(side_effect=real_httpx.RequestError("boom"))
+        with patch("core.workspace_credentials.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = ctx
+            with pytest.raises(K8sConnectError):
+                await verify_k8s_connection("https://cluster.example.com", "token123")
+
+    async def test_succeeds_when_api_discovery_confirms_access(self):
+        resp = MagicMock(status_code=200)
+        with patch("core.workspace_credentials.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _httpx_ctx(resp)
+            await verify_k8s_connection("https://cluster.example.com", "token123")  # no raise
+
+    async def test_uses_ca_cert_as_temp_file_for_verify_when_given(self):
+        resp = MagicMock(status_code=200)
+        captured_verify = {}
+
+        class _CapturingAsyncClient:
+            def __init__(self, timeout=None, verify=None):
+                captured_verify["value"] = verify
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                return False
+            async def get(self, *a, **kw):
+                return resp
+
+        with patch("core.workspace_credentials.httpx.AsyncClient", _CapturingAsyncClient):
+            await verify_k8s_connection("https://cluster.example.com", "token123", ca_cert="-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----")
+
+        assert captured_verify["value"] not in (True, None)  # a real temp file path was used
+        assert not os.path.exists(captured_verify["value"])  # cleaned up after the call
+
+
+class TestBuildKubeconfig:
+    def test_includes_server_and_token(self):
+        config_yaml = build_kubeconfig("https://cluster.example.com", "token123")
+        parsed = yaml.safe_load(config_yaml)
+        assert parsed["clusters"][0]["cluster"]["server"] == "https://cluster.example.com"
+        assert parsed["users"][0]["user"]["token"] == "token123"
+        assert "certificate-authority-data" not in parsed["clusters"][0]["cluster"]
+
+    def test_includes_base64_ca_cert_when_given(self):
+        config_yaml = build_kubeconfig("https://cluster.example.com", "token123", ca_cert="fake-pem-content")
+        parsed = yaml.safe_load(config_yaml)
+        ca_data = parsed["clusters"][0]["cluster"]["certificate-authority-data"]
+        assert base64.b64decode(ca_data).decode() == "fake-pem-content"
+
+    def test_never_sets_insecure_skip_tls_verify(self):
+        # Never silently skip TLS verification -- omitting CA data means
+        # kubectl falls back to the system trust store, same discipline as
+        # verify_k8s_connection.
+        config_yaml = build_kubeconfig("https://cluster.example.com", "token123")
+        assert "insecure-skip-tls-verify" not in config_yaml
+
+
+class TestBuildK8sCredentials:
+    async def _conn(self, row):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=row)
+        return conn
+
+    async def test_no_credentials_configured_returns_all_none(self):
+        conn = await self._conn({"k8s_api_url": None, "k8s_token_encrypted": None, "k8s_ca_cert_encrypted": None})
+        creds = await build_k8s_credentials(conn, str(uuid4()))
+        assert creds == {"k8s_api_url": None, "k8s_token": None, "k8s_ca_cert": None}
+
+    async def test_workspace_not_found_returns_all_none(self):
+        conn = await self._conn(None)
+        creds = await build_k8s_credentials(conn, str(uuid4()))
+        assert creds == {"k8s_api_url": None, "k8s_token": None, "k8s_ca_cert": None}
+
+    async def test_decrypts_token_and_ca_cert(self):
+        conn = await self._conn({
+            "k8s_api_url": "https://cluster.example.com",
+            "k8s_token_encrypted": "cipher-token",
+            "k8s_ca_cert_encrypted": "cipher-ca",
+        })
+        with patch("core.workspace_credentials.decrypt", side_effect=["real-token", "real-ca"]):
+            creds = await build_k8s_credentials(conn, str(uuid4()))
+        assert creds["k8s_api_url"] == "https://cluster.example.com"
+        assert creds["k8s_token"] == "real-token"
+        assert creds["k8s_ca_cert"] == "real-ca"
+
+    async def test_ca_cert_stays_none_when_not_configured(self):
+        conn = await self._conn({
+            "k8s_api_url": "https://cluster.example.com",
+            "k8s_token_encrypted": "cipher-token",
+            "k8s_ca_cert_encrypted": None,
+        })
+        with patch("core.workspace_credentials.decrypt", return_value="real-token"):
+            creds = await build_k8s_credentials(conn, str(uuid4()))
+        assert creds["k8s_ca_cert"] is None
 
 
 class TestBuildTrustPolicy:
@@ -146,6 +263,38 @@ class TestVerifyServicePrincipal:
             await verify_service_principal("tid", "cid", "secret", "sub")  # no raise
 
 
+class TestVerifyAzureDevOpsPat:
+    async def test_raises_on_auth_failure(self):
+        resp = MagicMock(status_code=401, text="TF400813: unauthorized")
+        with patch("core.workspace_credentials.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _httpx_ctx(resp)
+            with pytest.raises(AzureDevOpsConnectError):
+                await verify_azure_devops_pat("acme-org", "bad-pat")
+
+    async def test_raises_on_request_error(self):
+        import httpx as real_httpx
+
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        ctx.get = AsyncMock(side_effect=real_httpx.RequestError("boom"))
+        with patch("core.workspace_credentials.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = ctx
+            with pytest.raises(AzureDevOpsConnectError):
+                await verify_azure_devops_pat("acme-org", "pat123")
+
+    async def test_succeeds_when_projects_list_confirms_access(self):
+        resp = MagicMock(status_code=200)
+        with patch("core.workspace_credentials.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _httpx_ctx(resp)
+            await verify_azure_devops_pat("acme-org", "pat123")  # no raise
+
+        ctx = mock_cls.return_value
+        _, kwargs = ctx.get.await_args
+        assert kwargs["auth"] == ("", "pat123")
+        assert "acme-org" in ctx.get.await_args.args[0]
+
+
 class TestBuildAgentCredentials:
     async def _conn(self, row):
         conn = AsyncMock()
@@ -162,9 +311,14 @@ class TestBuildAgentCredentials:
             "azure_client_id": None,
             "azure_client_secret_encrypted": None,
             "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None, "azure_devops_org": None,
         })
         creds = await build_agent_credentials(conn, str(uuid4()))
-        assert creds == {"github_token": None, "aws_session": None, "azure_access_token": None}
+        assert creds == {
+            "github_token": None, "aws_session": None,
+            "azure_access_token": None, "azure_devops_token": None,
+            "azure_devops_org": None,
+        }
 
     async def test_github_pat_decrypted(self):
         conn = await self._conn({
@@ -173,12 +327,14 @@ class TestBuildAgentCredentials:
             "aws_role_arn": None, "aws_external_id": None,
             "azure_tenant_id": None, "azure_client_id": None,
             "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None, "azure_devops_org": None,
         })
         with patch("core.workspace_credentials.decrypt", return_value="ghp_real"):
             creds = await build_agent_credentials(conn, str(uuid4()))
         assert creds["github_token"] == "ghp_real"
         assert creds["aws_session"] is None
         assert creds["azure_access_token"] is None
+        assert creds["azure_devops_token"] is None
 
     async def test_aws_role_builds_a_session(self):
         conn = await self._conn({
@@ -187,6 +343,7 @@ class TestBuildAgentCredentials:
             "aws_role_arn": "arn:aws:iam::222222222222:role/x", "aws_external_id": "ext-abc",
             "azure_tenant_id": None, "azure_client_id": None,
             "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None, "azure_devops_org": None,
         })
         fake_session = MagicMock()
         with patch("core.workspace_credentials.assume_role_session", return_value=fake_session) as mock_assume:
@@ -201,6 +358,7 @@ class TestBuildAgentCredentials:
             "aws_role_arn": None, "aws_external_id": None,
             "azure_tenant_id": "tid", "azure_client_id": "cid",
             "azure_client_secret_encrypted": "cipher", "azure_subscription_id": "sub",
+            "azure_devops_pat_encrypted": None, "azure_devops_org": None,
         })
         with (
             patch("core.workspace_credentials.decrypt", return_value="real-secret"),
@@ -210,10 +368,29 @@ class TestBuildAgentCredentials:
         mock_token.assert_awaited_once_with("tid", "cid", "real-secret")
         assert creds["azure_access_token"] == "bearer-tok"
 
+    async def test_azure_devops_pat_decrypted(self):
+        conn = await self._conn({
+            "github_pat_encrypted": None,
+            "github_app_installation_id": None,
+            "aws_role_arn": None, "aws_external_id": None,
+            "azure_tenant_id": None, "azure_client_id": None,
+            "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": "cipher", "azure_devops_org": "acme-org",
+        })
+        with patch("core.workspace_credentials.decrypt", return_value="ado_pat_real"):
+            creds = await build_agent_credentials(conn, str(uuid4()))
+        assert creds["azure_devops_token"] == "ado_pat_real"
+        assert creds["azure_devops_org"] == "acme-org"
+        assert creds["github_token"] is None
+
     async def test_workspace_not_found_returns_all_none(self):
         conn = await self._conn(None)
         creds = await build_agent_credentials(conn, str(uuid4()))
-        assert creds == {"github_token": None, "aws_session": None, "azure_access_token": None}
+        assert creds == {
+            "github_token": None, "aws_session": None,
+            "azure_access_token": None, "azure_devops_token": None,
+            "azure_devops_org": None,
+        }
 
     async def test_github_app_installation_takes_priority_over_stored_pat(self):
         # Item 4 migration decision: App-based access wins over a legacy PAT
@@ -224,6 +401,7 @@ class TestBuildAgentCredentials:
             "aws_role_arn": None, "aws_external_id": None,
             "azure_tenant_id": None, "azure_client_id": None,
             "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None, "azure_devops_org": None,
         })
         with patch(
             "core.workspace_credentials.mint_github_app_token",
@@ -240,6 +418,7 @@ class TestBuildAgentCredentials:
             "aws_role_arn": None, "aws_external_id": None,
             "azure_tenant_id": None, "azure_client_id": None,
             "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None, "azure_devops_org": None,
         })
         with patch("core.workspace_credentials.decrypt", return_value="ghp_legacy_real"):
             creds = await build_agent_credentials(conn, str(uuid4()))

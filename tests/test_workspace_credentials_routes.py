@@ -14,7 +14,7 @@ from cryptography.fernet import Fernet
 from fastapi import HTTPException
 
 from api.routes import workspace_credentials as wc_routes
-from core.workspace_credentials import AssumeRoleError, AzureConnectError
+from core.workspace_credentials import AssumeRoleError, AzureConnectError, AzureDevOpsConnectError, K8sConnectError
 
 _FERNET_KEY = Fernet.generate_key().decode()
 
@@ -66,6 +66,10 @@ class TestGetGithubAppInstallUrl:
 
 class TestGithubAppInstallCallback:
     async def test_stores_installation_id_on_valid_state(self):
+        # Phase 3 (connectivity gaps): this is the customer's real browser
+        # navigating here (GitHub's setup_url), not an API call -- must
+        # return an actual redirect back into the dashboard, not bare JSON
+        # (which would just render as a blank page).
         workspace_id = str(uuid4())
         request, conn = _make_request()
         with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
@@ -73,7 +77,8 @@ class TestGithubAppInstallCallback:
             result = await wc_routes.github_app_install_callback(
                 request, installation_id="inst-123", state=state,
             )
-        assert result["status"] == "installed"
+        assert result.status_code in (302, 307)
+        assert result.headers["location"].endswith("/dashboard?connected=github")
         conn.execute.assert_awaited_once()
         args = conn.execute.await_args.args
         assert "inst-123" in args
@@ -177,6 +182,54 @@ class TestConnectAzure:
         conn.execute.assert_awaited_once()
 
 
+class TestConnectAzureDevOps:
+    async def test_verification_failure_raises_400(self):
+        request, conn = _make_request()
+        with patch(
+            "api.routes.workspace_credentials.verify_azure_devops_pat",
+            new=AsyncMock(side_effect=AzureDevOpsConnectError("bad pat")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await wc_routes.connect_azure_devops(
+                    wc_routes.ConnectAzureDevOpsRequest(org="acme-org", pat="bad-pat"),
+                    request,
+                    workspace={"id": uuid4()},
+                )
+        assert exc.value.status_code == 400
+        conn.execute.assert_not_awaited()
+
+    async def test_first_connect_mints_and_returns_webhook_secret(self):
+        workspace_id = uuid4()
+        # `existing` fetchrow (no prior secret) -- conn.execute isn't queried again by _make_request
+        request, conn = _make_request(fetchrow_return={"encrypted_azure_devops_webhook_secret": None})
+        with (
+            patch("api.routes.workspace_credentials.verify_azure_devops_pat", new=AsyncMock(return_value=None)),
+            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
+        ):
+            result = await wc_routes.connect_azure_devops(
+                wc_routes.ConnectAzureDevOpsRequest(org="acme-org", pat="pat123"),
+                request,
+                workspace={"id": workspace_id},
+            )
+        assert result.webhook_secret is not None
+        conn.execute.assert_awaited_once()
+
+    async def test_reconnect_does_not_remint_webhook_secret(self):
+        workspace_id = uuid4()
+        request, conn = _make_request(fetchrow_return={"encrypted_azure_devops_webhook_secret": "already-set-cipher"})
+        with (
+            patch("api.routes.workspace_credentials.verify_azure_devops_pat", new=AsyncMock(return_value=None)),
+            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
+        ):
+            result = await wc_routes.connect_azure_devops(
+                wc_routes.ConnectAzureDevOpsRequest(org="acme-org", pat="pat123"),
+                request,
+                workspace={"id": workspace_id},
+            )
+        assert result.webhook_secret is None  # not shown again -- was already minted on a prior connect
+        conn.execute.assert_awaited_once()
+
+
 class TestGetConnectionsStatus:
     async def test_reflects_verified_at_columns_directly(self):
         from datetime import datetime, timezone
@@ -186,6 +239,8 @@ class TestGetConnectionsStatus:
             "github_pat_verified_at": datetime.now(timezone.utc),
             "aws_role_verified_at": None,
             "azure_verified_at": datetime.now(timezone.utc),
+            "azure_devops_pat_verified_at": datetime.now(timezone.utc),
+            "k8s_verified_at": datetime.now(timezone.utc),
         }
 
         result = await wc_routes.get_connections_status(workspace=workspace)
@@ -193,6 +248,22 @@ class TestGetConnectionsStatus:
         assert result.github_connected is True
         assert result.aws_connected is False
         assert result.azure_connected is True
+        assert result.azure_devops_connected is True
+        assert result.k8s_connected is True
+
+    async def test_github_app_installation_also_counts_as_connected(self):
+        # github_connected must reflect an App-based connection too, not just
+        # a legacy PAT's github_pat_verified_at -- a workspace that connected
+        # via the item 4 GitHub App has no PAT at all.
+        workspace = {
+            "id": uuid4(),
+            "github_pat_verified_at": None,
+            "github_app_installation_id": "inst-123",
+        }
+
+        result = await wc_routes.get_connections_status(workspace=workspace)
+
+        assert result.github_connected is True
 
     async def test_all_false_when_nothing_configured(self):
         workspace = {"id": uuid4()}
@@ -202,3 +273,51 @@ class TestGetConnectionsStatus:
         assert result.github_connected is False
         assert result.aws_connected is False
         assert result.azure_connected is False
+        assert result.azure_devops_connected is False
+        assert result.k8s_connected is False
+
+
+class TestConnectK8s:
+    async def test_verification_failure_raises_400(self):
+        request, conn = _make_request()
+        with patch(
+            "api.routes.workspace_credentials.verify_k8s_connection",
+            new=AsyncMock(side_effect=K8sConnectError("bad token")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await wc_routes.connect_k8s(
+                    wc_routes.ConnectK8sRequest(api_url="https://cluster.example.com", token="bad-token"),
+                    request,
+                    workspace={"id": uuid4()},
+                )
+        assert exc.value.status_code == 400
+        conn.execute.assert_not_awaited()
+
+    async def test_valid_cluster_stores_and_returns_status(self):
+        workspace_id = uuid4()
+        request, conn = _make_request()
+        with (
+            patch("api.routes.workspace_credentials.verify_k8s_connection", new=AsyncMock(return_value=None)),
+            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
+        ):
+            result = await wc_routes.connect_k8s(
+                wc_routes.ConnectK8sRequest(api_url="https://cluster.example.com", token="real-token"),
+                request,
+                workspace={"id": workspace_id},
+            )
+        assert result.id == str(workspace_id)
+        conn.execute.assert_awaited_once()
+
+    async def test_ca_cert_is_optional(self):
+        workspace_id = uuid4()
+        request, conn = _make_request()
+        with (
+            patch("api.routes.workspace_credentials.verify_k8s_connection", new=AsyncMock(return_value=None)) as mock_verify,
+            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
+        ):
+            await wc_routes.connect_k8s(
+                wc_routes.ConnectK8sRequest(api_url="https://cluster.example.com", token="real-token"),
+                request,
+                workspace={"id": workspace_id},
+            )
+        mock_verify.assert_awaited_once_with("https://cluster.example.com", "real-token", None)

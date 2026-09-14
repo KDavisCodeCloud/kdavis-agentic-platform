@@ -25,15 +25,19 @@ from api.routes import incidents
 from db.models import IncidentApproveRequest
 
 
-def _make_request(fetchrow_return: dict, execute_return=None, credentials_row=None) -> SimpleNamespace:
+def _make_request(fetchrow_return: dict, execute_return=None, credentials_row=None, k8s_credentials_row=None) -> SimpleNamespace:
     """credentials_row backs the SECOND conn.fetchrow call -- made by
     core.workspace_credentials.build_agent_credentials() inside _resume()
-    for the four credentialed agents (01/05/06/08). None (the default)
-    means "no credentials configured", which build_agent_credentials
-    handles by returning all-None credentials -- fine for dispatch tests
-    that only care which workflow class got instantiated."""
+    for the credentialed agents (01/02/04/05/06/08/10, _CREDENTIALED_AGENTS).
+    k8s_credentials_row backs a THIRD conn.fetchrow call -- build_k8s_credentials(),
+    made only for agent_02_k8s_alert/agent_08_drift_detection. Both None
+    (the default) means "no credentials configured", which
+    build_agent_credentials/build_k8s_credentials handle by returning
+    all-None credentials -- fine for dispatch tests that only care which
+    workflow class got instantiated. Harmless to always provide a third
+    value even for agent types that never make a third fetchrow call."""
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(side_effect=[fetchrow_return, credentials_row])
+    conn.fetchrow = AsyncMock(side_effect=[fetchrow_return, credentials_row, k8s_credentials_row])
     conn.execute = AsyncMock(return_value=execute_return)
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)
@@ -160,6 +164,34 @@ class TestApproveDispatchesToCorrectWorkflow:
         _, kwargs = MockWorkflow.call_args
         assert kwargs["k8s_context"] == "aks-demo"
 
+    async def test_agent02_and_08_resume_pass_real_per_workspace_k8s_credentials(self):
+        # Phase 4: agent_02_k8s_alert and agent_08_drift_detection both now
+        # fetch a workspace's real cluster credentials (migration 025) on
+        # resume, not just k8s_context's global-KUBECONFIG_YAML fallback.
+        for agent_id in ("agent_02_k8s_alert", "agent_08_drift_detection"):
+            workspace_id = uuid4()
+            row = _incident_row(agent_id, workspace_id)
+            k8s_row = {
+                "k8s_api_url": "https://prod-cluster.example.com",
+                "k8s_token_encrypted": "cipher",
+                "k8s_ca_cert_encrypted": None,
+            }
+            request, conn = _make_request(row, k8s_credentials_row=k8s_row)
+
+            MockWorkflow = MagicMock()
+            MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+            with (
+                patch.dict(incidents._WORKFLOW_CLASSES, {agent_id: MockWorkflow}),
+                patch("core.workspace_credentials.decrypt", return_value="real_k8s_token"),
+            ):
+                await _approve(request, str(row["id"]), workspace_id)
+                await _drain_background_tasks()
+
+            _, kwargs = MockWorkflow.call_args
+            assert kwargs["k8s_api_url"] == "https://prod-cluster.example.com"
+            assert kwargs["k8s_token"] == "real_k8s_token"
+
     async def test_non_drift_credentialed_agent_resume_does_not_pass_k8s_context(self):
         workspace_id = uuid4()
         row = _incident_row("agent_06_finops", workspace_id, cloud_provider="azure")
@@ -184,6 +216,64 @@ class TestApproveDispatchesToCorrectWorkflow:
             await _approve(request, str(row["id"]), workspace_id)
 
         assert exc.value.status_code == 500
+
+
+class TestAgent04And10ResumeGetRealCredentials:
+    # Real bug found while inventorying item 5's blast radius: agent_04 and
+    # agent_10 were entirely missing from _CREDENTIALED_AGENTS, so this
+    # resume path always instantiated their workflow with NO credentials --
+    # meaning MigrationTools/DependencyPatchTools always fell back to
+    # os.environ.get("GITHUB_TOKEN", "") (a shared platform-wide token --
+    # a cross-tenant leak risk if ever set, a hard failure for every real
+    # customer if not). This is the path that actually matters: the execute
+    # node (where create_migration_pr/create_patch_pr run) fires on resume,
+    # after HITL approval -- not on the initial diagnose-only run().
+
+    async def test_agent04_and_10_resume_pass_the_workspaces_real_github_token(self):
+        for agent_id in ("agent_04_migration", "agent_10_dependency_patch"):
+            workspace_id = uuid4()
+            row = _incident_row(agent_id, workspace_id)
+            credentials_row = {
+                "github_pat_encrypted": "cipher",
+                "github_app_installation_id": None,
+                "aws_role_arn": None, "aws_external_id": None,
+                "azure_tenant_id": None, "azure_client_id": None,
+                "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+                "azure_devops_pat_encrypted": None,
+            }
+            request, conn = _make_request(row, credentials_row=credentials_row)
+
+            MockWorkflow = MagicMock()
+            MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+            with (
+                patch.dict(incidents._WORKFLOW_CLASSES, {agent_id: MockWorkflow}),
+                patch("core.workspace_credentials.decrypt", return_value="ghp_real_workspace_token"),
+            ):
+                await _approve(request, str(row["id"]), workspace_id)
+                await _drain_background_tasks()
+
+            MockWorkflow.assert_called_once()
+            _, kwargs = MockWorkflow.call_args
+            assert kwargs["github_token"] == "ghp_real_workspace_token"
+
+    async def test_agent04_and_10_resume_with_no_credentials_configured_pass_none(self):
+        # No env-var fallback anymore -- an unconfigured workspace gets a
+        # real None, not a silently-borrowed platform token.
+        for agent_id in ("agent_04_migration", "agent_10_dependency_patch"):
+            workspace_id = uuid4()
+            row = _incident_row(agent_id, workspace_id)
+            request, conn = _make_request(row, credentials_row=None)
+
+            MockWorkflow = MagicMock()
+            MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+            with patch.dict(incidents._WORKFLOW_CLASSES, {agent_id: MockWorkflow}):
+                await _approve(request, str(row["id"]), workspace_id)
+                await _drain_background_tasks()
+
+            _, kwargs = MockWorkflow.call_args
+            assert kwargs["github_token"] is None
 
 
 class TestApproveStatusTransitions:

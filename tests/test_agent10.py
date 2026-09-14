@@ -39,8 +39,8 @@ What this file validates:
     - skips packages with empty version string
 
   DependencyPatchTools.create_patch_pr():
-    - raises EnvironmentError when GITHUB_TOKEN missing
-    - calls GitHub API in correct 5-step sequence
+    - raises NoRepoCredentialError when no repo credential is configured
+    - delegates branch/commit/PR creation to core.repo_tools (Phase 2)
     - returns pr_created with pr_url and pr_number
 
   DependencyPatchTools.create_vulnerability_issue():
@@ -101,6 +101,7 @@ import pytest
 from agents.agent_10_dependency_patch.tools import (
     DependencyPatchTools,
 )
+from core.repo_tools import NoRepoCredentialError
 from agents.agent_10_dependency_patch.workflow import (
     DependencyPatchWorkflow,
     PatchState,
@@ -291,6 +292,57 @@ def _make_workflow(mock_db, workspace_id, mock_router) -> DependencyPatchWorkflo
     ):
         wf = DependencyPatchWorkflow(mock_db, workspace_id, MagicMock())
     return wf
+
+
+class TestDependencyPatchWorkflowCredentialWiring:
+    # Real bug (Phase 1, connectivity gaps): DependencyPatchWorkflow.__init__
+    # used to accept only (db_conn, workspace_id, checkpointer) -- no way for
+    # a caller to pass a workspace's real GitHub credential at all, so
+    # DependencyPatchTools always fell back to a shared os.environ["GITHUB_TOKEN"].
+    # This pins that the constructor now threads github_token AND (Phase 2)
+    # azure_devops_token/azure_devops_org through to self._tools, and
+    # ignores the other uniform build_agent_credentials() keys agent_10 has
+    # no use for.
+
+    def test_github_token_reaches_dependency_patch_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(DependencyPatchWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = DependencyPatchWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                github_token="ghp_real_workspace_token",
+                aws_session=MagicMock(),
+                azure_access_token="unused",
+                azure_devops_token="unused",
+                azure_devops_org="unused",
+            )
+        assert wf._tools.github_token == "ghp_real_workspace_token"
+
+    def test_azure_devops_credentials_reach_dependency_patch_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(DependencyPatchWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = DependencyPatchWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                azure_devops_token="ado_pat_real",
+                azure_devops_org="acme-org",
+            )
+        assert wf._tools.azure_devops_token == "ado_pat_real"
+        assert wf._tools.azure_devops_org == "acme-org"
+
+    def test_no_credentials_leaves_tools_token_empty_not_env_fallback(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(DependencyPatchWorkflow, "_build_graph", return_value=MagicMock()),
+            patch.dict("os.environ", {"GITHUB_TOKEN": "platform-shared-token-must-not-leak"}),
+        ):
+            wf = DependencyPatchWorkflow(mock_db, str(uuid4()), MagicMock())
+        assert wf._tools.github_token == ""
 
 
 def _base_state(workspace_id: str, payload: dict | None = None) -> PatchState:
@@ -643,34 +695,37 @@ class TestQueryOsvBatch:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestCreatePatchPr:
+    # Phase 2 (connectivity gaps): create_patch_pr used to be its own direct
+    # 5-step GitHub REST implementation; it now delegates to core.repo_tools
+    # (GitHubRepoTools/AzureDevOpsRepoTools), selected by
+    # DependencyPatchTools._repo_tools(). These tests exercise that
+    # delegation boundary -- RepoTools' own httpx-level behavior is covered
+    # by tests/test_repo_tools.py.
+
     @pytest.fixture
     def tools(self):
         return DependencyPatchTools(github_token="gh_test_token")
 
-    async def test_raises_without_github_token(self):
-        no_token = DependencyPatchTools(github_token="")
-        with pytest.raises(EnvironmentError, match="GITHUB_TOKEN"):
-            await no_token.create_patch_pr(
+    @pytest.fixture
+    def mock_repo_tools(self):
+        rt = MagicMock()
+        rt.create_branch = AsyncMock(return_value=None)
+        rt.push_commit = AsyncMock(return_value="commit_sha_abc")
+        rt.create_pr = AsyncMock(return_value={
+            "pr_url": "https://github.com/acme/backend/pull/42", "pr_number": 42,
+        })
+        return rt
+
+    async def test_raises_without_any_credential_configured(self):
+        no_creds = DependencyPatchTools()
+        with pytest.raises(NoRepoCredentialError):
+            await no_creds.create_patch_pr(
                 "acme", "backend", "patch-branch", "requirements.txt",
                 "sha123", "new content", "PR body"
             )
 
-    async def test_returns_pr_created_with_url_and_number(self, tools):
-        ref_resp    = _make_http_resp(200, {"object": {"sha": "headsha123"}})
-        branch_resp = _make_http_resp(201, {})
-        commit_resp = _make_http_resp(201, {})
-        pr_resp     = _make_http_resp(201, {
-            "number": 42,
-            "html_url": "https://github.com/acme/backend/pull/42",
-        })
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__  = AsyncMock(return_value=False)
-        ctx.get  = AsyncMock(return_value=ref_resp)
-        ctx.post = AsyncMock(side_effect=[branch_resp, pr_resp])
-        ctx.put  = AsyncMock(return_value=commit_resp)
-
-        with patch("agents.agent_10_dependency_patch.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
+    async def test_returns_pr_created_with_url_and_number(self, tools, mock_repo_tools):
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
             result = await tools.create_patch_pr(
                 "acme", "backend",
                 "cloud-decoded/security-patch-abc",
@@ -681,6 +736,25 @@ class TestCreatePatchPr:
         assert result["status"] == "pr_created"
         assert result["pr_number"] == 42
         assert "acme/backend" in result["pr_url"]
+        assert result["branch"] == "cloud-decoded/security-patch-abc"
+
+        mock_repo_tools.create_branch.assert_awaited_once_with(
+            "acme", "backend", "cloud-decoded/security-patch-abc", "main"
+        )
+        mock_repo_tools.push_commit.assert_awaited_once_with(
+            "acme", "backend", "cloud-decoded/security-patch-abc",
+            {"requirements.txt": "requests==2.31.0\n"},
+            "chore(deps): update vulnerable dependencies [Cloud Decoded]",
+        )
+
+    async def test_propagates_repo_tools_errors(self, tools, mock_repo_tools):
+        mock_repo_tools.create_pr = AsyncMock(side_effect=RuntimeError("PR creation failed"))
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
+            with pytest.raises(RuntimeError, match="PR creation failed"):
+                await tools.create_patch_pr(
+                    "acme", "backend", "patch-branch", "requirements.txt",
+                    "sha123", "new content", "PR body",
+                )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -27,14 +27,17 @@ Correction options:
 """
 
 import asyncio
-import base64
 import json
 import logging
 import shlex
+import tempfile
 from typing import Optional
 
 import httpx
 from botocore.exceptions import ClientError
+
+from core.repo_tools import RepoTools, get_repo_tools
+from core.workspace_credentials import build_kubeconfig
 
 log = logging.getLogger(__name__)
 
@@ -56,23 +59,61 @@ class DriftTools:
         allow_kubectl: bool = True,
         aws_session=None,
         k8s_context: Optional[str] = None,
+        azure_devops_token: Optional[str] = None,
+        azure_devops_org: Optional[str] = None,
+        k8s_api_url: Optional[str] = None,
+        k8s_token: Optional[str] = None,
+        k8s_ca_cert: Optional[str] = None,
     ):
         # No env-var fallback for github_token/aws_session -- per-workspace
         # now (core/workspace_credentials.py).
-        self.github_token  = github_token or ""
-        self.allow_kubectl = allow_kubectl
-        self.aws_session   = aws_session
-        # Which kubeconfig context to target. Without this, kubectl silently
-        # uses KUBECONFIG's current-context for every cluster regardless of
-        # which one an incident is actually about -- found live: an AKS
-        # incident's "apply directly" reported exit_code=0 "unchanged"
-        # because it had applied against EKS (the kubeconfig's default
-        # context) the whole time, doing nothing to the actually-broken pod.
+        self.github_token       = github_token or ""
+        self.allow_kubectl      = allow_kubectl
+        self.aws_session        = aws_session
+        self.azure_devops_token = azure_devops_token or ""
+        self.azure_devops_org   = azure_devops_org or ""
+        # Which kubeconfig context to target -- the global-KUBECONFIG_YAML
+        # stopgap (core.workspace_credentials.resolve_k8s_context). Without
+        # this, kubectl silently uses KUBECONFIG's current-context for every
+        # cluster regardless of which one an incident is actually about --
+        # found live: an AKS incident's "apply directly" reported
+        # exit_code=0 "unchanged" because it had applied against EKS (the
+        # kubeconfig's default context) the whole time, doing nothing to the
+        # actually-broken pod.
         self.k8s_context   = k8s_context
+        # Real per-workspace cluster credentials (Phase 4, migration 025) --
+        # take priority over the global stopgap above when present. Built
+        # once here, written to a temp kubeconfig lazily on first kubectl
+        # call (not every DriftTools construction needs one).
+        self._kubeconfig_content = (
+            build_kubeconfig(k8s_api_url, k8s_token, k8s_ca_cert) if k8s_api_url and k8s_token else None
+        )
+        self._kubeconfig_path: Optional[str] = None
+
+    def _repo_tools(self) -> RepoTools:
+        """Provider selection (Phase 2) -- GitHub or Azure DevOps, whichever
+        this workspace has connected. See core.repo_tools.get_repo_tools."""
+        return get_repo_tools(
+            github_token=self.github_token,
+            azure_devops_token=self.azure_devops_token,
+            azure_devops_org=self.azure_devops_org,
+        )
 
     @property
-    def _context_flag(self) -> str:
-        return f" --context {self.k8s_context}" if self.k8s_context else ""
+    def _cluster_flag(self) -> str:
+        """--kubeconfig <per-workspace file> when this workspace has its own
+        cluster credentials (Phase 4); otherwise --context <name> against
+        the platform's global KUBECONFIG_YAML stopgap; otherwise nothing
+        (kubectl's own default, only ever true for local dev)."""
+        if self._kubeconfig_content:
+            if not self._kubeconfig_path:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+                    f.write(self._kubeconfig_content)
+                    self._kubeconfig_path = f.name
+            return f" --kubeconfig {self._kubeconfig_path}"
+        if self.k8s_context:
+            return f" --context {self.k8s_context}"
+        return ""
 
     # ──────────────────────────────────────────────
     # Optional state fetchers (pre-HITL, read-only)
@@ -91,7 +132,7 @@ class DriftTools:
         if not self.allow_kubectl:
             return {"error": "kubectl disabled for this workspace"}
 
-        cmd = f"kubectl{self._context_flag} get {resource_type} {name} -n {namespace} -o json"
+        cmd = f"kubectl{self._cluster_flag} get {resource_type} {name} -n {namespace} -o json"
         try:
             proc = await asyncio.create_subprocess_exec(
                 *shlex.split(cmd),
@@ -174,7 +215,7 @@ class DriftTools:
             return {"status": "skipped", "reason": "kubectl disabled for this workspace"}
 
         log.info("[DriftTools] Applying K8s manifest to namespace=%s context=%s", namespace, self.k8s_context or "(default)")
-        result = await self._run_kubectl(f"kubectl{self._context_flag} apply -f - -n {namespace}", manifest_yaml)
+        result = await self._run_kubectl(f"kubectl{self._cluster_flag} apply -f - -n {namespace}", manifest_yaml)
 
         if result["status"] == "ok":
             log.info("[DriftTools] kubectl apply exit_code=0 stdout=%s", result["stdout"])
@@ -190,14 +231,14 @@ class DriftTools:
         if "pod updates may not change fields" in result["stderr"]:
             log.warning("[DriftTools] Pod spec change rejected as immutable -- deleting and recreating")
             delete_result = await self._run_kubectl(
-                f"kubectl{self._context_flag} delete -f - -n {namespace} --wait=true --timeout={_MAX_KUBECTL_TIMEOUT}s",
+                f"kubectl{self._cluster_flag} delete -f - -n {namespace} --wait=true --timeout={_MAX_KUBECTL_TIMEOUT}s",
                 manifest_yaml,
             )
             if delete_result["status"] != "ok":
                 log.warning("[DriftTools] kubectl delete (immutable-field fallback) exit_code=%s stderr=%s",
                             delete_result["exit_code"], delete_result["stderr"])
                 return delete_result
-            result = await self._run_kubectl(f"kubectl{self._context_flag} apply -f - -n {namespace}", manifest_yaml)
+            result = await self._run_kubectl(f"kubectl{self._cluster_flag} apply -f - -n {namespace}", manifest_yaml)
             if result["status"] == "ok":
                 log.info("[DriftTools] kubectl apply (post-delete recreate) exit_code=0 stdout=%s", result["stdout"])
                 return result
@@ -222,83 +263,30 @@ class DriftTools:
         pr_title: Optional[str] = None,
     ) -> dict:
         """
-        Open a GitHub PR with the corrected IaC/manifest content.
-        5-step flow: get HEAD SHA → create branch → get file SHA → commit → open PR.
+        Open a PR with the corrected IaC/manifest content, against whichever
+        provider (GitHub or Azure DevOps) this workspace has connected.
+        Delegates the 5-step branch/commit/PR flow to core.repo_tools
+        (Phase 2) -- this used to be its own direct GitHub implementation;
+        that logic is what core.repo_tools.GitHubRepoTools was lifted from.
         """
-        if not self.github_token:
-            raise EnvironmentError("GITHUB_TOKEN not configured for this workspace")
+        repo_tools = self._repo_tools()
 
-        headers = _gh_headers(self.github_token)
+        await repo_tools.create_branch(owner, repo, branch_name, base_branch)
+        await repo_tools.push_commit(
+            owner, repo, branch_name,
+            {file_path: corrected_content},
+            f"fix(drift): restore {file_path} to desired state [Cloud Decoded Agent 08]",
+        )
+        title = pr_title or f"fix(drift): restore {file_path} to desired state"
+        pr = await repo_tools.create_pr(owner, repo, branch_name, title, pr_body, base=base_branch)
 
-        async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
-            # 1. Get HEAD SHA of base branch
-            ref_resp = await client.get(
-                f"{_GH_API}/repos/{owner}/{repo}/git/refs/heads/{base_branch}",
-                headers=headers,
-            )
-            if ref_resp.status_code != 200:
-                raise RuntimeError(f"Could not get HEAD ref for '{base_branch}': {ref_resp.status_code}")
-            head_sha = ref_resp.json()["object"]["sha"]
-
-            # 2. Create drift-correction branch
-            branch_resp = await client.post(
-                f"{_GH_API}/repos/{owner}/{repo}/git/refs",
-                headers=headers,
-                json={"ref": f"refs/heads/{branch_name}", "sha": head_sha},
-            )
-            if branch_resp.status_code not in (200, 201, 422):
-                raise RuntimeError(f"Could not create branch '{branch_name}': {branch_resp.status_code}")
-
-            # 3. Get existing file SHA (None if new file)
-            file_sha = None
-            file_resp = await client.get(
-                f"{_GH_API}/repos/{owner}/{repo}/contents/{file_path}",
-                headers=headers,
-                params={"ref": branch_name},
-            )
-            if file_resp.status_code == 200:
-                file_sha = file_resp.json().get("sha")
-
-            # 4. Commit corrected content
-            commit_body: dict = {
-                "message": f"fix(drift): restore {file_path} to desired state [Cloud Decoded Agent 08]",
-                "content": base64.b64encode(corrected_content.encode()).decode(),
-                "branch": branch_name,
-            }
-            if file_sha:
-                commit_body["sha"] = file_sha
-
-            commit_resp = await client.put(
-                f"{_GH_API}/repos/{owner}/{repo}/contents/{file_path}",
-                headers=headers,
-                json=commit_body,
-            )
-            if commit_resp.status_code not in (200, 201):
-                raise RuntimeError(f"Could not commit corrected file: {commit_resp.status_code}")
-
-            # 5. Open pull request
-            title = pr_title or f"fix(drift): restore {file_path} to desired state"
-            pr_resp = await client.post(
-                f"{_GH_API}/repos/{owner}/{repo}/pulls",
-                headers=headers,
-                json={
-                    "title": title,
-                    "body": pr_body,
-                    "head": branch_name,
-                    "base": base_branch,
-                },
-            )
-            if pr_resp.status_code not in (200, 201):
-                raise RuntimeError(f"Could not open PR: {pr_resp.status_code}")
-
-            pr = pr_resp.json()
-            log.info("[DriftTools] Drift remediation PR created: %s", pr.get("html_url"))
-            return {
-                "status": "pr_created",
-                "pr_url": pr.get("html_url", ""),
-                "pr_number": pr.get("number"),
-                "branch": branch_name,
-            }
+        log.info("[DriftTools] Drift remediation PR created: %s", pr.get("pr_url"))
+        return {
+            "status": "pr_created",
+            "pr_url": pr.get("pr_url", ""),
+            "pr_number": pr.get("pr_number"),
+            "branch": branch_name,
+        }
 
     async def create_drift_issue(
         self,

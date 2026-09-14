@@ -29,9 +29,9 @@ What this file validates:
     - Returns skipped when allow_kubectl=False
 
   DriftTools — create_drift_pr():
-    - Executes 5-step GitHub flow (ref → branch → file SHA → commit → PR)
+    - Delegates branch/commit/PR creation to core.repo_tools (Phase 2)
     - Returns pr_created with pr_url and pr_number
-    - Raises EnvironmentError when GITHUB_TOKEN missing
+    - Raises NoRepoCredentialError when no repo credential is configured
 
   DriftTools — create_drift_issue():
     - Creates issue with drift labels
@@ -83,6 +83,7 @@ from uuid import uuid4
 import pytest
 
 from agents.agent_08_drift_detection.tools import DriftTools
+from core.repo_tools import NoRepoCredentialError
 from agents.agent_08_drift_detection.workflow import (
     DriftWorkflow,
     DriftState,
@@ -188,6 +189,26 @@ def _make_workflow(mock_db, workspace_id, mock_router) -> DriftWorkflow:
     ):
         wf = DriftWorkflow(mock_db, workspace_id, MagicMock())
     return wf
+
+
+class TestDriftWorkflowAzureDevOpsCredentialWiring:
+    # Phase 2 (connectivity gaps): DriftWorkflow.__init__ gained
+    # azure_devops_token/azure_devops_org params so DriftTools' get_repo_tools()
+    # provider selection actually has something to select between.
+
+    def test_azure_devops_credentials_reach_drift_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(DriftWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = DriftWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                azure_devops_token="ado_pat_real",
+                azure_devops_org="acme-org",
+            )
+        assert wf._tools.azure_devops_token == "ado_pat_real"
+        assert wf._tools.azure_devops_org == "acme-org"
 
 
 def _base_state(workspace_id: str, payload: dict | None = None) -> DriftState:
@@ -519,34 +540,97 @@ class TestApplyK8sManifest:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# DriftTools — _cluster_flag (Phase 4: real per-workspace kubeconfig takes
+# priority over the global KUBECONFIG_YAML + --context stopgap)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestClusterFlagPriority:
+    async def test_uses_kubeconfig_flag_when_per_workspace_creds_given(self):
+        scoped_tools = DriftTools(
+            allow_kubectl=True,
+            k8s_context="aks-demo",  # present but must lose to the real creds below
+            k8s_api_url="https://prod-cluster.example.com",
+            k8s_token="real_k8s_token",
+        )
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"pod/x configured", b""))
+
+        with patch("agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+                   return_value=mock_proc) as mock_exec:
+            await scoped_tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        cmd_args = mock_exec.call_args.args
+        assert "--kubeconfig" in cmd_args
+        assert "--context" not in cmd_args
+
+    async def test_reuses_the_same_kubeconfig_file_across_calls(self):
+        scoped_tools = DriftTools(
+            allow_kubectl=True, k8s_api_url="https://prod-cluster.example.com", k8s_token="real_k8s_token",
+        )
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with patch("agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+                   return_value=mock_proc) as mock_exec:
+            await scoped_tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+            await scoped_tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        first_args = mock_exec.call_args_list[0].args
+        second_args = mock_exec.call_args_list[1].args
+        first_path = first_args[first_args.index("--kubeconfig") + 1]
+        second_path = second_args[second_args.index("--kubeconfig") + 1]
+        assert first_path == second_path
+
+    async def test_falls_back_to_context_when_no_per_workspace_creds(self):
+        scoped_tools = DriftTools(allow_kubectl=True, k8s_context="aks-demo")
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with patch("agents.agent_08_drift_detection.tools.asyncio.create_subprocess_exec",
+                   return_value=mock_proc) as mock_exec:
+            await scoped_tools.apply_k8s_manifest("apiVersion: v1\nkind: Pod\n...", "default")
+
+        cmd_args = mock_exec.call_args.args
+        assert "--context" in cmd_args
+        assert "--kubeconfig" not in cmd_args
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # DriftTools — create_drift_pr()
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestCreateDriftPR:
+    # Phase 2 (connectivity gaps): create_drift_pr used to be its own direct
+    # 5-step GitHub REST implementation (the one core.repo_tools.GitHubRepoTools
+    # was originally lifted from); it now delegates to core.repo_tools,
+    # selected by DriftTools._repo_tools(). These tests exercise that
+    # delegation boundary -- RepoTools' own httpx-level behavior is covered
+    # by tests/test_repo_tools.py.
+
     @pytest.fixture
     def tools(self):
         return DriftTools(github_token="gh_test_token")
 
-    async def test_raises_without_github_token(self):
-        no_token = DriftTools(github_token="")
-        with pytest.raises(EnvironmentError, match="GITHUB_TOKEN"):
-            await no_token.create_drift_pr("acme", "infra", "drift-fix", "tf/sg.tf", "content", "body")
+    @pytest.fixture
+    def mock_repo_tools(self):
+        rt = MagicMock()
+        rt.create_branch = AsyncMock(return_value=None)
+        rt.push_commit = AsyncMock(return_value="commit_sha_abc")
+        rt.create_pr = AsyncMock(return_value={
+            "pr_url": "https://github.com/acme/infra/pull/42", "pr_number": 42,
+        })
+        return rt
 
-    async def test_executes_5_step_github_flow(self, tools):
-        ref_resp    = _make_http_resp(200, {"object": {"sha": "abc123"}})
-        branch_resp = _make_http_resp(201, {})
-        file_resp   = _make_http_resp(200, {"sha": "def456"})
-        commit_resp = _make_http_resp(201, {})
-        pr_resp     = _make_http_resp(201, {"number": 42, "html_url": "https://github.com/acme/infra/pull/42"})
+    async def test_raises_without_any_credential_configured(self):
+        no_creds = DriftTools()
+        with pytest.raises(NoRepoCredentialError):
+            await no_creds.create_drift_pr("acme", "infra", "drift-fix", "tf/sg.tf", "content", "body")
 
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__  = AsyncMock(return_value=False)
-        ctx.get  = AsyncMock(side_effect=[ref_resp, file_resp])
-        ctx.post = AsyncMock(side_effect=[branch_resp, pr_resp])
-        ctx.put  = AsyncMock(return_value=commit_resp)
-
-        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
+    async def test_delegates_branch_commit_and_pr_to_repo_tools(self, tools, mock_repo_tools):
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
             result = await tools.create_drift_pr(
                 "acme", "infra", "drift-correction/sg-abc123",
                 "terraform/security_groups.tf",
@@ -557,31 +641,29 @@ class TestCreateDriftPR:
         assert result["status"] == "pr_created"
         assert result["pr_number"] == 42
         assert "acme/infra/pull/42" in result["pr_url"]
+        assert result["branch"] == "drift-correction/sg-abc123"
 
-    async def test_creates_pr_for_new_file_without_file_sha(self, tools):
-        ref_resp    = _make_http_resp(200, {"object": {"sha": "abc123"}})
-        branch_resp = _make_http_resp(201, {})
-        file_resp   = _make_http_resp(404, {})  # file doesn't exist yet
-        commit_resp = _make_http_resp(201, {})
-        pr_resp     = _make_http_resp(201, {"number": 43, "html_url": "https://github.com/acme/infra/pull/43"})
+        mock_repo_tools.create_branch.assert_awaited_once_with("acme", "infra", "drift-correction/sg-abc123", "main")
+        mock_repo_tools.push_commit.assert_awaited_once_with(
+            "acme", "infra", "drift-correction/sg-abc123",
+            {"terraform/security_groups.tf": 'resource "aws_security_group" "web" {}'},
+            "fix(drift): restore terraform/security_groups.tf to desired state [Cloud Decoded Agent 08]",
+        )
+        mock_repo_tools.create_pr.assert_awaited_once_with(
+            "acme", "infra", "drift-correction/sg-abc123",
+            "fix(drift): restore terraform/security_groups.tf to desired state",
+            "## Drift Report",
+            base="main",
+        )
 
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__  = AsyncMock(return_value=False)
-        ctx.get  = AsyncMock(side_effect=[ref_resp, file_resp])
-        ctx.post = AsyncMock(side_effect=[branch_resp, pr_resp])
-        ctx.put  = AsyncMock(return_value=commit_resp)
-
-        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.create_drift_pr(
-                "acme", "infra", "drift-new-file/sg-new",
-                "terraform/new_sg.tf", "content", "body",
-            )
-
-        assert result["status"] == "pr_created"
-        # When file doesn't exist, commit_body should not include sha
-        commit_payload = ctx.put.call_args.kwargs["json"]
-        assert "sha" not in commit_payload
+    async def test_propagates_repo_tools_errors(self, tools, mock_repo_tools):
+        mock_repo_tools.push_commit = AsyncMock(side_effect=RuntimeError("Could not commit corrected file"))
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
+            with pytest.raises(RuntimeError, match="Could not commit corrected file"):
+                await tools.create_drift_pr(
+                    "acme", "infra", "drift-new-file/sg-new",
+                    "terraform/new_sg.tf", "content", "body",
+                )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

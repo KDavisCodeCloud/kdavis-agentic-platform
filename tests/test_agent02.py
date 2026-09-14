@@ -12,8 +12,8 @@ What this file validates:
     - apply_hpa() retries with PUT when 409 Conflict is returned
     - rollback_deployment() GETs current revision then PATCHes with restart annotation
     - rollback_deployment() raises EnvironmentError when k8s config is missing
-    - create_gitops_pr() creates branch, commits file, opens PR via GitHub API
-    - create_gitops_pr() raises EnvironmentError when GITHUB_TOKEN is missing
+    - create_gitops_pr() delegates branch/commit/PR creation to core.repo_tools (Phase 4)
+    - create_gitops_pr() raises NoRepoCredentialError when no repo credential is configured
     - execute_option("hold") returns held status without making any API call
     - execute_option("opt_1") dispatches to patch_deployment_memory
     - execute_option("opt_2") dispatches to apply_hpa
@@ -47,6 +47,7 @@ What this file validates:
 """
 
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -54,6 +55,7 @@ import pytest
 
 from agents.agent_02_k8s_alert.tools import K8sTools, _halve_memory
 from agents.agent_02_k8s_alert.workflow import K8sAlertWorkflow, K8sAlertState
+from core.repo_tools import NoRepoCredentialError
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -94,6 +96,68 @@ def _base_k8s_state(workspace_id: str, payload: dict | None = None) -> K8sAlertS
         "execution_result": None,
         "error": None,
     }
+
+
+class TestK8sAlertWorkflowCredentialWiring:
+    # Phase 4 (connectivity gaps): K8sAlertWorkflow.__init__ used to accept
+    # only (db_conn, workspace_id, checkpointer) -- no way for a caller to
+    # pass a workspace's real K8s API or GitHub credential at all, so
+    # K8sTools always fell back to shared os.environ["K8S_API_URL"]/
+    # ["K8S_TOKEN"]/["GITHUB_TOKEN"]. This pins that the constructor now
+    # threads all of them through to self._tools.
+
+    def test_k8s_and_github_credentials_reach_k8s_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(K8sAlertWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = K8sAlertWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                github_token="ghp_real_workspace_token",
+                aws_session=MagicMock(),
+                azure_access_token="unused",
+                azure_devops_token="unused",
+                azure_devops_org="unused",
+                k8s_api_url="https://prod-cluster.example.com",
+                k8s_token="real_k8s_token",
+                k8s_ca_cert="fake-pem",
+            )
+        assert wf._tools.github_token == "ghp_real_workspace_token"
+        assert wf._tools.k8s_api_url == "https://prod-cluster.example.com"
+        assert wf._tools.k8s_token == "real_k8s_token"
+
+    def test_no_credentials_leaves_tools_empty_not_env_fallback(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(K8sAlertWorkflow, "_build_graph", return_value=MagicMock()),
+            patch.dict("os.environ", {
+                "K8S_API_URL": "https://platform-shared-cluster.example.com",
+                "K8S_TOKEN": "platform-shared-token-must-not-leak",
+                "GITHUB_TOKEN": "platform-shared-token-must-not-leak",
+            }),
+        ):
+            wf = K8sAlertWorkflow(mock_db, str(uuid4()), MagicMock())
+        assert wf._tools.k8s_api_url == ""
+        assert wf._tools.k8s_token == ""
+        assert wf._tools.github_token == ""
+
+
+class TestK8sToolsVerifyProperty:
+    def test_returns_true_when_no_ca_cert(self):
+        tools = K8sTools(k8s_api_url="https://c.example.com", k8s_token="t")
+        assert tools._verify is True
+
+    def test_writes_ca_cert_to_a_temp_file_and_reuses_it(self):
+        tools = K8sTools(k8s_api_url="https://c.example.com", k8s_token="t", k8s_ca_cert="fake-pem-content")
+        first = tools._verify
+        second = tools._verify
+        assert first == second
+        assert os.path.exists(first)
+        with open(first) as f:
+            assert f.read() == "fake-pem-content"
+        os.unlink(first)
 
 
 def _mock_k8s_resp(status_code: int, body: dict | None = None) -> MagicMock:
@@ -251,20 +315,29 @@ class TestK8sToolsRollback:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestK8sToolsGitOpsPR:
+    # Phase 4 (connectivity gaps): create_gitops_pr used to be its own
+    # direct 5-step GitHub REST implementation; it now delegates to
+    # core.repo_tools (same treatment Phase 2 gave agents 04/08/10),
+    # selected by K8sTools._repo_tools(). These tests exercise that
+    # delegation boundary -- RepoTools' own httpx-level behavior is covered
+    # by tests/test_repo_tools.py.
+
     @pytest.fixture
     def tools(self) -> K8sTools:
         return K8sTools(github_token="gh_test_token")
 
-    async def test_creates_branch_commits_file_opens_pr(self, tools):
-        file_resp = _mock_k8s_resp(200, {"sha": "abc123"})            # GET file
-        main_ref_resp = _mock_k8s_resp(200, {"object": {"sha": "def456"}})  # GET main ref
-        branch_resp = _mock_k8s_resp(201, {"ref": "refs/heads/cloud-decoded/fix"})  # POST branch
-        commit_resp = _mock_k8s_resp(201, {"content": {"sha": "ghi789"}})           # PUT file
-        pr_resp = _mock_k8s_resp(201, {"html_url": "https://github.com/acme/infra/pull/42", "number": 42})
+    @pytest.fixture
+    def mock_repo_tools(self):
+        rt = MagicMock()
+        rt.create_branch = AsyncMock(return_value=None)
+        rt.push_commit = AsyncMock(return_value="commit_sha_abc")
+        rt.create_pr = AsyncMock(return_value={
+            "pr_url": "https://github.com/acme/infra/pull/42", "pr_number": 42,
+        })
+        return rt
 
-        mock_cls, ctx = _make_k8s_client_ctx([file_resp, main_ref_resp, branch_resp, commit_resp, pr_resp])
-
-        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+    async def test_creates_branch_commits_file_opens_pr(self, tools, mock_repo_tools):
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
             result = await tools.create_gitops_pr(
                 owner="acme", repo="infra",
                 file_path="k8s/production/payment-service.yaml",
@@ -278,10 +351,15 @@ class TestK8sToolsGitOpsPR:
         assert result["pr_url"] == "https://github.com/acme/infra/pull/42"
         assert result["pr_number"] == 42
 
-    async def test_raises_without_github_token(self):
-        tools_no_token = K8sTools(github_token="")
-        with pytest.raises(EnvironmentError, match="GITHUB_TOKEN"):
-            await tools_no_token.create_gitops_pr(
+        mock_repo_tools.push_commit.assert_awaited_once()
+        args = mock_repo_tools.push_commit.await_args.args
+        assert args[3] == {"k8s/production/payment-service.yaml": "apiVersion: apps/v1\nkind: Deployment\n..."}
+        assert args[4] == "fix: increase payment-service memory to 1Gi"
+
+    async def test_raises_without_any_credential_configured(self):
+        no_creds = K8sTools()
+        with pytest.raises(NoRepoCredentialError):
+            await no_creds.create_gitops_pr(
                 owner="acme", repo="infra",
                 file_path="k8s/deploy.yaml",
                 new_content="...",

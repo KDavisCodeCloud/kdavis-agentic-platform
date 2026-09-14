@@ -102,12 +102,16 @@ class CICDTriageWorkflow(BaseAgent):
         workspace_id: str,
         checkpointer: AsyncPostgresSaver,
         github_token: Optional[str] = None,
-        aws_session=None,  # unused -- Agent 01 is GitHub-only; accepted so callers can
+        aws_session=None,  # unused -- Agent 01 has no AWS path; accepted so callers can
         azure_access_token: Optional[str] = None,  # pass build_agent_credentials()'s dict uniformly across agents 01/05/06/08
+        azure_devops_token: Optional[str] = None,  # Azure DevOps PAT -- migration 024, CICDTools.azure_token
+        azure_devops_org: Optional[str] = None,  # unused -- CICDTools' Azure DevOps calls take org/project directly as call params, not a stored credential; accepted for uniform **creds spreading
+        llm_provider: Optional[str] = None,  # Phase 5 -- workspaces.llm_provider, routed into BaseAgent.call_llm()'s defaults
+        byok_encrypted_key: Optional[str] = None,  # Phase 5 -- workspaces.encrypted_llm_key
     ):
-        super().__init__(db_conn, workspace_id)
+        super().__init__(db_conn, workspace_id, llm_provider=llm_provider, byok_encrypted_key=byok_encrypted_key)
         self._checkpointer = checkpointer
-        self._tools = CICDTools(github_token=github_token)
+        self._tools = CICDTools(github_token=github_token, azure_token=azure_devops_token)
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph = self._build_graph()
 

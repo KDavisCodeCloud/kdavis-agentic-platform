@@ -4,9 +4,9 @@ Tests for agents/agent_04_migration/tools.py and agents/agent_04_migration/workf
 
 What this file validates:
   MigrationTools:
-    - create_migration_pr() opens a PR via 5-step GitHub API flow
-    - create_migration_pr() raises EnvironmentError when GITHUB_TOKEN is missing
-    - create_migration_pr() raises RuntimeError when GitHub ref endpoint returns non-200
+    - create_migration_pr() opens a PR by delegating to core.repo_tools (Phase 2)
+    - create_migration_pr() raises NoRepoCredentialError when no repo credential is configured
+    - create_migration_pr() propagates errors raised by the underlying RepoTools
     - create_github_issue() POSTs to the correct GitHub issues endpoint
     - create_github_issue() raises EnvironmentError when GITHUB_TOKEN is missing
     - create_github_issue() includes labels when provided
@@ -66,6 +66,7 @@ from agents.agent_04_migration.workflow import (
     _detect_source_type,
     _build_pr_body,
 )
+from core.repo_tools import NoRepoCredentialError
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -130,6 +131,75 @@ def _make_workflow(mock_db, workspace_id, mock_router) -> MigrationWorkflow:
     ):
         wf = MigrationWorkflow(mock_db, workspace_id, MagicMock())
     return wf
+
+
+class TestMigrationWorkflowCredentialWiring:
+    # Real bug (Phase 1, connectivity gaps): MigrationWorkflow.__init__ used
+    # to accept only (db_conn, workspace_id, checkpointer) -- no way for a
+    # caller to pass a workspace's real GitHub credential at all, so
+    # MigrationTools always fell back to a shared os.environ["GITHUB_TOKEN"].
+    # This pins that the constructor now threads github_token AND (Phase 2)
+    # azure_devops_token/azure_devops_org through to self._tools, and
+    # ignores the other uniform build_agent_credentials() keys agent_04 has
+    # no use for.
+
+    def test_github_token_reaches_migration_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(MigrationWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = MigrationWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                github_token="ghp_real_workspace_token",
+                aws_session=MagicMock(),
+                azure_access_token="unused",
+                azure_devops_token="unused",
+                azure_devops_org="unused",
+            )
+        assert wf._tools.github_token == "ghp_real_workspace_token"
+
+    def test_azure_devops_credentials_reach_migration_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(MigrationWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = MigrationWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                azure_devops_token="ado_pat_real",
+                azure_devops_org="acme-org",
+            )
+        assert wf._tools.azure_devops_token == "ado_pat_real"
+        assert wf._tools.azure_devops_org == "acme-org"
+
+    def test_llm_provider_and_byok_key_reach_base_agent(self):
+        # Phase 5 (connectivity gaps): workflow constructors now also thread
+        # llm_provider/byok_encrypted_key through to BaseAgent.__init__, so
+        # call_llm() can honor a workspace's own BYOK provider choice
+        # instead of always defaulting to Anthropic.
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(MigrationWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = MigrationWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                llm_provider="openai",
+                byok_encrypted_key="cipher",
+            )
+        assert wf._llm_provider == "openai"
+        assert wf._byok_encrypted_key == "cipher"
+
+    def test_no_credentials_leaves_tools_token_empty_not_env_fallback(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(MigrationWorkflow, "_build_graph", return_value=MagicMock()),
+            patch.dict("os.environ", {"GITHUB_TOKEN": "platform-shared-token-must-not-leak"}),
+        ):
+            wf = MigrationWorkflow(mock_db, str(uuid4()), MagicMock())
+        assert wf._tools.github_token == ""
 
 
 def _base_ingest_state(workspace_id: str, payload: dict | None = None) -> MigrationState:
@@ -257,25 +327,29 @@ class TestDetectSourceType:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestMigrationToolsCreatePR:
+    # Phase 2 (connectivity gaps): create_migration_pr used to be its own
+    # direct 5-step GitHub REST implementation; it now delegates to
+    # core.repo_tools (GitHubRepoTools/AzureDevOpsRepoTools), selected by
+    # MigrationTools._repo_tools(). These tests exercise that delegation
+    # boundary -- RepoTools' own httpx-level behavior is covered by
+    # tests/test_repo_tools.py.
+
     @pytest.fixture
     def tools(self):
         return MigrationTools(github_token="gh_test_token")
 
-    async def test_opens_pr_with_5_step_flow(self, tools):
-        ref_resp    = _make_gh_resp(200, {"object": {"sha": "base_sha_abc"}})
-        branch_resp = _make_gh_resp(201, {"ref": "refs/heads/cloud-decoded/migrate-xxxxxxxx"})
-        file_resp   = _make_gh_resp(200, {"sha": "file_sha_def"})
-        put_resp    = _make_gh_resp(201, {"content": {}})
-        pr_resp     = _make_gh_resp(201, {"html_url": "https://github.com/acme/backend/pull/99", "number": 99})
+    @pytest.fixture
+    def mock_repo_tools(self):
+        rt = MagicMock()
+        rt.create_branch = AsyncMock(return_value=None)
+        rt.push_commit = AsyncMock(return_value="commit_sha_abc")
+        rt.create_pr = AsyncMock(return_value={
+            "pr_url": "https://github.com/acme/backend/pull/99", "pr_number": 99,
+        })
+        return rt
 
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.get  = AsyncMock(side_effect=[ref_resp, file_resp])
-        ctx.post = AsyncMock(side_effect=[branch_resp, pr_resp])
-        ctx.put  = AsyncMock(return_value=put_resp)
-
-        with patch("agents.agent_04_migration.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
+    async def test_opens_pr_via_repo_tools(self, tools, mock_repo_tools):
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
             result = await tools.create_migration_pr(
                 owner="acme", repo="backend", file_path="src/api/routes.py",
                 new_content="from fastapi import FastAPI",
@@ -287,53 +361,39 @@ class TestMigrationToolsCreatePR:
         assert "github.com" in result["pr_url"]
         assert "cloud-decoded/migrate-" in result["branch"]
 
-    async def test_raises_without_github_token(self):
-        no_token = MigrationTools(github_token="")
-        with pytest.raises(EnvironmentError, match="GITHUB_TOKEN"):
-            await no_token.create_migration_pr(
+        mock_repo_tools.create_branch.assert_awaited_once()
+        branch_args = mock_repo_tools.create_branch.await_args.args
+        assert branch_args[0:2] == ("acme", "backend")
+        branch_name = branch_args[2]
+        assert branch_args[3] == "main"  # default base_branch
+
+        mock_repo_tools.push_commit.assert_awaited_once_with(
+            "acme", "backend", branch_name,
+            {"src/api/routes.py": "from fastapi import FastAPI"},
+            "chore(migration): chore: migrate routes.py",
+        )
+        mock_repo_tools.create_pr.assert_awaited_once_with(
+            "acme", "backend", branch_name,
+            "chore: migrate routes.py", "## Plan\nMigrate Flask to FastAPI",
+            base="main",
+        )
+
+    async def test_raises_without_any_credential_configured(self):
+        no_creds = MigrationTools()
+        with pytest.raises(NoRepoCredentialError):
+            await no_creds.create_migration_pr(
                 owner="acme", repo="backend", file_path="src/routes.py",
                 new_content="code", pr_title="title", pr_body="body",
             )
 
-    async def test_raises_on_github_ref_error(self, tools):
-        err_resp = _make_gh_resp(404, {"message": "Not Found"})
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.get = AsyncMock(return_value=err_resp)
-
-        with patch("agents.agent_04_migration.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            with pytest.raises(RuntimeError, match="GitHub get ref error"):
+    async def test_propagates_repo_tools_errors(self, tools, mock_repo_tools):
+        mock_repo_tools.create_branch = AsyncMock(side_effect=RuntimeError("Could not get HEAD ref"))
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
+            with pytest.raises(RuntimeError, match="Could not get HEAD ref"):
                 await tools.create_migration_pr(
                     owner="acme", repo="backend", file_path="src/routes.py",
                     new_content="code", pr_title="title", pr_body="body",
                 )
-
-    async def test_commits_without_file_sha_for_new_files(self, tools):
-        """When the file doesn't yet exist (404), omit sha from the commit payload."""
-        ref_resp    = _make_gh_resp(200, {"object": {"sha": "base_sha"}})
-        branch_resp = _make_gh_resp(201, {})
-        file_resp   = _make_gh_resp(404, {"message": "Not Found"})
-        put_resp    = _make_gh_resp(201, {})
-        pr_resp     = _make_gh_resp(201, {"html_url": "https://github.com/acme/backend/pull/100", "number": 100})
-
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.get  = AsyncMock(side_effect=[ref_resp, file_resp])
-        ctx.post = AsyncMock(side_effect=[branch_resp, pr_resp])
-        ctx.put  = AsyncMock(return_value=put_resp)
-
-        with patch("agents.agent_04_migration.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.create_migration_pr(
-                owner="acme", repo="backend", file_path="new_file.py",
-                new_content="new content", pr_title="chore: add file", pr_body="body",
-            )
-
-        # commit payload should not contain "sha" key
-        put_call_payload = ctx.put.call_args.kwargs["json"]
-        assert "sha" not in put_call_payload
-        assert result["status"] == "pr_opened"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

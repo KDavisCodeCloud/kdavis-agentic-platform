@@ -194,6 +194,49 @@ class TestBaseAgentCallLLM:
         call_args = mock_router.complete.call_args
         assert call_args.kwargs.get("provider_override") == "openai"
 
+    def test_workspace_llm_provider_used_when_no_explicit_override(self, mock_db, workspace_id, mock_router):
+        # Phase 5 (connectivity gaps): workspaces.llm_provider was stored at
+        # onboarding but never read by any agent -- every call_llm() always
+        # defaulted to "anthropic" regardless of the workspace's own choice.
+        with patch("agents.base_agent._load_router", return_value=mock_router):
+            agent = ConcreteAgent(mock_db, workspace_id, llm_provider="openai")
+
+        agent.call_llm("issue_triage", [{"role": "user", "content": "check"}])
+
+        call_args = mock_router.complete.call_args
+        assert call_args.kwargs.get("provider_override") == "openai"
+
+    def test_explicit_call_site_override_wins_over_workspace_default(self, mock_db, workspace_id, mock_router):
+        with patch("agents.base_agent._load_router", return_value=mock_router):
+            agent = ConcreteAgent(mock_db, workspace_id, llm_provider="openai")
+
+        agent.call_llm(
+            "issue_triage",
+            [{"role": "user", "content": "check"}],
+            provider_override="anthropic",
+        )
+
+        call_args = mock_router.complete.call_args
+        assert call_args.kwargs.get("provider_override") == "anthropic"
+
+    def test_defaults_to_anthropic_when_no_workspace_provider_configured(self, mock_db, workspace_id, mock_router):
+        with patch("agents.base_agent._load_router", return_value=mock_router):
+            agent = ConcreteAgent(mock_db, workspace_id)
+
+        agent.call_llm("issue_triage", [{"role": "user", "content": "check"}])
+
+        call_args = mock_router.complete.call_args
+        assert call_args.kwargs.get("provider_override") is None  # router.complete's own default is anthropic
+
+    def test_workspace_byok_key_decrypted_and_used_when_no_explicit_key(self, mock_db, workspace_id, mock_router):
+        with patch("agents.base_agent._load_router", return_value=mock_router):
+            agent = ConcreteAgent(mock_db, workspace_id, llm_provider="openai", byok_encrypted_key="cipher")
+
+        with patch.object(agent, "_decrypt_byok", return_value="real-byok-key") as mock_decrypt:
+            agent.call_llm("issue_triage", [{"role": "user", "content": "check"}])
+
+        mock_decrypt.assert_called_once_with("cipher")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # BaseAgent — parse_llm_json()

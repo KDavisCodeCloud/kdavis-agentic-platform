@@ -42,7 +42,7 @@ from agents.agent_07_runbook.workflow import RunbookWorkflow
 from agents.agent_08_drift_detection.workflow import DriftWorkflow
 from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
-from core.workspace_credentials import build_agent_credentials, resolve_k8s_context
+from core.workspace_credentials import build_agent_credentials, build_k8s_credentials, resolve_k8s_context
 
 
 class IncidentRejectRequest(BaseModel):
@@ -71,15 +71,36 @@ _WORKFLOW_CLASSES: dict[str, type] = {
     "agent_10_dependency_patch": DependencyPatchWorkflow,
 }
 
-# Only these four agents' workflow constructors accept the credential kwargs
-# build_agent_credentials() returns (github_token/aws_session/azure_access_token)
-# -- see core/workspace_credentials.py. Every other agent's *Tools() class
-# takes none of these, so passing them unconditionally would raise TypeError.
+# Only these agents' workflow constructors accept the credential kwargs
+# build_agent_credentials() returns (github_token/aws_session/azure_access_token/
+# azure_devops_token/azure_devops_org) -- see core/workspace_credentials.py.
+# Every other agent's *Tools() class takes none of these, so passing them
+# unconditionally would raise TypeError.
+#
+# agent_04_migration and agent_10_dependency_patch were missing from this
+# set entirely until the fix that added this comment -- their workflow
+# constructors didn't accept credential kwargs at all, so the *initial* run
+# (webhooks.py's _run_migration/_run_dependency_patch) AND this resume path
+# both always fell back to MigrationTools/DependencyPatchTools' own
+# `os.environ.get("GITHUB_TOKEN", "")`, i.e. every real customer's
+# migration/dependency-patch PR was either created with the *platform's own*
+# GitHub token (a cross-tenant credential leak) or failed outright if that
+# env var was unset -- since this resume path is where create_migration_pr/
+# create_patch_pr actually execute (the execute node runs after HITL
+# approval), that fallback was never actually replaced by the webhooks.py
+# fix alone; both call sites needed it.
+#
+# agent_02_k8s_alert had the exact same gap (Phase 4) -- its workflow
+# constructor accepted no credential kwargs either, so K8sTools always fell
+# back to a shared os.environ["K8S_API_URL"]/["K8S_TOKEN"]/["GITHUB_TOKEN"].
 _CREDENTIALED_AGENTS = {
     "agent_01_cicd_triage",
+    "agent_02_k8s_alert",
+    "agent_04_migration",
     "agent_05_iam_minimizer",
     "agent_06_finops",
     "agent_08_drift_detection",
+    "agent_10_dependency_patch",
 }
 
 
@@ -248,15 +269,22 @@ async def approve_incident(
             async with db.acquire() as conn:
                 if row["agent_id"] in _CREDENTIALED_AGENTS:
                     creds = await build_agent_credentials(conn, str(workspace["id"]))
-                    if row["agent_id"] == "agent_08_drift_detection":
+                    if row["agent_id"] in ("agent_02_k8s_alert", "agent_08_drift_detection"):
                         # Resume is a separate instantiation from run() (webhooks.py's
-                        # _run_drift_detection) and previously had no idea which
-                        # cluster this incident was about -- kubectl always fell
-                        # back to KUBECONFIG's default context. Found live: an
-                        # AKS incident's real "Apply Correction Directly" approval
+                        # _run_k8s_alert_triage/_run_drift_detection) -- both need
+                        # this workspace's real per-workspace cluster credentials
+                        # (Phase 4) here too, not just on the initial run.
+                        creds.update(await build_k8s_credentials(conn, str(workspace["id"])))
+                    if row["agent_id"] == "agent_08_drift_detection":
+                        # Previously had no idea which cluster this incident was
+                        # about on resume -- kubectl always fell back to
+                        # KUBECONFIG's default context. Found live: an AKS
+                        # incident's real "Apply Correction Directly" approval
                         # silently no-op'd against EKS instead. cloud_provider is
                         # already persisted on the incident row (core/hitl.py's
                         # create_incident), so resolve it the same way run() does.
+                        # Only a fallback now -- DriftTools prefers the real
+                        # per-workspace k8s_api_url/k8s_token above when present.
                         creds["k8s_context"] = resolve_k8s_context(row["cloud_provider"])
                     agent = workflow_cls(conn, str(workspace["id"]), checkpointer, **creds)
                 else:

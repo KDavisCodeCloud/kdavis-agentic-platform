@@ -168,11 +168,22 @@ class DriftWorkflow(BaseAgent):
         github_token: Optional[str] = None,
         aws_session=None,
         azure_access_token: Optional[str] = None,  # unused -- Agent 08's AWS path is CloudFormation, not ARM
-        k8s_context: Optional[str] = None,
+        azure_devops_token: Optional[str] = None,  # Phase 2 -- routed into DriftTools' get_repo_tools() provider selection
+        azure_devops_org: Optional[str] = None,
+        k8s_context: Optional[str] = None,  # global KUBECONFIG_YAML stopgap fallback
+        k8s_api_url: Optional[str] = None,  # Phase 4 -- real per-workspace cluster credentials, build_k8s_credentials()
+        k8s_token: Optional[str] = None,
+        k8s_ca_cert: Optional[str] = None,
+        llm_provider: Optional[str] = None,  # Phase 5 -- workspaces.llm_provider, routed into BaseAgent.call_llm()'s defaults
+        byok_encrypted_key: Optional[str] = None,  # Phase 5 -- workspaces.encrypted_llm_key
     ):
-        super().__init__(db_conn, workspace_id)
+        super().__init__(db_conn, workspace_id, llm_provider=llm_provider, byok_encrypted_key=byok_encrypted_key)
         self._checkpointer    = checkpointer
-        self._tools           = DriftTools(github_token=github_token, aws_session=aws_session, k8s_context=k8s_context)
+        self._tools           = DriftTools(
+            github_token=github_token, aws_session=aws_session, k8s_context=k8s_context,
+            azure_devops_token=azure_devops_token, azure_devops_org=azure_devops_org,
+            k8s_api_url=k8s_api_url, k8s_token=k8s_token, k8s_ca_cert=k8s_ca_cert,
+        )
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph           = self._build_graph()
 

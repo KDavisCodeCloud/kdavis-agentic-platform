@@ -77,8 +77,9 @@ async def _get_workspace_from_token(db_pool, token: str) -> Optional[dict]:
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, stripe_subscription_status, product_tier, encrypted_llm_key, "
-            "company_name, encrypted_github_webhook_secret FROM workspaces WHERE workspace_token = $1",
+            "SELECT id, stripe_subscription_status, product_tier, encrypted_llm_key, llm_provider, "
+            "company_name, encrypted_github_webhook_secret, encrypted_azure_devops_webhook_secret "
+            "FROM workspaces WHERE workspace_token = $1",
             token_hash,
         )
     return dict(row) if row else None
@@ -198,17 +199,19 @@ async def azure_devops_webhook(
     if not workspace:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid workspace token")
 
-    # KNOWN GAP, not fixed here: unlike GitHub (encrypted_github_webhook_secret,
-    # migration 022 + PATCH /workspace/credentials/github), there is no
-    # per-workspace Azure DevOps webhook secret column or connect route yet.
-    # This still validates against a single global env var and, same as
-    # GitHub's old behavior, silently skips validation if that var is unset.
-    # Needs its own migration + workspace_credentials.py addition before this
-    # can fail closed the same way the GitHub path now does.
-    import os
-    webhook_secret = os.environ.get("AZURE_DEVOPS_WEBHOOK_SECRET", "")
-    if webhook_secret and not _verify_azure_signature(payload_bytes, auth_header, webhook_secret):
-        log.warning("[Webhooks] Azure DevOps signature validation failed")
+    # Per-workspace secret (migration 024 + PATCH /workspace/credentials/azure-devops),
+    # same fail-closed discipline as the GitHub path above: a workspace with
+    # no secret configured yet must reject webhooks, not silently skip
+    # validation. This used to validate against one global env var and skip
+    # entirely if it was unset -- the exact gap GitHub's webhook had before
+    # it was hardened.
+    encrypted_secret = workspace.get("encrypted_azure_devops_webhook_secret")
+    if not encrypted_secret:
+        log.warning("[Webhooks] No Azure DevOps webhook secret configured for workspace %s", workspace["id"])
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webhook not configured for this workspace")
+    webhook_secret = decrypt(encrypted_secret)
+    if not _verify_azure_signature(payload_bytes, auth_header, webhook_secret):
+        log.warning("[Webhooks] Azure DevOps signature validation failed for workspace %s", workspace["id"])
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signature")
 
     try:
@@ -282,7 +285,7 @@ async def github_app_webhook(request: Request, background_tasks: BackgroundTasks
 
     async with db.acquire() as conn:
         workspace = await conn.fetchrow(
-            "SELECT id, stripe_subscription_status, product_tier, encrypted_llm_key, "
+            "SELECT id, stripe_subscription_status, product_tier, encrypted_llm_key, llm_provider, "
             "company_name, encrypted_github_webhook_secret FROM workspaces "
             "WHERE github_app_installation_id = $1",
             installation_id,
@@ -408,7 +411,10 @@ async def _run_cicd_triage(app, workspace: dict, payload: dict, cloud_provider: 
 
             # Run the agent
             creds = await build_agent_credentials(conn, workspace_id)
-            agent = CICDTriageWorkflow(conn, workspace_id, checkpointer, **creds)
+            agent = CICDTriageWorkflow(
+                conn, workspace_id, checkpointer, **creds,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 01 triage complete — workspace=%s incident=%s",
@@ -438,6 +444,7 @@ async def _run_k8s_alert_triage(app, workspace: dict, payload: dict, cloud_provi
     Background task: runs Agent 02 for the given K8s alert payload.
     """
     from agents.agent_02_k8s_alert.workflow import K8sAlertWorkflow
+    from core.workspace_credentials import build_agent_credentials, build_k8s_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -448,7 +455,12 @@ async def _run_k8s_alert_triage(app, workspace: dict, payload: dict, cloud_provi
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_02_k8s_alert", cloud_provider)
 
-            agent = K8sAlertWorkflow(conn, workspace_id, checkpointer)
+            creds = await build_agent_credentials(conn, workspace_id)
+            k8s_creds = await build_k8s_credentials(conn, workspace_id)
+            agent = K8sAlertWorkflow(
+                conn, workspace_id, checkpointer, **creds, **k8s_creds,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 02 triage complete — workspace=%s incident=%s",
@@ -487,7 +499,10 @@ async def _run_pr_review(app, workspace: dict, payload: dict, cloud_provider: st
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_03_pr_review", cloud_provider)
 
-            agent = PRReviewWorkflow(conn, workspace_id, checkpointer)
+            agent = PRReviewWorkflow(
+                conn, workspace_id, checkpointer,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 03 PR review complete — workspace=%s incident=%s",
@@ -517,6 +532,7 @@ async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: st
     Agent 04 is always manually triggered — no webhook calls this directly.
     """
     from agents.agent_04_migration.workflow import MigrationWorkflow
+    from core.workspace_credentials import build_agent_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -527,7 +543,11 @@ async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: st
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_04_migration", cloud_provider)
 
-            agent = MigrationWorkflow(conn, workspace_id, checkpointer)
+            creds = await build_agent_credentials(conn, workspace_id)
+            agent = MigrationWorkflow(
+                conn, workspace_id, checkpointer, **creds,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 04 migration analysis complete — workspace=%s incident=%s",
@@ -569,7 +589,10 @@ async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider:
             await compliance.assert_agent_permitted(workspace_id, "agent_05_iam_minimizer", cloud_provider)
 
             creds = await build_agent_credentials(conn, workspace_id)
-            agent = IAMMinimizeWorkflow(conn, workspace_id, checkpointer, **creds)
+            agent = IAMMinimizeWorkflow(
+                conn, workspace_id, checkpointer, **creds,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 05 IAM minimization complete — workspace=%s incident=%s",
@@ -611,7 +634,10 @@ async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) 
             await compliance.assert_agent_permitted(workspace_id, "agent_06_finops", cloud_provider)
 
             creds = await build_agent_credentials(conn, workspace_id)
-            agent = FinOpsWorkflow(conn, workspace_id, checkpointer, **creds)
+            agent = FinOpsWorkflow(
+                conn, workspace_id, checkpointer, **creds,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 06 FinOps analysis complete — workspace=%s incident=%s",
@@ -651,7 +677,10 @@ async def _run_runbook(app, workspace: dict, payload: dict, cloud_provider: str)
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_07_runbook", cloud_provider)
 
-            agent = RunbookWorkflow(conn, workspace_id, checkpointer)
+            agent = RunbookWorkflow(
+                conn, workspace_id, checkpointer,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 07 runbook automation complete — workspace=%s incident=%s",
@@ -681,7 +710,7 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
     Agent 08 is always manually triggered or CI-scheduled — no inbound webhook calls this directly.
     """
     from agents.agent_08_drift_detection.workflow import DriftWorkflow
-    from core.workspace_credentials import build_agent_credentials, resolve_k8s_context
+    from core.workspace_credentials import build_agent_credentials, build_k8s_credentials, resolve_k8s_context
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -693,8 +722,17 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
             await compliance.assert_agent_permitted(workspace_id, "agent_08_drift_detection", cloud_provider)
 
             creds = await build_agent_credentials(conn, workspace_id)
+            k8s_creds = await build_k8s_credentials(conn, workspace_id)
+            # Real per-workspace cluster credentials (k8s_creds) take
+            # priority inside DriftTools itself when present; k8s_context
+            # stays the fallback for a workspace that hasn't connected its
+            # own cluster yet (resolve_k8s_context's global KUBECONFIG_YAML
+            # stopgap).
             k8s_context = resolve_k8s_context(cloud_provider)
-            agent = DriftWorkflow(conn, workspace_id, checkpointer, **creds, k8s_context=k8s_context)
+            agent = DriftWorkflow(
+                conn, workspace_id, checkpointer, **creds, **k8s_creds, k8s_context=k8s_context,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 08 drift detection complete — workspace=%s incident=%s",
@@ -734,7 +772,10 @@ async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provi
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_09_onboarding_buddy", cloud_provider)
 
-            agent = OnboardingWorkflow(conn, workspace_id, checkpointer)
+            agent = OnboardingWorkflow(
+                conn, workspace_id, checkpointer,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 09 onboarding buddy complete — workspace=%s incident=%s",
@@ -764,6 +805,7 @@ async def _run_dependency_patch(app, workspace: dict, payload: dict, cloud_provi
     Supports npm, pip, go, maven, ruby, cargo ecosystems.
     """
     from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
+    from core.workspace_credentials import build_agent_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -774,7 +816,11 @@ async def _run_dependency_patch(app, workspace: dict, payload: dict, cloud_provi
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_10_dependency_patch", cloud_provider)
 
-            agent = DependencyPatchWorkflow(conn, workspace_id, checkpointer)
+            creds = await build_agent_credentials(conn, workspace_id)
+            agent = DependencyPatchWorkflow(
+                conn, workspace_id, checkpointer, **creds,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
             log.info(
                 "[Webhooks] Agent 10 dependency patch complete — workspace=%s incident=%s",

@@ -33,12 +33,13 @@ Governance Rule 11: no PR or issue is created without operator approval.
 import base64
 import json
 import logging
-import os
 import re
 import xml.etree.ElementTree as ET
 from typing import Optional
 
 import httpx
+
+from core.repo_tools import RepoTools, get_repo_tools
 
 log = logging.getLogger(__name__)
 
@@ -60,8 +61,31 @@ _OSV_ECOSYSTEM_MAP = {
 class DependencyPatchTools:
     """Manifest fetching, vulnerability scanning, and patch publishing for Agent 10."""
 
-    def __init__(self, github_token: Optional[str] = None):
-        self.github_token = github_token or os.environ.get("GITHUB_TOKEN", "")
+    def __init__(
+        self,
+        github_token: Optional[str] = None,
+        azure_devops_token: Optional[str] = None,
+        azure_devops_org: Optional[str] = None,
+    ):
+        # No env-var fallback -- a missing credential should raise a clear
+        # error at the specific call that needed it, not silently fall back
+        # to a shared server-wide secret (same discipline as CICDTools /
+        # DriftTools / MigrationTools). Credentials come from
+        # core.workspace_credentials.build_agent_credentials.
+        self.github_token       = github_token or ""
+        self.azure_devops_token = azure_devops_token or ""
+        self.azure_devops_org   = azure_devops_org or ""
+
+    def _repo_tools(self) -> RepoTools:
+        """Provider selection (Phase 2) -- GitHub or Azure DevOps, whichever
+        this workspace has connected. See core.repo_tools.get_repo_tools.
+        Only used by create_patch_pr -- fetch_manifest stays a direct GitHub
+        read for now (out of this refactor's scope, tracked separately)."""
+        return get_repo_tools(
+            github_token=self.github_token,
+            azure_devops_token=self.azure_devops_token,
+            azure_devops_org=self.azure_devops_org,
+        )
 
     # ──────────────────────────────────────────────
     # Read-only knowledge gathering (pre-HITL)
@@ -205,74 +229,28 @@ class DependencyPatchTools:
         commit_message: str = "chore(deps): update vulnerable dependencies [Cloud Decoded]",
     ) -> dict:
         """
-        Open a PR that updates the manifest to patch vulnerable dependencies.
-        Uses the standard 5-step GitHub flow (get HEAD SHA → create branch →
-        commit file → open PR).
+        Open a PR that updates the manifest to patch vulnerable dependencies,
+        against whichever provider (GitHub or Azure DevOps) this workspace
+        has connected. Delegates to core.repo_tools (Phase 2) -- this used
+        to be its own direct GitHub implementation.
+
+        file_sha is accepted for backward-compatible call-site signature
+        (execute_option's context always supplies it from the diagnose-step
+        manifest fetch) but is no longer used directly -- RepoTools.push_commit
+        re-derives whether the file already exists itself.
         Never runs package install commands — the CI pipeline handles that.
         """
-        if not self.github_token:
-            raise EnvironmentError("GITHUB_TOKEN not configured")
+        repo_tools = self._repo_tools()
 
-        headers = _gh_headers(self.github_token)
+        await repo_tools.create_branch(owner, repo, branch_name, base_branch)
+        await repo_tools.push_commit(owner, repo, branch_name, {file_path: patched_content}, commit_message)
+        pr = await repo_tools.create_pr(owner, repo, branch_name, pr_title, pr_body, base=base_branch)
 
-        async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
-            # Step 1: get HEAD SHA of base branch
-            ref_resp = await client.get(
-                f"{_GH_API}/repos/{owner}/{repo}/git/ref/heads/{base_branch}",
-                headers=headers,
-            )
-            if ref_resp.status_code != 200:
-                raise RuntimeError(
-                    f"Cannot get HEAD SHA for {base_branch}: {ref_resp.status_code}"
-                )
-            head_sha = ref_resp.json()["object"]["sha"]
-
-            # Step 2: create patch branch
-            branch_resp = await client.post(
-                f"{_GH_API}/repos/{owner}/{repo}/git/refs",
-                headers=headers,
-                json={"ref": f"refs/heads/{branch_name}", "sha": head_sha},
-            )
-            # 422 = branch already exists; proceed
-            if branch_resp.status_code not in (200, 201, 422):
-                raise RuntimeError(f"Branch creation failed: {branch_resp.status_code}")
-
-            # Step 3: commit patched manifest
-            commit_resp = await client.put(
-                f"{_GH_API}/repos/{owner}/{repo}/contents/{file_path}",
-                headers=headers,
-                json={
-                    "message": commit_message,
-                    "content": base64.b64encode(patched_content.encode()).decode(),
-                    "sha":     file_sha,
-                    "branch":  branch_name,
-                },
-            )
-            if commit_resp.status_code not in (200, 201):
-                raise RuntimeError(f"Commit failed: {commit_resp.status_code}")
-
-            # Step 4: open PR
-            pr_resp = await client.post(
-                f"{_GH_API}/repos/{owner}/{repo}/pulls",
-                headers=headers,
-                json={
-                    "title": pr_title,
-                    "body":  pr_body,
-                    "head":  branch_name,
-                    "base":  base_branch,
-                },
-            )
-            if pr_resp.status_code not in (200, 201):
-                raise RuntimeError(
-                    f"PR creation failed {pr_resp.status_code}: {pr_resp.text[:200]}"
-                )
-
-        pr = pr_resp.json()
-        log.info("[DependencyPatch] Patch PR created: %s", pr.get("html_url"))
+        log.info("[DependencyPatch] Patch PR created: %s", pr.get("pr_url"))
         return {
             "status":    "pr_created",
-            "pr_url":    pr.get("html_url", ""),
-            "pr_number": pr.get("number"),
+            "pr_url":    pr.get("pr_url", ""),
+            "pr_number": pr.get("pr_number"),
             "branch":    branch_name,
         }
 
