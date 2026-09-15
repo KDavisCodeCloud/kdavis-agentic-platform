@@ -63,6 +63,7 @@ from api.middleware.auth import _hash_token
 from api.middleware.internal_auth import get_internal_user
 from core.compliance import WorkspaceComplianceGuard
 from core.email import EmailError, enterprise_alert_html, send_email
+from security.encryption import encrypt
 
 _MCP_VALID_SCOPES = frozenset({"mcp:read", "mcp:write"})
 
@@ -128,6 +129,29 @@ class McpInviteResponse(BaseModel):
     workspace_id: str
     scopes: list[str]
     status: str = "invited"
+
+
+class SetSsoConfigRequest(BaseModel):
+    provider_type: str = "saml"
+    email_domain: str
+    idp_metadata_url: str | None = None
+    idp_metadata_xml: str | None = None  # raw XML -- encrypted before storage, never echoed back
+
+
+class SsoConfigResponse(BaseModel):
+    workspace_id: str
+    provider_type: str
+    email_domain: str
+    idp_metadata_url: str | None
+    has_metadata_xml: bool
+    supabase_sso_provider_id: str | None
+    status: str
+
+
+class ScimTokenResponse(BaseModel):
+    workspace_id: str
+    scim_bearer_token: str
+    warning: str = "Save this token now — it will not be shown again. The previous SCIM token no longer works."
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -420,3 +444,149 @@ async def invite_mcp_user(
         body.email, workspace_id, body.scopes, admin["email"],
     )
     return McpInviteResponse(user_id=str(user.id), email=body.email, workspace_id=workspace_id, scopes=body.scopes)
+
+
+_VALID_SSO_PROVIDER_TYPES = frozenset({"saml", "oidc"})
+
+
+@router.put("/{workspace_id}/sso-config", response_model=SsoConfigResponse)
+async def set_sso_config(
+    workspace_id: str,
+    body: SetSsoConfigRequest,
+    request: Request,
+    admin: dict = Depends(get_internal_user),
+) -> SsoConfigResponse:
+    """
+    Stores (creates or replaces) a workspace's SSO configuration.
+    Membership/SSO/RBAC/SCIM plan, Phase D.
+
+    Deliberately admin-gated, not self-serve -- same trust model as
+    invite_mcp_user above (Enterprise sells on a 30-90 day B2B cycle;
+    provisioning happens after a deal closes, not via a customer-facing
+    form). This endpoint ONLY stores configuration -- it does NOT call
+    Supabase's Management API to actually register the SSO provider
+    (that needs a Management API access token, a materially different
+    and more privileged credential than SUPABASE_SERVICE_ROLE_KEY, not
+    available to verify this integration against in this build). status
+    stays 'pending' and supabase_sso_provider_id stays NULL until someone
+    with that access completes the registration and updates this row.
+    See GAPS.md for the exact follow-up steps.
+    """
+    if body.provider_type not in _VALID_SSO_PROVIDER_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"provider_type must be one of {sorted(_VALID_SSO_PROVIDER_TYPES)}",
+        )
+    if not body.idp_metadata_url and not body.idp_metadata_xml:
+        raise HTTPException(
+            status_code=400,
+            detail="One of idp_metadata_url or idp_metadata_xml is required",
+        )
+
+    metadata_xml_encrypted = encrypt(body.idp_metadata_xml) if body.idp_metadata_xml else None
+
+    async with request.app.state.db_pool.acquire() as conn:
+        await _get_workspace_or_404(conn, workspace_id)
+        row = await conn.fetchrow(
+            """
+            INSERT INTO workspace_sso_config
+                (workspace_id, provider_type, email_domain, idp_metadata_url, idp_metadata_xml_encrypted)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (workspace_id) DO UPDATE SET
+                provider_type = EXCLUDED.provider_type,
+                email_domain = EXCLUDED.email_domain,
+                idp_metadata_url = EXCLUDED.idp_metadata_url,
+                idp_metadata_xml_encrypted = EXCLUDED.idp_metadata_xml_encrypted,
+                supabase_sso_provider_id = NULL,
+                status = 'pending',
+                updated_at = NOW()
+            RETURNING workspace_id, provider_type, email_domain, idp_metadata_url,
+                      idp_metadata_xml_encrypted, supabase_sso_provider_id, status
+            """,
+            workspace_id, body.provider_type, body.email_domain,
+            body.idp_metadata_url, metadata_xml_encrypted,
+        )
+
+    log.info(
+        "[InternalWorkspaces] SSO config set for workspace=%s domain=%s by admin=%s -- status=pending, "
+        "awaiting real Supabase SSO provider registration",
+        workspace_id, body.email_domain, admin["email"],
+    )
+    return SsoConfigResponse(
+        workspace_id=str(row["workspace_id"]),
+        provider_type=row["provider_type"],
+        email_domain=row["email_domain"],
+        idp_metadata_url=row["idp_metadata_url"],
+        has_metadata_xml=row["idp_metadata_xml_encrypted"] is not None,
+        supabase_sso_provider_id=row["supabase_sso_provider_id"],
+        status=row["status"],
+    )
+
+
+@router.get("/{workspace_id}/sso-config", response_model=SsoConfigResponse)
+async def get_sso_config(
+    workspace_id: str,
+    request: Request,
+    admin: dict = Depends(get_internal_user),
+) -> SsoConfigResponse:
+    """Reads back a workspace's SSO config -- never returns the decrypted
+    metadata XML, only whether one is stored (has_metadata_xml)."""
+    async with request.app.state.db_pool.acquire() as conn:
+        await _get_workspace_or_404(conn, workspace_id)
+        row = await conn.fetchrow(
+            "SELECT workspace_id, provider_type, email_domain, idp_metadata_url, "
+            "idp_metadata_xml_encrypted, supabase_sso_provider_id, status "
+            "FROM workspace_sso_config WHERE workspace_id = $1",
+            workspace_id,
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No SSO config for this workspace")
+
+    return SsoConfigResponse(
+        workspace_id=str(row["workspace_id"]),
+        provider_type=row["provider_type"],
+        email_domain=row["email_domain"],
+        idp_metadata_url=row["idp_metadata_url"],
+        has_metadata_xml=row["idp_metadata_xml_encrypted"] is not None,
+        supabase_sso_provider_id=row["supabase_sso_provider_id"],
+        status=row["status"],
+    )
+
+
+_SCIM_TOKEN_PREFIX = "cd_scim_"
+
+
+@router.post("/{workspace_id}/sso-config/scim-token", response_model=ScimTokenResponse)
+async def rotate_scim_token(
+    workspace_id: str, request: Request, admin: dict = Depends(get_internal_user)
+) -> ScimTokenResponse:
+    """
+    Generates (or rotates) the workspace's SCIM bearer token --
+    api/routes/scim.py's IdP-facing provisioning endpoints validate
+    against this. Membership/SSO/RBAC/SCIM plan, Phase E. Same
+    "shown once, hash stored" contract as rotate_workspace_token above.
+
+    Requires an SSO config row to already exist (PUT .../sso-config
+    first) -- a SCIM connector without an SSO connection has nothing to
+    provision into.
+    """
+    raw_token = f"{_SCIM_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
+    token_hash = _hash_token(raw_token)
+
+    async with request.app.state.db_pool.acquire() as conn:
+        await _get_workspace_or_404(conn, workspace_id)
+        row = await conn.fetchrow(
+            "UPDATE workspace_sso_config SET scim_bearer_token_hash = $1, scim_token_created_at = NOW() "
+            "WHERE workspace_id = $2 RETURNING workspace_id",
+            token_hash, workspace_id,
+        )
+
+    if not row:
+        raise HTTPException(
+            status_code=409,
+            detail="No SSO config exists for this workspace yet -- PUT .../sso-config first",
+        )
+
+    log.info("[InternalWorkspaces] SCIM token rotated for workspace=%s by admin=%s", workspace_id, admin["email"])
+    return ScimTokenResponse(workspace_id=str(row["workspace_id"]), scim_bearer_token=raw_token)

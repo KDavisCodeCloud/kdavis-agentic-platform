@@ -1165,3 +1165,99 @@ since no further input was available mid-build. Worth a quick sanity
 check with Kelvin before these are considered final/customer-facing
 language, though changing them later is a cheap rename (VARCHAR column,
 no enum type, two `_VALID_ROLES`/`_APPROVAL_ROLES` constants to update).
+
+### 24. Phase D (SSO) storage + admin config shipped; real Supabase provider registration NOT built (2026-09-15)
+
+Membership/SSO/RBAC/SCIM plan, Phase D. `db/migrations/035_workspace_sso_config.sql`
+adds `workspace_sso_config` (one row per workspace: `provider_type`
+saml|oidc, `email_domain`, `idp_metadata_url`, Fernet-encrypted
+`idp_metadata_xml_encrypted`, `supabase_sso_provider_id`, `status`
+pending|active|disabled). `api/routes/internal_workspaces.py` gains
+`PUT`/`GET /internal/workspaces/{id}/sso-config` -- admin-gated (same
+trust model as `mcp-invite`: Enterprise sells on a 30-90 day B2B cycle,
+provisioning happens after a deal closes, not via a customer-facing
+form). Never echoes the raw metadata XML back, only `has_metadata_xml`.
+
+**The actual "register this as a real SSO provider with Supabase" step
+was deliberately NOT built.** The plan's own Phase D text says "use
+Supabase Auth's native SSO support... configuring Supabase's SSO
+provider integration per customer's IdP" -- that requires calling
+Supabase's Management API (`POST /v1/projects/{ref}/config/auth/sso/
+providers`), which needs a Supabase **Management API access token**, a
+materially different and more privileged credential than
+`SUPABASE_SERVICE_ROLE_KEY` (which this session does have access to via
+Railway's env, redacted). No Management API token was available in this
+session to verify that integration's exact request/response shape
+against, and writing untested code that calls a real external
+provisioning API on a real Enterprise customer's behalf is the wrong
+kind of code to ship without being able to check it actually works.
+`set_sso_config` stores configuration and always leaves `status='pending'`
+and `supabase_sso_provider_id=NULL` -- a human with Supabase Dashboard
+or Management API access still has to complete the real registration and
+update this row (or a follow-up build adds that call once a Management
+API token is available to test against).
+
+**No `/login` SSO buttons added**, matching that page's own existing
+comment (unchanged since before this build): "SSO buttons... deliberately
+NOT recreated here: there is no backend for either... shipping buttons
+that do nothing would be actively misleading on a page real customers
+pay to use." That's still true today -- the backend now stores config
+but doesn't yet complete a real SSO login round-trip end to end, so
+adding buttons now would be the same mistake the comment already warns
+against.
+
+Phase E (SCIM) is still built in this same pass despite this -- see
+GAPS.md #25 for why it's real, testable code even though it stays
+practically dormant until Phase D's Management API registration step
+above is completed by someone with that access.
+
+### 25. Phase E (SCIM 2.0) shipped as real protocol code, closing the merged 5-phase membership plan (2026-09-15)
+
+Membership/SSO/RBAC/SCIM plan, Phase E -- the last of the five phases.
+`api/routes/scim.py` implements `GET/POST /scim/v2/Users`,
+`GET/PUT/PATCH/DELETE /scim/v2/Users/{id}` -- a deliberately pragmatic
+SCIM 2.0 subset (RFC 7643/7644) covering what real IdP connectors
+(Okta, Azure AD) actually send: the `userName eq "..."` pre-create dedup
+filter, the `active` PATCH deprovision op in both shapes a connector
+might send it (`{"path":"active",...}` or `{"value":{"active":...}}`),
+and SCIM's own error-response schema -- not full spec coverage (no
+Groups resource, no ServiceProviderConfig/Schemas/ResourceTypes
+discovery endpoints, no general filter grammar). Maps directly onto
+Phase A's `workspace_members` table; new members default to `role='viewer'`
+(least privilege); DELETE deactivates rather than hard-deletes, matching
+`docs/customer/dpa-outline.md`'s existing "archival, not hard deletion"
+model.
+
+Authenticated by a new dedicated `get_workspace_by_scim_token`
+dependency (`api/middleware/auth.py`) -- deliberately its own thing, not
+folded into `get_workspace_or_member`: a SCIM connector's bearer token
+is scoped to exactly one workspace's IdP integration, never a human
+session or the shared workspace token. `db/migrations/036_workspace_
+scim_token.sql` adds `scim_bearer_token_hash`/`scim_token_created_at` to
+`workspace_sso_config` (SHA-256 hash only, same convention as
+`workspaces.workspace_token`); `POST /internal/workspaces/{id}/
+sso-config/scim-token` (admin-gated, `internal_workspaces.py`) generates
+and returns the raw token exactly once, same "shown once" contract as
+`rotate-token`. Requires an SSO config row to already exist (409
+otherwise) -- a SCIM connector without an SSO connection has nothing to
+provision into.
+
+**This code is real and tested (21 new tests across `test_scim.py` and
+`test_auth.py`) but practically dormant** until GAPS.md #24's Supabase
+Management API registration step is completed by someone with that
+access -- no real IdP has a live SSO connection to push SCIM requests
+through yet. Building it now rather than waiting was a deliberate call:
+the endpoints are pure application code with zero dependency on the
+Management API gap (an IdP calling `/scim/v2/Users` needs this
+workspace's SCIM token, not Supabase's SSO registration to be live), so
+there was no reason to block Phase E's protocol layer on Phase D's
+operational follow-up.
+
+**This closes the merged 5-phase Membership/SSO/RBAC/SCIM plan** (A:
+workspace membership foundation → B: seats → C: RBAC roles → D: SSO
+storage/config → E: SCIM). Combined with GAPS.md #22-#25's honest
+accounting of what remains operational (a real end-to-end invite test,
+Supabase Management API SSO registration, and a members-management UI),
+every phase's code is built, tested, and deployed -- what's left is
+operator follow-through with credentials/access this session's tools
+don't have, not further engineering.

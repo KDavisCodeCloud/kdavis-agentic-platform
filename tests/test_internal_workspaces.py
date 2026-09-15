@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi import HTTPException
 
 from api.middleware.auth import _hash_token
@@ -531,3 +532,156 @@ class TestInviteMcpUser:
                 )
         assert exc.value.status_code == 502
         assert "u1" in exc.value.detail  # tells the operator how to find/fix the orphaned user
+
+
+@pytest.fixture(autouse=True)
+def _encryption_key():
+    key = Fernet.generate_key().decode()
+    with patch.dict("os.environ", {"ENCRYPTION_KEY": key}):
+        yield key
+
+
+class TestSsoConfig:
+    """
+    Membership/SSO/RBAC/SCIM plan, Phase D. set_sso_config/get_sso_config
+    only store configuration -- they never call Supabase's Management API
+    (no access token available to verify that integration against in this
+    build, see GAPS.md). status always lands 'pending' on a fresh set.
+    """
+
+    def _workspace_row(self, workspace_id):
+        return {
+            "id": workspace_id, "company_name": "Acme", "contact_email": "ops@acme.com",
+            "product_tier": "enterprise", "stripe_subscription_status": "active", "created_at": None,
+        }
+
+    def _sso_row(self, workspace_id, **overrides):
+        row = {
+            "workspace_id": workspace_id, "provider_type": "saml", "email_domain": "acme.com",
+            "idp_metadata_url": None, "idp_metadata_xml_encrypted": "ciphertext",
+            "supabase_sso_provider_id": None, "status": "pending",
+        }
+        row.update(overrides)
+        return row
+
+    async def test_set_requires_metadata_url_or_xml(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=self._workspace_row(workspace_id))
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.set_sso_config(
+                str(workspace_id),
+                iw.SetSsoConfigRequest(email_domain="acme.com"),
+                request, admin=_ADMIN,
+            )
+        assert exc.value.status_code == 400
+
+    async def test_invalid_provider_type_rejected(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.set_sso_config(
+                str(workspace_id),
+                iw.SetSsoConfigRequest(provider_type="ldap", email_domain="acme.com", idp_metadata_url="https://idp.acme.com/metadata"),
+                request, admin=_ADMIN,
+            )
+        assert exc.value.status_code == 400
+
+    async def test_set_encrypts_metadata_xml_before_storage(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            self._workspace_row(workspace_id),
+            self._sso_row(workspace_id),
+        ])
+        request = _make_request(conn)
+
+        await iw.set_sso_config(
+            str(workspace_id),
+            iw.SetSsoConfigRequest(email_domain="acme.com", idp_metadata_xml="<xml>real idp metadata</xml>"),
+            request, admin=_ADMIN,
+        )
+
+        insert_call = conn.fetchrow.await_args_list[1]
+        stored_xml = insert_call.args[5]
+        assert stored_xml is not None
+        assert "real idp metadata" not in stored_xml  # must be ciphertext, not plaintext
+
+    async def test_set_returns_pending_status_never_registers_with_supabase(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            self._workspace_row(workspace_id),
+            self._sso_row(workspace_id, status="pending", supabase_sso_provider_id=None),
+        ])
+        request = _make_request(conn)
+
+        result = await iw.set_sso_config(
+            str(workspace_id),
+            iw.SetSsoConfigRequest(email_domain="acme.com", idp_metadata_url="https://idp.acme.com/metadata"),
+            request, admin=_ADMIN,
+        )
+
+        assert result.status == "pending"
+        assert result.supabase_sso_provider_id is None
+
+    async def test_set_never_echoes_metadata_xml_back(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            self._workspace_row(workspace_id),
+            self._sso_row(workspace_id),
+        ])
+        request = _make_request(conn)
+
+        result = await iw.set_sso_config(
+            str(workspace_id),
+            iw.SetSsoConfigRequest(email_domain="acme.com", idp_metadata_xml="<xml>secret</xml>"),
+            request, admin=_ADMIN,
+        )
+
+        assert not hasattr(result, "idp_metadata_xml")
+        assert result.has_metadata_xml is True
+
+    async def test_set_404_for_unknown_workspace(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.set_sso_config(
+                str(uuid4()),
+                iw.SetSsoConfigRequest(email_domain="acme.com", idp_metadata_url="https://idp.acme.com/metadata"),
+                request, admin=_ADMIN,
+            )
+        assert exc.value.status_code == 404
+
+    async def test_get_404_when_no_config_exists(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[self._workspace_row(workspace_id), None])
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await iw.get_sso_config(str(workspace_id), request, admin=_ADMIN)
+        assert exc.value.status_code == 404
+
+    async def test_get_returns_config_without_raw_xml(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            self._workspace_row(workspace_id),
+            self._sso_row(workspace_id, status="active", supabase_sso_provider_id="sso-provider-1"),
+        ])
+        request = _make_request(conn)
+
+        result = await iw.get_sso_config(str(workspace_id), request, admin=_ADMIN)
+
+        assert result.status == "active"
+        assert result.supabase_sso_provider_id == "sso-provider-1"
+        assert result.has_metadata_xml is True
+        assert not hasattr(result, "idp_metadata_xml_encrypted")

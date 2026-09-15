@@ -24,6 +24,7 @@ from api.middleware.auth import (
     get_workspace,
     get_workspace_allow_pending_payment,
     get_workspace_any_status,
+    get_workspace_by_scim_token,
     get_workspace_member,
     get_workspace_or_member,
 )
@@ -296,3 +297,46 @@ class TestGetWorkspaceOrMember:
         with pytest.raises(HTTPException) as exc:
             await get_workspace_or_member(request)
         assert exc.value.status_code == 401
+
+
+# ── get_workspace_by_scim_token (Phase E, membership plan) ──────────────────
+
+def _make_scim_request(token: str | None, row: dict | None) -> SimpleNamespace:
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=row)
+    pool_ctx = AsyncMock()
+    pool_ctx.__aenter__ = AsyncMock(return_value=conn)
+    pool_ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=pool_ctx)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return SimpleNamespace(headers=headers, app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
+
+
+class TestGetWorkspaceByScimToken:
+    async def test_missing_bearer_401(self):
+        request = _make_scim_request(None, None)
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_by_scim_token(request)
+        assert exc.value.status_code == 401
+
+    async def test_invalid_token_403(self):
+        request = _make_scim_request("cd_scim_bogus", None)
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_by_scim_token(request)
+        assert exc.value.status_code == 403
+
+    async def test_valid_token_resolves_workspace(self):
+        workspace_id = uuid4()
+        request = _make_scim_request("cd_scim_real", {"workspace_id": workspace_id, "sso_status": "pending"})
+        result = await get_workspace_by_scim_token(request)
+        assert result["workspace_id"] == str(workspace_id)
+
+    async def test_token_is_hashed_before_lookup(self):
+        workspace_id = uuid4()
+        request = _make_scim_request("cd_scim_plaintext", {"workspace_id": workspace_id, "sso_status": "pending"})
+        await get_workspace_by_scim_token(request)
+        conn = request.app.state.db_pool.acquire.return_value.__aenter__.return_value
+        sql, bound_hash = conn.fetchrow.await_args.args
+        assert bound_hash == _hash_token("cd_scim_plaintext")
+        assert bound_hash != "cd_scim_plaintext"

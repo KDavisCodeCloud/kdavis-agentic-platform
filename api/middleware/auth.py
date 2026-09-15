@@ -345,3 +345,45 @@ async def get_workspace_or_member(request: Request) -> dict:
     if request.headers.get("X-Workspace-Token") or request.headers.get("X-MCP-Service-Key"):
         return await get_workspace(request)
     return await get_workspace_member(request)
+
+
+async def get_workspace_by_scim_token(request: Request) -> dict:
+    """
+    FastAPI dependency for api/routes/scim.py's IdP-facing SCIM 2.0
+    endpoints only -- validates Authorization: Bearer <scim token>
+    against workspace_sso_config.scim_bearer_token_hash (set by
+    POST /internal/workspaces/{id}/sso-config/scim-token). Membership/
+    SSO/RBAC/SCIM plan, Phase E.
+
+    Deliberately its own dependency, not folded into get_workspace_or_member:
+    a SCIM token is scoped to exactly one workspace's IdP connector, never
+    a human session or the shared workspace token, and must never be
+    accepted on any other route.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization: Bearer <SCIM token> required",
+        )
+    token = auth_header.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization: Bearer <SCIM token> required",
+        )
+
+    token_hash = _hash_token(token)
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT workspace_id, status AS sso_status FROM workspace_sso_config "
+            "WHERE scim_bearer_token_hash = $1",
+            token_hash,
+        )
+
+    if not row:
+        log.warning("[Auth] Invalid SCIM token presented")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid SCIM token")
+
+    return {"workspace_id": str(row["workspace_id"])}
