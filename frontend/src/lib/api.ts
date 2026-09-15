@@ -44,16 +44,34 @@ function redirectToBilling() {
   window.location.href = '/billing?locked=1'
 }
 
+// A raw workspace token always starts with 'cd_ws_' (api/routes/
+// workspaces.py's _TOKEN_PREFIX). A Supabase session access token (the
+// membership-plan Phase A additive auth path, api/middleware/auth.py's
+// get_workspace_member) never does -- so the same `token` value threaded
+// through every existing call site can carry either credential, and
+// request() picks the right header by shape instead of every caller
+// needing to know or care which kind it has. See lib/supabase.ts and
+// app/login/page.tsx for where a member session token is produced.
+const _WORKSPACE_TOKEN_PREFIX = 'cd_ws_'
+
+function isMemberSessionToken(token: string): boolean {
+  return !!token && !token.startsWith(_WORKSPACE_TOKEN_PREFIX)
+}
+
 async function request<T>(
   path: string,
   token: string,
   options: RequestInit = {},
 ): Promise<T> {
+  const authHeader: Record<string, string> = isMemberSessionToken(token)
+    ? { Authorization: `Bearer ${token}` }
+    : { 'X-Workspace-Token': token }
+
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'X-Workspace-Token': token,
+      ...authHeader,
       ...options.headers,
     },
   })

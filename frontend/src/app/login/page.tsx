@@ -2,36 +2,83 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase'
 
 // Real dedicated /login route, recreating login.dc.html's 2-column brand/
-// form layout from the design handoff -- but functionally still
-// "workspace token" auth underneath, not email+password. The handoff's SSO
-// buttons (Google Workspace, Azure AD/Okta) are deliberately NOT recreated
-// here: there is no backend for either, and shipping buttons that do
-// nothing would be actively misleading on a page real customers pay to use.
+// form layout from the design handoff.
 //
-// This also drops the previous combined "/" page's raw API-up/down health
-// text -- internal debug info a customer never needs to see.
+// Membership plan, Phase A: primary sign-in is now real Supabase email +
+// password (getSupabaseClient().auth.signInWithPassword) -- a genuine
+// per-human identity, not a shared secret pasted into localStorage. The
+// raw workspace-token flow is kept as a secondary "Use a workspace token
+// instead" fallback rather than removed outright: workspace_members is a
+// brand-new table with zero rows for every existing paying customer, so
+// until each one is invited and accepts (POST /workspace-members/invite,
+// /accept-invite), the token is still the ONLY credential that works for
+// them. Removing it here would be a self-inflicted login outage for every
+// current customer, not a migration.
+//
+// The handoff's SSO buttons (Google Workspace, Azure AD/Okta) are still
+// deliberately NOT recreated here -- that's Phase D, not this one.
 
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
+type Mode = 'member' | 'token'
+
 export default function LoginPage() {
   const router = useRouter()
+  const [mode, setMode] = useState<Mode>('member')
+
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [token, setToken] = useState('')
   const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (MOCK_MODE) {
       router.replace('/dashboard')
       return
     }
-    if (localStorage.getItem('workspace_token')) {
+    if (localStorage.getItem('workspace_token') || localStorage.getItem('member_session_token')) {
       router.replace('/dashboard')
     }
   }, [router])
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleMemberSubmit(e: React.FormEvent) {
     e.preventDefault()
+    setError('')
+    if (!email.trim() || !password) {
+      setError('Email and password are required')
+      return
+    }
+    if (!isSupabaseConfigured()) {
+      setError('Member sign-in is not available right now — use a workspace token instead.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const supabase = getSupabaseClient()
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      })
+      if (signInError || !data.session) {
+        setError(signInError?.message || 'Sign in failed')
+        return
+      }
+      localStorage.setItem('member_session_token', data.session.access_token)
+      router.push('/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function handleTokenSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
     if (!token.trim()) {
       setError('Workspace access token is required')
       return
@@ -112,38 +159,112 @@ export default function LoginPage() {
             Welcome back. Your queue is waiting.
           </p>
 
-          <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: 8 }}>
-              <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
-                Workspace access token
-              </label>
-              <input
-                type="password"
-                value={token}
-                onChange={e => { setToken(e.target.value); setError('') }}
-                placeholder="cd_ws_••••••••••••••••••••••••••••••••"
-                autoComplete="current-password"
-                style={{
-                  width: '100%', boxSizing: 'border-box', background: '#0c111c',
-                  border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
-                  fontSize: 14, fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
-                }}
-              />
-              {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
-            </div>
+          {mode === 'member' ? (
+            <form onSubmit={handleMemberSubmit}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => { setEmail(e.target.value); setError('') }}
+                  placeholder="you@company.com"
+                  autoComplete="email"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
+                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+                    fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", padding: '11px 14px', outline: 'none',
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => { setPassword(e.target.value); setError('') }}
+                  placeholder="••••••••••••"
+                  autoComplete="current-password"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
+                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+                    fontSize: 14, fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
+                  }}
+                />
+                {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
+              </div>
 
-            <button
-              type="submit"
-              style={{
-                width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
-                background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
-                border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
-                marginBottom: 20, cursor: 'pointer', fontFamily: "'IBM Plex Sans',sans-serif",
-              }}
-            >
-              Sign in →
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={submitting}
+                style={{
+                  width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
+                  background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
+                  border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
+                  marginBottom: 16, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1,
+                  fontFamily: "'IBM Plex Sans',sans-serif",
+                }}
+              >
+                {submitting ? 'Signing in…' : 'Sign in →'}
+              </button>
+
+              <p style={{ textAlign: 'center', fontSize: 13, margin: '0 0 20px' }}>
+                <button
+                  type="button"
+                  onClick={() => { setMode('token'); setError('') }}
+                  style={{ background: 'none', border: 'none', color: '#9fc2ff', fontWeight: 500, cursor: 'pointer', fontSize: 13, fontFamily: "'IBM Plex Sans',sans-serif" }}
+                >
+                  Use a workspace access token instead
+                </button>
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={handleTokenSubmit}>
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
+                  Workspace access token
+                </label>
+                <input
+                  type="password"
+                  value={token}
+                  onChange={e => { setToken(e.target.value); setError('') }}
+                  placeholder="cd_ws_••••••••••••••••••••••••••••••••"
+                  autoComplete="current-password"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
+                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+                    fontSize: 14, fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
+                  }}
+                />
+                {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
+              </div>
+
+              <button
+                type="submit"
+                style={{
+                  width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
+                  background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
+                  border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
+                  marginBottom: 16, cursor: 'pointer', fontFamily: "'IBM Plex Sans',sans-serif",
+                }}
+              >
+                Sign in →
+              </button>
+
+              <p style={{ textAlign: 'center', fontSize: 13, margin: '0 0 20px' }}>
+                <button
+                  type="button"
+                  onClick={() => { setMode('member'); setError('') }}
+                  style={{ background: 'none', border: 'none', color: '#9fc2ff', fontWeight: 500, cursor: 'pointer', fontSize: 13, fontFamily: "'IBM Plex Sans',sans-serif" }}
+                >
+                  Sign in with email instead
+                </button>
+              </p>
+            </form>
+          )}
 
           <p style={{ textAlign: 'center', fontSize: 13.5, color: 'rgba(232,236,242,.5)', margin: 0 }}>
             No account?{' '}

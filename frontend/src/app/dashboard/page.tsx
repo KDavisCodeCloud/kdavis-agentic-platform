@@ -155,7 +155,11 @@ export default function DashboardPage() {
       setHydrated(true)
       return
     }
-    const stored = localStorage.getItem('workspace_token')
+    // Membership plan, Phase A: workspace_token (existing) takes priority
+    // when both are present, matching lib/api.ts's request() -- but a
+    // member-only login (no workspace token ever issued to that human)
+    // must still reach the dashboard on their Supabase session alone.
+    const stored = localStorage.getItem('workspace_token') || localStorage.getItem('member_session_token')
     if (!stored) {
       // A fresh checkout-success redirect hasn't promoted its sessionStorage
       // token to localStorage yet -- let CheckoutSuccessGate handle it
@@ -175,6 +179,7 @@ export default function DashboardPage() {
 
   function handleLogout() {
     localStorage.removeItem('workspace_token')
+    localStorage.removeItem('member_session_token')
     router.replace('/')
   }
 
