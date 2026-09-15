@@ -12,6 +12,7 @@ import type {
   FinOpsHitlItem,
   Incident,
   JiraConnectInput,
+  LinearConnectInput,
   ManualResolutionResponse,
   TicketingStatus,
 } from './types'
@@ -672,4 +673,9 @@ export function getMockTicketingStatus(): TicketingStatus {
 export function mockConnectJira(_body: JiraConnectInput): { channel_type: string; enabled: boolean } {
   _ticketingStatus = { channel: { channel_type: 'jira', enabled: true } }
   return { channel_type: 'jira', enabled: true }
+}
+
+export function mockConnectLinear(_body: LinearConnectInput): { channel_type: string; enabled: boolean } {
+  _ticketingStatus = { channel: { channel_type: 'linear', enabled: true } }
+  return { channel_type: 'linear', enabled: true }
 }

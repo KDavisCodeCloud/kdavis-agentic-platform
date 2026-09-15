@@ -238,6 +238,11 @@ export interface JiraConnectInput {
   issue_type?: string
 }
 
+export interface LinearConnectInput {
+  api_key: string
+  team_id: string
+}
+
 export interface AwsRoleSetup {
   external_id: string
   trust_policy: Record<string, unknown>

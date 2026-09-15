@@ -25,6 +25,7 @@ notification channels can coexist, but this is a different category
 (core.ticketing.TICKETING_CHANNEL_TYPES) and enforced here, not there.
 
 PATCH  /workspace/ticketing/jira            -- set/update Jira config
+PATCH  /workspace/ticketing/linear          -- set/update Linear config
 GET    /workspace/ticketing                 -- current ticketing channel status
                                                 (never returns decrypted secrets)
 """
@@ -50,6 +51,12 @@ class ConnectJiraRequest(BaseModel):
     api_token: str = Field(..., min_length=1)
     project_key: str = Field(..., min_length=1)
     issue_type: str = "Task"
+    enabled: bool = True
+
+
+class ConnectLinearRequest(BaseModel):
+    api_key: str = Field(..., min_length=1)
+    team_id: str = Field(..., min_length=1)
     enabled: bool = True
 
 
@@ -132,6 +139,25 @@ async def connect_jira(
     )
     log.info("[WorkspaceTicketing] Jira channel configured workspace=%s", workspace_id)
     return TicketingChannelStatusResponse(channel_type="jira", enabled=body.enabled)
+
+
+@router.patch("/linear", response_model=TicketingChannelStatusResponse)
+async def connect_linear(
+    body: ConnectLinearRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> TicketingChannelStatusResponse:
+    workspace_id = workspace["id"]
+    await _assert_no_conflicting_ticketing_channel(request, workspace_id, "linear")
+    await _upsert_ticketing_channel(
+        request,
+        workspace_id,
+        "linear",
+        {"api_key": body.api_key, "team_id": body.team_id},
+        body.enabled,
+    )
+    log.info("[WorkspaceTicketing] Linear channel configured workspace=%s", workspace_id)
+    return TicketingChannelStatusResponse(channel_type="linear", enabled=body.enabled)
 
 
 @router.get("", response_model=TicketingStatusResponse)

@@ -198,11 +198,120 @@ async def create_jira_ticket(config: dict, incident_summary: dict, resolved_by: 
     return {"external_id": key, "ticket_url": f"{instance_url}/browse/{key}"}
 
 
+# ── Linear (Phase 2) ─────────────────────────────────────────────────────
+
+_LINEAR_API_URL = "https://api.linear.app/graphql"
+_LINEAR_LABEL_NAME = "Cloud Decoded"
+
+
+def _linear_headers(api_key: str) -> dict:
+    """Linear's REST-over-GraphQL API takes the API key as a bare
+    Authorization header value -- no 'Bearer ' prefix (that's only for
+    OAuth access tokens, not personal/workspace API keys). Ref:
+    https://developers.linear.app/docs/graphql/working-with-the-graphql-api#authentication"""
+    return {"Authorization": api_key, "Content-Type": "application/json"}
+
+
+async def _linear_graphql(client: httpx.AsyncClient, headers: dict, query: str, variables: dict) -> dict:
+    """One GraphQL call. Raises on transport failure (raise_for_status) or
+    a GraphQL-level error -- Linear returns HTTP 200 even when the query
+    itself failed, with an `errors` array instead of (or alongside)
+    `data`, so an HTTP-status-only check would silently treat a bad query
+    as success."""
+    response = await client.post(_LINEAR_API_URL, headers=headers, json={"query": query, "variables": variables})
+    response.raise_for_status()
+    body = response.json()
+    if body.get("errors"):
+        raise RuntimeError(f"Linear GraphQL error: {body['errors']}")
+    return body["data"]
+
+
+async def _linear_label_id(client: httpx.AsyncClient, headers: dict, team_id: str) -> str:
+    """Finds this team's 'Cloud Decoded' label, creating it if it doesn't
+    exist yet -- Linear has no upsert-by-name for labels, so this is a
+    look-up-then-create, same verify-before-write discipline the rest of
+    this codebase uses for external credentials."""
+    data = await _linear_graphql(
+        client, headers,
+        "query($teamId: String!, $name: String!) { team(id: $teamId) { "
+        "labels(filter: {name: {eq: $name}}) { nodes { id } } } }",
+        {"teamId": team_id, "name": _LINEAR_LABEL_NAME},
+    )
+    nodes = data["team"]["labels"]["nodes"]
+    if nodes:
+        return nodes[0]["id"]
+
+    data = await _linear_graphql(
+        client, headers,
+        "mutation($teamId: String!, $name: String!) { "
+        "issueLabelCreate(input: {name: $name, teamId: $teamId}) { issueLabel { id } } }",
+        {"teamId": team_id, "name": _LINEAR_LABEL_NAME},
+    )
+    return data["issueLabelCreate"]["issueLabel"]["id"]
+
+
+async def _linear_done_state_id(client: httpx.AsyncClient, headers: dict, team_id: str) -> Optional[str]:
+    """Finds this team's workflow state with type == 'completed' (Linear's
+    canonical "Done" bucket -- a team's actual state name can be
+    localized/customized, but the `type` enum is stable). Returns None if
+    the team somehow has no completed-type state (unusual, not fatal --
+    the issue still gets created via create_linear_ticket, just without
+    an explicit stateId, so it lands in the team's default state)."""
+    data = await _linear_graphql(
+        client, headers,
+        "query($teamId: String!) { team(id: $teamId) { states(filter: {type: {eq: \"completed\"}}) "
+        "{ nodes { id } } } }",
+        {"teamId": team_id},
+    )
+    nodes = data["team"]["states"]["nodes"]
+    return nodes[0]["id"] if nodes else None
+
+
+async def create_linear_ticket(config: dict, incident_summary: dict, resolved_by: Optional[str]) -> dict:
+    """
+    Creates a Linear issue, state=Done, labeled 'Cloud Decoded' (created
+    for the team if it doesn't already exist). Raises on failure --
+    callers (notify_resolution) catch and log.
+    """
+    team_id = config["team_id"]
+    headers = _linear_headers(config["api_key"])
+
+    if incident_summary.get("resolution_note"):
+        title = f"Cloud Decoded incident resolved manually: {_summary_line(incident_summary)}"
+    else:
+        title = f"Cloud Decoded incident resolved: {_summary_line(incident_summary)}"
+
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        label_id = await _linear_label_id(client, headers, team_id)
+        state_id = await _linear_done_state_id(client, headers, team_id)
+
+        issue_input = {
+            "teamId": team_id,
+            "title": title[:255],
+            "description": _build_narrative(incident_summary),
+            "labelIds": [label_id],
+        }
+        if state_id:
+            issue_input["stateId"] = state_id
+
+        data = await _linear_graphql(
+            client, headers,
+            "mutation($input: IssueCreateInput!) { issueCreate(input: $input) "
+            "{ success issue { id identifier url } } }",
+            {"input": issue_input},
+        )
+
+    issue = (data.get("issueCreate") or {}).get("issue") or {}
+    return {"external_id": issue.get("identifier") or issue.get("id", ""), "ticket_url": issue.get("url", "")}
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────
 
 async def _dispatch_ticket(channel_type: str, config: dict, incident_summary: dict, resolved_by: Optional[str]) -> dict:
     if channel_type == "jira":
         return await create_jira_ticket(config, incident_summary, resolved_by)
+    if channel_type == "linear":
+        return await create_linear_ticket(config, incident_summary, resolved_by)
     raise ValueError(f"No ticketing sender registered for channel_type={channel_type!r}")
 
 

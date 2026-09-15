@@ -97,6 +97,44 @@ class TestConnectJira:
         conn.execute.assert_awaited_once()
 
 
+class TestConnectLinear:
+    async def test_upserts_encrypted_config_and_never_returns_raw_secret(self):
+        request, conn = _make_request()
+        workspace_id = uuid4()
+
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            result = await wt_routes.connect_linear(
+                wt_routes.ConnectLinearRequest(api_key="lin_secret_key", team_id="team-1"),
+                request,
+                workspace={"id": workspace_id},
+            )
+
+        assert result.channel_type == "linear"
+        assert result.enabled is True
+        assert "api_key" not in result.model_dump()
+
+        conn.execute.assert_awaited_once()
+        sql, *params = conn.execute.await_args.args
+        assert "workspace_notification_channels" in sql
+        assert workspace_id in params
+        assert "linear" in params
+        assert "lin_secret_key" not in params
+
+    async def test_rejects_when_jira_already_configured(self):
+        request, conn = _make_request(fetch_return=[{"channel_type": "jira"}])
+        workspace_id = uuid4()
+
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            with pytest.raises(HTTPException) as exc:
+                await wt_routes.connect_linear(
+                    wt_routes.ConnectLinearRequest(api_key="k", team_id="team-1"),
+                    request,
+                    workspace={"id": workspace_id},
+                )
+        assert exc.value.status_code == 409
+        conn.execute.assert_not_awaited()
+
+
 class TestGetTicketingStatus:
     async def test_no_channel_configured_returns_none(self):
         request, conn = _make_request()

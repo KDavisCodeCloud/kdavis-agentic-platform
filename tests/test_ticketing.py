@@ -84,6 +84,112 @@ class TestCreateJiraTicket:
                 await ticketing.create_jira_ticket(config, {"incident_id": "x"}, resolved_by=None)
 
 
+class TestCreateLinearTicket:
+    def _client_with_responses(self, bodies: list[dict]):
+        """Returns a mock httpx.AsyncClient whose .post() yields each body
+        in `bodies` in sequence -- create_linear_ticket makes 2-3 calls
+        (label lookup, [label create], done-state lookup, issue create)."""
+        responses = []
+        for body in bodies:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(return_value=body)
+            resp.raise_for_status = MagicMock()
+            responses.append(resp)
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=responses)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    async def test_existing_label_and_done_state_used_directly(self):
+        client = self._client_with_responses([
+            {"data": {"team": {"labels": {"nodes": [{"id": "label-1"}]}}}},
+            {"data": {"team": {"states": {"nodes": [{"id": "state-done"}]}}}},
+            {"data": {"issueCreate": {"success": True, "issue": {"id": "i1", "identifier": "ENG-42", "url": "https://linear.app/x/issue/ENG-42"}}}},
+        ])
+        config = {"api_key": "lin_api_key", "team_id": "team-1"}
+        incident_summary = {"incident_id": "abc", "parsed_error": "Disk full", "cloud_provider": "aws"}
+
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            result = await ticketing.create_linear_ticket(config, incident_summary, resolved_by=None)
+
+        assert client.post.await_count == 3
+        headers = client.post.await_args_list[0].kwargs["headers"]
+        assert headers["Authorization"] == "lin_api_key"
+        assert "Bearer" not in headers["Authorization"]
+
+        create_call = client.post.await_args_list[2]
+        variables = create_call.kwargs["json"]["variables"]
+        assert variables["input"]["teamId"] == "team-1"
+        assert variables["input"]["labelIds"] == ["label-1"]
+        assert variables["input"]["stateId"] == "state-done"
+        assert "Disk full" in variables["input"]["description"]
+
+        assert result == {"external_id": "ENG-42", "ticket_url": "https://linear.app/x/issue/ENG-42"}
+
+    async def test_creates_cloud_decoded_label_when_missing(self):
+        client = self._client_with_responses([
+            {"data": {"team": {"labels": {"nodes": []}}}},
+            {"data": {"issueLabelCreate": {"issueLabel": {"id": "label-new"}}}},
+            {"data": {"team": {"states": {"nodes": [{"id": "state-done"}]}}}},
+            {"data": {"issueCreate": {"success": True, "issue": {"id": "i2", "identifier": "ENG-43", "url": "https://linear.app/x/issue/ENG-43"}}}},
+        ])
+        config = {"api_key": "lin_api_key", "team_id": "team-1"}
+
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            result = await ticketing.create_linear_ticket(config, {"incident_id": "x"}, resolved_by=None)
+
+        assert client.post.await_count == 4
+        create_label_call = client.post.await_args_list[1]
+        assert create_label_call.kwargs["json"]["variables"]["name"] == "Cloud Decoded"
+        assert result["external_id"] == "ENG-43"
+
+    async def test_missing_completed_state_still_creates_issue_without_state_id(self):
+        client = self._client_with_responses([
+            {"data": {"team": {"labels": {"nodes": [{"id": "label-1"}]}}}},
+            {"data": {"team": {"states": {"nodes": []}}}},
+            {"data": {"issueCreate": {"success": True, "issue": {"id": "i3", "identifier": "ENG-44", "url": "https://linear.app/x/issue/ENG-44"}}}},
+        ])
+        config = {"api_key": "k", "team_id": "team-1"}
+
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            await ticketing.create_linear_ticket(config, {"incident_id": "x"}, resolved_by=None)
+
+        create_call = client.post.await_args_list[2]
+        assert "stateId" not in create_call.kwargs["json"]["variables"]["input"]
+
+    async def test_graphql_error_raises(self):
+        client = self._client_with_responses([
+            {"errors": [{"message": "invalid team id"}]},
+        ])
+        config = {"api_key": "k", "team_id": "bad-team"}
+
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            with pytest.raises(RuntimeError, match="invalid team id"):
+                await ticketing.create_linear_ticket(config, {"incident_id": "x"}, resolved_by=None)
+
+
+class TestDispatchTicketRoutesLinear:
+    async def test_notify_resolution_dispatches_linear_channel(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"channel_type": "linear", "config_encrypted": "enc-linear"})
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.ticketing.os.environ.get", return_value="postgresql://x"),
+            patch("core.ticketing.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.ticketing.decrypt", return_value=json.dumps({"api_key": "k", "team_id": "team-1"})),
+            patch("core.ticketing.create_linear_ticket", new=AsyncMock(return_value={"external_id": "ENG-1", "ticket_url": "https://linear.app/x/issue/ENG-1"})) as mock_linear,
+            patch("core.ticketing.schedule_audit_event") as mock_audit,
+        ):
+            await ticketing.notify_resolution("ws-1", {"incident_id": "i-1", "agent_id": "agent_06_finops"})
+
+        mock_linear.assert_awaited_once()
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args.kwargs["metadata"]["provider"] == "linear"
+
+
 class TestNotifyResolution:
     async def test_no_database_url_skips_without_raising(self):
         with patch("core.ticketing.os.environ.get", return_value=""):

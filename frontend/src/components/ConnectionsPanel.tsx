@@ -12,7 +12,7 @@ import { CodeBlock } from '@/components/ui/code-block'
 import { cn } from '@/lib/utils'
 import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
-  connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira,
+  connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear,
 } from '@/lib/api'
 import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus } from '@/lib/types'
 
@@ -75,15 +75,21 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Ticketing (Jira today; Linear/GitHub Issues/ServiceNow land in later
+  // Ticketing (Jira + Linear today; GitHub Issues/ServiceNow land in later
   // phases of this build) -- fires on incident RESOLUTION, not creation.
-  // At most one ticketing channel at a time.
+  // At most one ticketing channel at a time -- a provider tab selector
+  // switches which config form is shown, matching whichever channel (if
+  // any) is already connected.
   const [ticketingStatus, setTicketingStatus] = useState<TicketingStatus | null>(null)
+  const [ticketingProvider, setTicketingProvider] = useState<'jira' | 'linear'>('jira')
   const [jiraInstanceUrl, setJiraInstanceUrl] = useState('')
   const [jiraApiToken, setJiraApiToken] = useState('')
   const [jiraProjectKey, setJiraProjectKey] = useState('')
   const [jiraIssueType, setJiraIssueType] = useState('Task')
   const [jiraBusy, setJiraBusy] = useState(false)
+  const [linearApiKey, setLinearApiKey] = useState('')
+  const [linearTeamId, setLinearTeamId] = useState('')
+  const [linearBusy, setLinearBusy] = useState(false)
 
   // GitHub -- item 4 App migration: no PAT form, just an install-URL redirect
   const [githubBusy, setGithubBusy] = useState(false)
@@ -129,6 +135,9 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       ])
       setStatus(connections)
       setTicketingStatus(ticketing)
+      if (ticketing.channel?.channel_type === 'jira' || ticketing.channel?.channel_type === 'linear') {
+        setTicketingProvider(ticketing.channel.channel_type)
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load connection status')
     } finally {
@@ -252,6 +261,20 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       setError(e instanceof Error ? e.message : 'Could not save that Jira connection')
     } finally {
       setJiraBusy(false)
+    }
+  }
+
+  async function handleConnectLinear() {
+    setLinearBusy(true)
+    setError(null)
+    try {
+      await connectLinear(token, { api_key: linearApiKey.trim(), team_id: linearTeamId.trim() })
+      setLinearApiKey('')
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not save that Linear connection')
+    } finally {
+      setLinearBusy(false)
     }
   }
 
@@ -500,56 +523,103 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
         <SectionCard
           icon={Ticket}
           title="Ticketing"
-          description="Automatically open a ticket when an incident resolves -- Jira today, more providers landing soon. A workspace can connect one ticketing system at a time."
+          description="Automatically open a ticket when an incident resolves -- Jira and Linear today, more providers landing soon. A workspace can connect one ticketing system at a time."
           connected={!!ticketingStatus?.channel}
         >
-          {ticketingStatus?.channel && ticketingStatus.channel.channel_type !== 'jira' && (
+          {ticketingStatus?.channel && ticketingStatus.channel.channel_type !== ticketingProvider && (
             <p className="mb-3 text-xs text-zinc-500">
               Currently connected to <span className="font-mono text-zinc-300">{ticketingStatus.channel.channel_type}</span>.
-              Connecting Jira below will replace it.
+              Connecting {ticketingProvider === 'jira' ? 'Jira' : 'Linear'} below will replace it.
             </p>
           )}
-          <div className="space-y-2">
-            <input
-              type="text"
-              value={jiraInstanceUrl}
-              onChange={e => setJiraInstanceUrl(e.target.value)}
-              placeholder="Jira instance URL (e.g. https://acme.atlassian.net)"
-              className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
-            />
-            <input
-              type="password"
-              value={jiraApiToken}
-              onChange={e => setJiraApiToken(e.target.value)}
-              placeholder="API token"
-              className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
-            />
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={jiraProjectKey}
-                onChange={e => setJiraProjectKey(e.target.value)}
-                placeholder="Project key (e.g. OPS)"
-                className="flex-1 rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
-              />
-              <input
-                type="text"
-                value={jiraIssueType}
-                onChange={e => setJiraIssueType(e.target.value)}
-                placeholder="Issue type"
-                className="w-28 rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
-              />
-            </div>
-            <Button
-              size="sm"
-              className="w-full"
-              disabled={jiraBusy || !jiraInstanceUrl.trim() || !jiraApiToken.trim() || !jiraProjectKey.trim()}
-              loading={jiraBusy}
-              onClick={handleConnectJira}
-            >
-              {ticketingStatus?.channel?.channel_type === 'jira' ? 'Update Jira connection' : 'Connect Jira'}
-            </Button>
+
+          <div className="mb-3 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
+            {(['jira', 'linear'] as const).map(provider => (
+              <button
+                key={provider}
+                type="button"
+                onClick={() => setTicketingProvider(provider)}
+                className={cn(
+                  'flex-1 rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors',
+                  ticketingProvider === provider
+                    ? 'bg-zinc-800 text-zinc-100'
+                    : 'text-zinc-500 hover:text-zinc-300',
+                )}
+              >
+                {provider}
+              </button>
+            ))}
           </div>
+
+          {ticketingProvider === 'jira' ? (
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={jiraInstanceUrl}
+                onChange={e => setJiraInstanceUrl(e.target.value)}
+                placeholder="Jira instance URL (e.g. https://acme.atlassian.net)"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <input
+                type="password"
+                value={jiraApiToken}
+                onChange={e => setJiraApiToken(e.target.value)}
+                placeholder="API token"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={jiraProjectKey}
+                  onChange={e => setJiraProjectKey(e.target.value)}
+                  placeholder="Project key (e.g. OPS)"
+                  className="flex-1 rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+                />
+                <input
+                  type="text"
+                  value={jiraIssueType}
+                  onChange={e => setJiraIssueType(e.target.value)}
+                  placeholder="Issue type"
+                  className="w-28 rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+                />
+              </div>
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={jiraBusy || !jiraInstanceUrl.trim() || !jiraApiToken.trim() || !jiraProjectKey.trim()}
+                loading={jiraBusy}
+                onClick={handleConnectJira}
+              >
+                {ticketingStatus?.channel?.channel_type === 'jira' ? 'Update Jira connection' : 'Connect Jira'}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <input
+                type="password"
+                value={linearApiKey}
+                onChange={e => setLinearApiKey(e.target.value)}
+                placeholder="Linear API key"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <input
+                type="text"
+                value={linearTeamId}
+                onChange={e => setLinearTeamId(e.target.value)}
+                placeholder="Team ID"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={linearBusy || !linearApiKey.trim() || !linearTeamId.trim()}
+                loading={linearBusy}
+                onClick={handleConnectLinear}
+              >
+                {ticketingStatus?.channel?.channel_type === 'linear' ? 'Update Linear connection' : 'Connect Linear'}
+              </Button>
+            </div>
+          )}
         </SectionCard>
 
         <SectionCard
