@@ -101,3 +101,35 @@ GitHub integration — this is the first multi-commit build session where
 autodeploy actually worked end-to-end without manual `railway service
 source connect` intervention, confirming yesterday's webhook-access fix
 holds.
+
+## Post-deploy: critical production bug found and fixed same session
+
+Live-testing Agent 11's new webhook after deploy surfaced a `500`
+(expected `403` for an invalid token). Traced to
+`asyncpg.exceptions.UndefinedColumnError` — a direct read-only query
+against the live `workspaces` table confirmed migrations 024–028 had
+**never been applied to production**, despite being committed and
+deployed earlier this same session. Root cause: no migration runner
+exists anywhere in the deploy pipeline — `db/migrations/*.sql` files are
+committed but nothing ever actually executes them against
+`DATABASE_URL`.
+
+**Real, active impact:** `POST /workspaces`'s `INSERT` references
+`contact_email`/`tos_accepted_at`, both missing — every real customer
+signup had been failing with a `500` since the contact-email-capture
+commit deployed earlier this session. Kelvin confirmed the fix (all five
+migrations are pure `ADD COLUMN IF NOT EXISTS`, verified no drops/data
+risk before asking) — connected to the production Supabase Postgres
+directly via `DATABASE_URL` (already present on the Railway service),
+applied all five in one transaction, verified via
+`information_schema.columns`, then live-verified the actual previously-
+broken flow end-to-end: `POST /workspaces` now `201`s with a real
+workspace token, the resource-health-alert webhook now correctly `403`s.
+Verification workspace created during the test was deleted immediately
+after confirming success.
+
+**Flagged as GAPS.md #15, not fixed in this pass:** nothing prevents this
+exact failure mode from recurring on the next migration. Needs either an
+automated migration-runner step in the deploy pipeline, or a hard
+process rule that no `db/migrations/` PR merges without a human
+confirming it was actually applied to production.

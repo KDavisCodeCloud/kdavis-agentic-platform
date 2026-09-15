@@ -63,4 +63,14 @@ Full detail: `knowledge/operator/architecture-decisions/2026-09-15-iac-diagnosis
   autodeploy fix from the previous session holds across this entire
   multi-commit build with zero manual intervention.
 - 1388 passing (was 1320), same pre-existing unrelated failures.
+- **Post-deploy, same session: found and fixed a critical production
+  bug.** Migrations 024–028 had never been applied to production —
+  confirmed via direct read-only query — meaning real customer signups
+  had been failing with a 500 since earlier this session's
+  contact-email-capture commit deployed. No migration runner exists
+  anywhere in the deploy pipeline (root cause, still open — see GAPS.md
+  #15). Kelvin approved after being shown all five migrations are pure
+  additive `ADD COLUMN IF NOT EXISTS`; applied directly to production via
+  `DATABASE_URL`, verified, live-tested the previously-broken signup flow
+  end-to-end (now `201`s correctly).
 

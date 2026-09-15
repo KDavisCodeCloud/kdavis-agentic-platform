@@ -690,3 +690,56 @@ round trip" caveat the original plan called out before any code was written.
 `tests/test_agent08.py`, `tests/test_webhooks.py`. Full suite: 1388
 passing (was 1320 at the start of this build), same 4 pre-existing
 unrelated failures, zero regressions.
+
+### 15. CRITICAL — migrations 024–028 were never applied to production; real customer signups were broken (2026-09-15, fixed same day)
+
+Found while live-testing Agent 11's new webhook route: a `500` instead of
+the expected `403` traced to `asyncpg.exceptions.UndefinedColumnError:
+column "encrypted_azure_devops_webhook_secret" does not exist`. Direct
+read-only query against the live `workspaces` table (via the
+`DATABASE_URL` already present on the Railway service) confirmed **none**
+of migrations 024 (Azure DevOps credentials) through 028 (ToS acceptance)
+had ever been applied to production — despite all five being committed,
+pushed, and deployed earlier in this same session.
+
+**Root cause: there is no migration runner anywhere in the deploy
+pipeline.** `api/main.py` has no startup migration step, and no CI/CD
+workflow applies `db/migrations/*.sql` on deploy — these files are
+committed as documentation of schema intent but nothing ever actually
+runs them against the live database. This is a systemic gap, not a
+one-off mistake: any future migration will have the same problem unless
+this is fixed at the process level (see "still open" below).
+
+**Real, active impact confirmed:** `POST /workspaces`'s `INSERT`
+statement references `contact_email` and `tos_accepted_at` — both
+missing — meaning every real customer signup attempt failed with a `500`
+from the moment the contact-email-capture commit deployed earlier this
+session until this fix. Azure DevOps and Kubernetes credential
+connections were also broken (their columns missing since migration 024/
+025 shipped, days earlier), and the data-purge endpoint (`027`) would
+have failed the moment anyone tried it.
+
+**Fix applied (Kelvin approved after being shown the exact scope and
+confirming all five migrations are pure `ADD COLUMN IF NOT EXISTS`, no
+drops, no data risk):** connected directly to the production Supabase
+Postgres instance and applied all five migration files in one
+transaction. Verified via `information_schema.columns` that all expected
+columns now exist, then live-verified the actual previously-broken flow:
+`POST /workspaces` with a full valid payload now returns `201` with a
+real workspace token (was `500`), and the resource-health-alert webhook
+now returns the correct `403` for an invalid token (was `500`). The
+verification workspace created during this test was deleted immediately
+after confirming success — production `workspaces` table has no leftover
+test data from this.
+
+**Still open — the systemic fix, not built in this pass:** nothing
+currently prevents this exact failure mode from recurring the next time a
+migration is written. Needs one of: a migration-runner step added to the
+deploy pipeline (run `db/migrations/*.sql` against `DATABASE_URL` before
+or as part of the app boot, idempotent via each file's own
+`IF NOT EXISTS` guards), or at minimum a hard rule/checklist item that no
+PR touching `db/migrations/` merges without a human confirming the
+migration was actually applied to production. The current state — schema
+changes and application code deploy independently, with nothing enforcing
+they stay in sync — is what let this go undetected through multiple
+merged PRs and deploys.
