@@ -225,7 +225,7 @@ export default function LandingPage() {
           style={{
             position: 'relative',
             width: '100%',
-            minHeight: 720,
+            minHeight: 780,
             background: '#070910',
             overflow: 'hidden',
             fontFamily: "'IBM Plex Sans',sans-serif",
@@ -334,7 +334,7 @@ export default function LandingPage() {
             </div>
           </nav>
 
-          <div style={{ position: 'relative', zIndex: 4, padding: '120px 40px 90px', maxWidth: 640 }}>
+          <div style={{ position: 'relative', zIndex: 4, padding: '120px 40px 90px', maxWidth: 520 }}>
             <div
               style={{
                 display: 'inline-flex',
@@ -448,6 +448,230 @@ export default function LandingPage() {
                   {stat}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Dimmed background decoration -- static approximation of the
+              app's real, authenticated incident console, not the live
+              component (restored from the previous hero iteration; text
+              updated to match this iteration's positioning). */}
+          <div
+            style={{
+              position: 'absolute',
+              zIndex: 2,
+              right: -160,
+              top: 90,
+              width: 560,
+              height: 700,
+              perspective: 1800,
+              WebkitMaskImage: 'linear-gradient(180deg,#000 70%,transparent)',
+              maskImage: 'linear-gradient(180deg,#000 70%,transparent)',
+            }}
+          >
+            <div
+              style={{
+                width: 760,
+                transform: 'rotateY(-20deg) rotateX(5deg) scale(.66)',
+                transformOrigin: 'top left',
+                opacity: 0.5,
+                filter: 'blur(1.5px) saturate(.8)',
+                boxShadow: '0 40px 100px -40px rgba(0,0,0,.9)',
+                background: '#0a0d16',
+                border: '1px solid rgba(255,255,255,.08)',
+                borderRadius: 14,
+                padding: 20,
+              }}
+            >
+              <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 18, color: '#fff' }}>
+                Incident console
+              </div>
+              <div
+                style={{
+                  marginTop: 16,
+                  height: 900,
+                  background:
+                    'repeating-linear-gradient(180deg, rgba(255,255,255,.03) 0 60px, transparent 60px 64px)',
+                  borderRadius: 10,
+                }}
+              />
+            </div>
+          </div>
+
+          <div
+            className="cd-anim"
+            style={{
+              position: 'absolute',
+              zIndex: 4,
+              right: 120,
+              top: 248,
+              width: 430,
+              background: 'linear-gradient(180deg,#121826,#0c111c)',
+              border: '1px solid rgba(74,139,255,.4)',
+              borderRadius: 14,
+              padding: 18,
+              boxShadow: '0 40px 90px -30px rgba(0,0,0,.9),0 0 60px -18px rgba(61,125,255,.45)',
+              animation: 'cd-float2 8s ease-in-out infinite',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 11 }}>
+              <span
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 18,
+                  height: 18,
+                  borderRadius: '50%',
+                  border: '2px solid #f5a623',
+                }}
+              >
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#f5a623' }} />
+              </span>
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 600, color: '#fff' }}>
+                #inc-007
+              </span>
+              <span
+                style={{
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: 10,
+                  color: 'rgba(232,236,242,.75)',
+                  background: 'rgba(255,255,255,.06)',
+                  border: '1px solid rgba(255,255,255,.1)',
+                  borderRadius: 5,
+                  padding: '2px 7px',
+                }}
+              >
+                Kubernetes
+              </span>
+              <span
+                style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: '#f5a623' }}
+              >
+                NEEDS ACTION
+              </span>
+            </div>
+            <p style={{ fontSize: 13, lineHeight: 1.55, color: 'rgba(232,236,242,.8)', margin: '0 0 13px' }}>
+              Pod <span style={{ fontFamily: "'JetBrains Mono',monospace", color: '#9fc2ff' }}>checkout-api</span> in{' '}
+              <span style={{ color: '#ffb84d' }}>CrashLoopBackOff</span> — OOMKilled, leak in{' '}
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", color: '#9fc2ff' }}>v2.4.2</span>.
+            </p>
+            <div
+              style={{
+                border: '1px dashed rgba(245,166,35,.4)',
+                background: 'rgba(245,166,35,.06)',
+                borderRadius: 9,
+                padding: '11px 12px',
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: 9,
+                  letterSpacing: '.08em',
+                  color: 'rgba(245,166,35,.9)',
+                  marginBottom: 5,
+                }}
+              >
+                PROPOSED FIX · AWAITING YOUR APPROVAL
+              </div>
+              <div style={{ fontSize: 12.5, color: '#f0f3f8', marginBottom: 12 }}>
+                Roll back to <span style={{ fontFamily: "'JetBrains Mono',monospace", color: '#9fc2ff' }}>v2.4.1</span>{' '}
+                &amp; raise limit → 768Mi
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#06101f',
+                    background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)',
+                    padding: '8px 14px',
+                    borderRadius: 8,
+                    boxShadow: '0 6px 18px -6px rgba(61,125,255,.7)',
+                  }}
+                >
+                  Approve &amp; Execute
+                </span>
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: 'rgba(232,236,242,.8)',
+                    border: '1px solid rgba(255,255,255,.15)',
+                    padding: '8px 13px',
+                    borderRadius: 8,
+                  }}
+                >
+                  View diff
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            className="cd-anim"
+            style={{
+              position: 'absolute',
+              zIndex: 5,
+              right: 78,
+              top: 198,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 9,
+              background: '#0c111c',
+              border: '1px solid rgba(245,166,35,.45)',
+              borderRadius: 99,
+              padding: '8px 14px',
+              boxShadow: '0 18px 40px -14px rgba(0,0,0,.9)',
+              animation: 'cd-float 6s ease-in-out infinite',
+            }}
+          >
+            <span
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                background: 'rgba(245,166,35,.16)',
+                border: '2px solid #f5a623',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#f5a623' }} />
+            </span>
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#f5a623', fontWeight: 600 }}>
+              awaiting approval
+            </span>
+          </div>
+
+          <div
+            className="cd-anim"
+            style={{
+              position: 'absolute',
+              zIndex: 5,
+              right: 230,
+              top: 560,
+              background: '#0c111c',
+              border: '1px solid rgba(255,255,255,.1)',
+              borderRadius: 12,
+              padding: '13px 16px',
+              boxShadow: '0 24px 50px -18px rgba(0,0,0,.9)',
+              animation: 'cd-float2 9s ease-in-out infinite',
+            }}
+          >
+            <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 22, color: '#fff' }}>
+              6 domains
+            </div>
+            <div
+              style={{
+                fontFamily: "'JetBrains Mono',monospace",
+                fontSize: 9,
+                letterSpacing: '.06em',
+                color: 'rgba(232,236,242,.45)',
+                marginTop: 2,
+              }}
+            >
+              COMPUTE · NETWORK · STORAGE · IAM · CI/CD · HEALTH
             </div>
           </div>
         </header>
