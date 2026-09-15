@@ -28,6 +28,14 @@ What this file validates:
     - Returns failed on non-zero exit code
     - Returns skipped when allow_kubectl=False
 
+  DriftTools — fetch_app_service_state() (Phase B, App Service drift):
+    - Returns error without an Azure access token
+    - Returns app_settings + files on success (two real API calls, ARM +
+      Kudu, both using the same bearer token)
+    - Returns error dict when the app-settings call fails
+    - Returns error dict when the Kudu file-listing call fails
+    - Returns error dict on a network-level failure
+
   DriftTools — create_drift_pr():
     - Delegates branch/commit/PR creation to core.repo_tools (Phase 2)
     - Returns pr_created with pr_url and pr_number
@@ -209,6 +217,23 @@ class TestDriftWorkflowAzureDevOpsCredentialWiring:
             )
         assert wf._tools.azure_devops_token == "ado_pat_real"
         assert wf._tools.azure_devops_org == "acme-org"
+
+
+class TestDriftWorkflowAzureAccessTokenWiring:
+    # Phase B (App Service content/config drift): azure_access_token was
+    # accepted-but-unused before fetch_app_service_state() existed.
+
+    def test_azure_access_token_reaches_drift_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(DriftWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = DriftWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                azure_access_token="fake-arm-token",
+            )
+        assert wf._tools.azure_access_token == "fake-arm-token"
 
 
 def _base_state(workspace_id: str, payload: dict | None = None) -> DriftState:
@@ -393,6 +418,80 @@ class TestFetchCloudformationStack:
             {"Error": {"Code": "ValidationError", "Message": "does not exist"}}, "DescribeStackResources"
         )
         result = await tools.fetch_cloudformation_stack("missing-stack")
+        assert "error" in result
+
+
+class TestFetchAppServiceState:
+    """fetch_app_service_state() -- Phase B, App Service content/config drift."""
+
+    def _ctx(self, settings_resp, files_resp):
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        ctx.post = AsyncMock(return_value=settings_resp)
+        ctx.get = AsyncMock(return_value=files_resp)
+        return ctx
+
+    async def test_returns_error_without_azure_token(self):
+        tools = DriftTools(azure_access_token=None)
+        result = await tools.fetch_app_service_state("acme-app", "acme-rg", "sub-1")
+        assert "error" in result
+
+    async def test_returns_settings_and_files_on_success(self):
+        settings_resp = MagicMock(status_code=200)
+        settings_resp.json.return_value = {"properties": {"DB_CONNECTION_STRING": "@Microsoft.KeyVault(...)"}}
+        files_resp = MagicMock(status_code=200)
+        files_resp.json.return_value = [
+            {"name": "index.js", "size": 1024, "mtime": "2026-09-14T00:00:00Z"},
+        ]
+
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(settings_resp, files_resp)
+            result = await tools.fetch_app_service_state("acme-app", "acme-rg", "sub-1")
+
+        assert result["status"] == "ok"
+        assert result["app_settings"]["DB_CONNECTION_STRING"] == "@Microsoft.KeyVault(...)"
+        assert result["files"][0]["name"] == "index.js"
+
+    async def test_returns_error_when_app_settings_call_fails(self):
+        settings_resp = MagicMock(status_code=403, text="Forbidden")
+        files_resp = MagicMock(status_code=200)
+
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(settings_resp, files_resp)
+            result = await tools.fetch_app_service_state("acme-app", "acme-rg", "sub-1")
+
+        assert "error" in result
+        assert "app settings" in result["error"]
+
+    async def test_returns_error_when_file_listing_call_fails(self):
+        settings_resp = MagicMock(status_code=200)
+        settings_resp.json.return_value = {"properties": {}}
+        files_resp = MagicMock(status_code=404, text="Not Found")
+
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(settings_resp, files_resp)
+            result = await tools.fetch_app_service_state("acme-app", "acme-rg", "sub-1")
+
+        assert "error" in result
+        assert "file listing" in result["error"]
+
+    async def test_returns_error_on_network_failure(self):
+        import httpx as real_httpx
+
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        ctx.post = AsyncMock(side_effect=real_httpx.RequestError("dns failed"))
+
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = ctx
+            result = await tools.fetch_app_service_state("acme-app", "acme-rg", "sub-1")
+
         assert "error" in result
 
 
@@ -872,6 +971,68 @@ class TestIngestNode:
 
         assert result["repository"] == "acme/infra"
         assert result["file_path"] == "terraform/sg.tf"
+
+    async def test_live_fetch_calls_fetch_app_service_state_when_no_actual_state(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {"app_settings": {}, "files": ["index.js"]},
+            "live_fetch": {
+                "app_name": "acme-app", "resource_group": "acme-rg", "subscription_id": "sub-1",
+            },
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_app_service_state",
+                new=AsyncMock(return_value={
+                    "status": "ok",
+                    "app_settings": {"KEY": "value"},
+                    "files": [{"name": "index.js", "size": 10, "mtime": "now"}],
+                }),
+            ) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_awaited_once_with(app_name="acme-app", resource_group="acme-rg", subscription_id="sub-1")
+
+    async def test_live_fetch_skipped_when_actual_state_already_provided(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {},
+            "actual_state": {"already": "here"},
+            "live_fetch": {"app_name": "acme-app", "resource_group": "acme-rg", "subscription_id": "sub-1"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(wf._tools, "fetch_app_service_state", new=AsyncMock()) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_not_awaited()
+
+    async def test_live_fetch_error_surfaces_in_actual_state_not_raised(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {},
+            "live_fetch": {"app_name": "acme-app", "resource_group": "acme-rg", "subscription_id": "sub-1"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="error-included")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_app_service_state",
+                new=AsyncMock(return_value={"error": "Azure Service Principal not connected for this workspace"}),
+            ),
+        ):
+            result = await wf._ingest_node(state)  # must not raise
+
+        assert result["error"] is None  # ingest itself succeeds; the fetch error rides in actual_state_text
+        assert result["actual_state_text"] == "error-included"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

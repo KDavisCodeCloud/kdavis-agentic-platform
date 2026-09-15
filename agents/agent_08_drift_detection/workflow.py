@@ -167,7 +167,7 @@ class DriftWorkflow(BaseAgent):
         checkpointer: AsyncPostgresSaver,
         github_token: Optional[str] = None,
         aws_session=None,
-        azure_access_token: Optional[str] = None,  # unused -- Agent 08's AWS path is CloudFormation, not ARM
+        azure_access_token: Optional[str] = None,  # Phase B -- fetch_app_service_state()'s ARM/Kudu calls
         azure_devops_token: Optional[str] = None,  # Phase 2 -- routed into DriftTools' get_repo_tools() provider selection
         azure_devops_org: Optional[str] = None,
         k8s_context: Optional[str] = None,  # global KUBECONFIG_YAML stopgap fallback
@@ -181,6 +181,7 @@ class DriftWorkflow(BaseAgent):
         self._checkpointer    = checkpointer
         self._tools           = DriftTools(
             github_token=github_token, aws_session=aws_session, k8s_context=k8s_context,
+            azure_access_token=azure_access_token,
             azure_devops_token=azure_devops_token, azure_devops_org=azure_devops_org,
             k8s_api_url=k8s_api_url, k8s_token=k8s_token, k8s_ca_cert=k8s_ca_cert,
         )
@@ -240,6 +241,23 @@ class DriftWorkflow(BaseAgent):
             or payload.get("cfn_stack")
             or {}
         )
+
+        # App Service content/config drift (Phase B) is the one domain with
+        # a dedicated live-state fetcher instead of requiring the caller to
+        # supply actual_state themselves -- see sop.md's "App Service
+        # content/config drift" section for the live_fetch payload shape.
+        live_fetch = payload.get("live_fetch")
+        if not actual_raw and live_fetch and live_fetch.get("app_name"):
+            fetched = await self._tools.fetch_app_service_state(
+                app_name=live_fetch["app_name"],
+                resource_group=live_fetch.get("resource_group", ""),
+                subscription_id=live_fetch.get("subscription_id", ""),
+            )
+            if "error" in fetched:
+                log.warning("[Agent08] live_fetch failed: %s", fetched["error"])
+                actual_raw = {"error": fetched["error"]}
+            else:
+                actual_raw = {"app_settings": fetched["app_settings"], "files": [f["name"] for f in fetched["files"]]}
 
         desired_text = _normalize_state_text(desired_raw)
         actual_text  = _normalize_state_text(actual_raw)

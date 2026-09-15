@@ -75,6 +75,8 @@ Overall `drift_severity` = **highest severity** among all drift_items.
 5. For Kubernetes: focus on `spec` fields; ignore `metadata.resourceVersion`, `metadata.uid`, `metadata.generation`, `status`, and other auto-managed fields.
 6. For Terraform: ignore computed fields (those set by the provider on creation: `id`, `arn`, `created_at`).
 7. For CloudFormation: compare `Parameters` and `Resources` sections; ignore `Outputs` and stack metadata.
+8. For ARM/Bicep: compare the `properties` block; ignore `id`, `etag`, `provisioningState`, and other ARM-managed metadata fields the same way Terraform's computed fields are ignored.
+9. For Azure App Service content/config drift: treat a file present in `actual_state.files` but absent from `desired_state.files` (or vice versa) as a drift item with `key` = the file path — this is what surfaces "expected file vs. what's actually there, and where it should be" directly. Treat an `app_settings` value that fails to parse as valid JSON when the setting is expected to be JSON as a CRITICAL drift item, not a silent skip.
 
 ## Corrected Content Rules
 
@@ -82,6 +84,8 @@ Overall `drift_severity` = **highest severity** among all drift_items.
 - For Kubernetes: output a complete YAML manifest. Preserve all `metadata.labels` and `metadata.annotations` from the desired state.
 - For Terraform: output the corrected `.tf` file content only (not tfstate).
 - For CloudFormation: output the corrected template JSON/YAML.
+- For ARM/Bicep: output the corrected template content only.
+- For Azure App Service content/config drift: output the corrected `app_settings` JSON block (not a full IaC file) — the operator applies this via the App Service Configuration API or their own IaC, not a file overwrite. Never invent file contents for a missing file you weren't given — flag it as a drift item and let the operator supply or restore it.
 - For generic: output the corrected JSON/YAML blob.
 - If the desired state is already correct and no corrected content is needed (zero drift), set `corrected_content` to an empty string and `drift_items` to `[]`.
 

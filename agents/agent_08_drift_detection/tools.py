@@ -14,10 +14,19 @@ All write operations execute ONLY after operator approval via POST /incidents/{i
 No correction is applied autonomously. Governance Rule 11.
 
 Supported drift sources:
-  terraform     — Terraform state file / HCL configuration
-  kubernetes    — K8s manifest vs live resource state
+  terraform      — Terraform state file / HCL configuration
+  kubernetes     — K8s manifest vs live resource state
   cloudformation — CloudFormation template vs deployed stack
-  generic       — any two JSON/YAML blobs
+  arm_bicep      — ARM/Bicep template vs deployed resource (same generic
+                   JSON-diff path as terraform/cloudformation)
+  generic        — any two JSON/YAML blobs
+
+Domain coverage (all use the generic desired/actual-state diff path except
+where a dedicated fetch helper exists): IAM/RBAC/Policy, Networking,
+Storage, Compute. Azure App Service content/config drift (missing files,
+bad app settings) additionally has a dedicated live-state fetcher,
+fetch_app_service_state() below. Database-as-a-service resources are out
+of scope. GCP: payload shape only, no collection built (see sop.md).
 
 Correction options:
   opt_1 — Create Remediation PR (for all drift sources — goes through code review)
@@ -58,6 +67,7 @@ class DriftTools:
         github_token: Optional[str] = None,
         allow_kubectl: bool = True,
         aws_session=None,
+        azure_access_token: Optional[str] = None,
         k8s_context: Optional[str] = None,
         azure_devops_token: Optional[str] = None,
         azure_devops_org: Optional[str] = None,
@@ -70,6 +80,12 @@ class DriftTools:
         self.github_token       = github_token or ""
         self.allow_kubectl      = allow_kubectl
         self.aws_session        = aws_session
+        # ARM bearer token -- minted fresh per call by
+        # core.workspace_credentials.build_agent_credentials(), never cached
+        # or re-derived here, same discipline as every other credential in
+        # this class. Used by fetch_app_service_state() (Phase B, App
+        # Service content/config drift).
+        self.azure_access_token = azure_access_token or ""
         self.azure_devops_token = azure_devops_token or ""
         self.azure_devops_org   = azure_devops_org or ""
         # Which kubeconfig context to target -- the global-KUBECONFIG_YAML
@@ -170,6 +186,65 @@ class DriftTools:
             return {"resources": resources, "status": "ok"}
         except ClientError as exc:
             return {"error": str(exc)}
+
+    async def fetch_app_service_state(
+        self, app_name: str, resource_group: str, subscription_id: str,
+    ) -> dict:
+        """
+        Fetch an Azure App Service's live app settings (ARM API) and
+        deployed file listing (Kudu VFS API), for the Phase B "App Service
+        content/config drift" check -- missing uploaded files, wrong app
+        settings, bad JSON, expected-vs-actual file paths, all fall out of
+        comparing this against a desired_state built from the connected
+        repo's build output.
+
+        Both calls use the same ARM bearer token
+        (core.workspace_credentials.get_azure_bearer_token) -- Kudu accepts
+        Azure AD tokens issued for the ARM resource the same App Service's
+        portal/CLI access uses. This is documented Azure behavior but has
+        not been live-verified against a real App Service in this
+        codebase yet; if it 403s in practice, the fallback is Kudu's own
+        Basic Auth (publish-profile credentials), which would need a
+        different credential shape than what's stored today.
+
+        Returns {"app_settings": {...}, "files": [...], "status": "ok"} or
+        {"error": ...}.
+        """
+        if not self.azure_access_token:
+            return {"error": "Azure Service Principal not connected for this workspace"}
+
+        headers = {"Authorization": f"Bearer {self.azure_access_token}"}
+        arm_base = (
+            f"https://management.azure.com/subscriptions/{subscription_id}"
+            f"/resourceGroups/{resource_group}/providers/Microsoft.Web/sites/{app_name}"
+        )
+
+        async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
+            try:
+                settings_resp = await client.post(
+                    f"{arm_base}/config/appsettings/list?api-version=2022-03-01",
+                    headers=headers,
+                )
+                files_resp = await client.get(
+                    f"https://{app_name}.scm.azurewebsites.net/api/vfs/site/wwwroot/",
+                    headers=headers,
+                )
+            except httpx.RequestError as exc:
+                return {"error": f"Could not reach Azure App Service APIs: {exc}"}
+
+        if settings_resp.status_code != 200:
+            return {"error": f"Could not fetch app settings ({settings_resp.status_code}): {settings_resp.text[:300]}"}
+        if files_resp.status_code != 200:
+            return {"error": f"Could not fetch deployed file listing ({files_resp.status_code}): {files_resp.text[:300]}"}
+
+        return {
+            "app_settings": settings_resp.json().get("properties", {}),
+            "files": [
+                {"name": f.get("name"), "size": f.get("size"), "mtime": f.get("mtime")}
+                for f in files_resp.json()
+            ],
+            "status": "ok",
+        }
 
     # ──────────────────────────────────────────────
     # Correction tools (post-HITL only)

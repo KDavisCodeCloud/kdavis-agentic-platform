@@ -61,12 +61,80 @@ Content-Type: application/json
 **Optional payload fields:**
 | Field | Description |
 |---|---|
-| `drift_source` | `"terraform"` / `"kubernetes"` / `"cloudformation"` / `"generic"` (auto-detected if absent) |
+| `drift_source` | `"terraform"` / `"kubernetes"` / `"cloudformation"` / `"arm_bicep"` / `"generic"` (auto-detected if absent) |
 | `resource_type` | Resource type string (e.g., `aws_security_group`, `Deployment`, `AWS::EC2::SecurityGroup`) |
 | `resource_id` | Resource identifier (name, ARN, or `namespace/name`) |
 | `scope` | Region, namespace, or account for context |
 | `repository` | `"owner/repo"` — enables PR and issue creation |
 | `file_path` | Path to IaC/manifest file in repo — used for PR commits |
+
+---
+
+## Domain Coverage
+
+Agent 08's ingest/diagnose pipeline is fully generic — any two JSON/YAML
+blobs work through the same desired-vs-actual diff. These are
+representative `resource_type` examples across the four infrastructure
+domains in scope (IAM/RBAC/Policy, Networking, Storage, Compute).
+Database-as-a-service resources (RDS, Azure SQL, Cosmos DB, DynamoDB) are
+explicitly out of scope, addressed separately.
+
+| Domain | AWS `resource_type` example | Azure `resource_type` example |
+|---|---|---|
+| IAM/RBAC/Policy | `aws_iam_role` (attached policy vs. IaC-defined; also: orphaned access keys with no IaC reference) | `azure_role_assignment` (RBAC assignments that exist live but shouldn't, or are missing) |
+| Networking | `aws_security_group` (see the worked example above; also route table drift, VPC peering state) | `azure_network_security_group` (NSG rule drift — flag as CRITICAL by default, this is the highest-severity drift category) |
+| Storage | `aws_s3_bucket` (versioning/encryption/lifecycle/object-lock drift) | `azure_storage_account` (access policy changed outside IaC, replication rules) |
+| Compute | `aws_instance` (instance type, auto-scaling min/max/desired, AMI version, tag compliance drift) | `azure_app_service` (see App Service content/config drift below — the one domain with a dedicated live-state fetcher instead of relying on the caller to supply `actual_state`) |
+
+**GCP:** payload shape and `resource_type` conventions (e.g.
+`google_compute_instance`, `google_storage_bucket`) are accepted the same
+way any `generic` drift source is — the ingest/diagnose path doesn't care
+which cloud a JSON blob describes. What's *not* built yet is a dedicated
+GCP live-state fetcher (the way `fetch_cloudformation_stack` and
+`fetch_app_service_state` exist for AWS/Azure) — a GCP `actual_state` has
+to be fetched by the caller's own tooling and posted in, same as the CI
+pattern below. This matches Agent 05's existing GCP treatment in this
+platform: the payload shape and field mapping are documented, but no
+per-workspace GCP credential connector exists to build collection against
+yet.
+
+### App Service content/config drift (Azure, dedicated fetcher)
+
+Unlike every other domain above, this one doesn't require the caller to
+fetch `actual_state` themselves — `DriftTools.fetch_app_service_state()`
+calls it live via Azure's ARM (app settings) and Kudu VFS (deployed file
+listing) APIs, using this workspace's stored Azure Service Principal
+credential. Post only `desired_state` (what the deploy *should* have
+produced — file manifest + app settings, sourced from the connected
+repo's build output or IaC) and a `live_fetch` block instead of a real
+`actual_state`:
+
+```json
+{
+  "payload": {
+    "drift_source": "generic",
+    "resource_type": "azure_app_service",
+    "resource_id": "acme-prod-app",
+    "live_fetch": {
+      "app_name": "acme-prod-app",
+      "resource_group": "acme-prod-rg",
+      "subscription_id": "00000000-0000-0000-0000-000000000000"
+    },
+    "desired_state": {
+      "app_settings": { "API_KEY_REF": "@Microsoft.KeyVault(...)" },
+      "files": ["index.js", "package.json", "web.config"]
+    }
+  },
+  "cloud_provider": "azure"
+}
+```
+
+This is what turns "an App Service doesn't have an uploaded file" or
+"app settings are wrong / contain invalid JSON" into a normal drift item —
+a missing file shows up as a `desired_state.files` entry absent from the
+live listing, with the path it should be at; a bad app-settings value that
+fails JSON validation (when JSON is expected) is flagged CRITICAL, never
+silently accepted. See `prompts/diagnose.md` rules 8-9.
 
 ---
 
