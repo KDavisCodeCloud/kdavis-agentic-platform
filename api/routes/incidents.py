@@ -45,6 +45,7 @@ from agents.agent_07_runbook.workflow import RunbookWorkflow
 from agents.agent_08_drift_detection.workflow import DriftWorkflow
 from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
+from agents.agent_11_resource_health.workflow import ResourceHealthWorkflow
 from core.workspace_credentials import build_agent_credentials, build_k8s_credentials, resolve_k8s_context
 from core.workspace_scope import workspace_scoped_connection
 
@@ -87,6 +88,7 @@ _WORKFLOW_CLASSES: dict[str, type] = {
     "agent_08_drift_detection": DriftWorkflow,
     "agent_09_onboarding_buddy": OnboardingWorkflow,
     "agent_10_dependency_patch": DependencyPatchWorkflow,
+    "agent_11_resource_health": ResourceHealthWorkflow,
 }
 
 # Only these agents' workflow constructors accept the credential kwargs
@@ -111,6 +113,17 @@ _WORKFLOW_CLASSES: dict[str, type] = {
 # agent_02_k8s_alert had the exact same gap (Phase 4) -- its workflow
 # constructor accepted no credential kwargs either, so K8sTools always fell
 # back to a shared os.environ["K8S_API_URL"]/["K8S_TOKEN"]/["GITHUB_TOKEN"].
+#
+# agent_11_resource_health was missing from _WORKFLOW_CLASSES entirely (not
+# just this set) until the live Azure Action Group verification found it,
+# 2026-09-15: every real approval of a real Agent 11 incident -- every
+# customer, since this agent shipped -- hit a 500 "No workflow class
+# registered for agent_id 'agent_11_resource_health'" the moment anything
+# other than 'hold' was selected, because approve_incident's dispatch
+# never had an entry for it at all. Its constructor takes the exact same
+# uniform **creds shape as every other credentialed agent (github_token/
+# azure_devops_token/azure_devops_org -- see ResourceHealthWorkflow's
+# __init__), so it needs this set too, same as the others above.
 _CREDENTIALED_AGENTS = {
     "agent_01_cicd_triage",
     "agent_02_k8s_alert",
@@ -119,6 +132,7 @@ _CREDENTIALED_AGENTS = {
     "agent_06_finops",
     "agent_08_drift_detection",
     "agent_10_dependency_patch",
+    "agent_11_resource_health",
 }
 
 

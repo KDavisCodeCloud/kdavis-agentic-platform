@@ -208,6 +208,46 @@ class TestApproveDispatchesToCorrectWorkflow:
         _, kwargs = MockWorkflow.call_args
         assert "k8s_context" not in kwargs
 
+    async def test_agent11_is_registered_in_workflow_classes(self):
+        # Regression guard for a real bug found live during the Azure Action
+        # Group end-to-end verification, 2026-09-15: agent_11_resource_health
+        # was missing from _WORKFLOW_CLASSES entirely (not just
+        # _CREDENTIALED_AGENTS), so approving ANY real Agent 11 incident with
+        # anything other than 'hold' raised a 500 "No workflow class
+        # registered" -- every customer, since Agent 11 shipped. This
+        # assertion exists so that gap can never silently reappear.
+        assert "agent_11_resource_health" in incidents._WORKFLOW_CLASSES
+        assert incidents._WORKFLOW_CLASSES["agent_11_resource_health"].__name__ == "ResourceHealthWorkflow"
+        assert "agent_11_resource_health" in incidents._CREDENTIALED_AGENTS
+
+    async def test_agent11_incident_resumes_resource_health_workflow_with_github_token(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_11_resource_health", workspace_id)
+        credentials_row = {
+            "github_pat_encrypted": "cipher",
+            "github_app_installation_id": None,
+            "aws_role_arn": None, "aws_external_id": None,
+            "azure_tenant_id": None, "azure_client_id": None,
+            "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None,
+        }
+        request, conn = _make_request(row, credentials_row=credentials_row)
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+        with (
+            patch.dict(incidents._WORKFLOW_CLASSES, {"agent_11_resource_health": MockWorkflow}),
+            patch("core.workspace_credentials.decrypt", return_value="ghp_real_workspace_token"),
+        ):
+            await _approve(request, str(row["id"]), workspace_id)
+            await _drain_background_tasks()
+
+        MockWorkflow.assert_called_once()
+        MockWorkflow.return_value.resume.assert_awaited_once()
+        _, kwargs = MockWorkflow.call_args
+        assert kwargs["github_token"] == "ghp_real_workspace_token"
+
     async def test_unknown_agent_id_raises_500_not_silent_fallback(self):
         workspace_id = uuid4()
         row = _incident_row("agent_99_does_not_exist", workspace_id)
