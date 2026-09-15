@@ -46,3 +46,21 @@ Full detail: `knowledge/operator/architecture-decisions/2026-09-14-connectivity-
   from Round 1/2, now closed. See the architecture-decisions file's
   "Round 3" section.
 
+## 2026-09-15 — IaC deploy-failure diagnosis + live resource monitoring, domain-complete
+
+Full detail: `knowledge/operator/architecture-decisions/2026-09-15-iac-diagnosis-domains-and-resource-health-monitoring.md`
+
+- Three-phase build (Agent 01 IaC deploy diagnosis, Agent 08 drift
+  coverage + Azure App Service live fetch, new Agent 11 resource-health
+  monitoring), organized around four domains (IAM/RBAC/Policy,
+  Networking, Storage, Compute) at Kelvin's explicit request mid-build.
+- Real bug caught and fixed: `core/compliance.py`'s `TIER_LIMITS` and a
+  second, independent duplicate copy in `api/routes/agents.py` both
+  gated purely on numeric agent-id position — Agent 11 would have
+  silently become Enterprise-only by numbering accident without the fix.
+- Also fixed autodeploy for Railway `cloud-decoded-mcp` service (was
+  still on its 2026-09-12 build) and confirmed the platform-wide
+  autodeploy fix from the previous session holds across this entire
+  multi-commit build with zero manual intervention.
+- 1388 passing (was 1320), same pre-existing unrelated failures.
+

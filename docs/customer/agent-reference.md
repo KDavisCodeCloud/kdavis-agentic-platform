@@ -16,6 +16,7 @@ listed here is real and built — none of this is roadmap.
 | 08 | **Drift Detection & Auto-Correction** | Growth+ | Manual or scheduled | Terraform state / CloudFormation / Kubernetes | Opening a remediation PR, or `kubectl apply` if explicitly enabled |
 | 09 | **Context-Aware Onboarding & On-Call Buddy** | Growth+ | Manual, chat-style questions | Your knowledge base / incident history (read-only) | Nothing — answers only, never takes action |
 | 10 | **Dependency & Vulnerability Patching** | Growth+ | Manual or scheduled, per manifest | GitHub or Azure DevOps | Opening a patch PR, filing a tracking issue, or both |
+| 11 | **Cloud Resource Health Monitoring** | Growth+ | Azure Monitor Action Group or AWS SNS/CloudWatch Alarm webhook | GitHub or Azure DevOps (for the PR/issue it opens) | Opening a remediation PR or filing an investigation issue — never a live cloud API call |
 
 ## How every agent works, regardless of what it does
 

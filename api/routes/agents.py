@@ -52,7 +52,7 @@ async def run_agent(
     # Validate agent_id format
     valid_agents = {
         f"agent_{str(i).zfill(2)}_"
-        for i in range(1, 11)
+        for i in range(1, 12)  # agent_01 .. agent_11
     }
     if not any(agent_id.startswith(p) for p in valid_agents):
         raise HTTPException(
@@ -235,6 +235,25 @@ async def run_agent(
             message="Dependency scan started. Poll GET /incidents?status=pending_approval for result.",
         )
 
+    if agent_id == "agent_11_resource_health":
+        # Primarily webhook-driven (api/routes/webhooks.py's
+        # /resource-health-alert), but manual/CI-scheduled trigger is
+        # supported the same as every other agent for consistency and testing.
+        from api.routes.webhooks import _run_resource_health_alert
+        background_tasks.add_task(
+            _run_resource_health_alert,
+            request.app,
+            workspace,
+            body.payload,
+            body.cloud_provider,
+        )
+        return AgentRunResponse(
+            incident_id="pending",
+            agent_id=agent_id,
+            status="accepted",
+            message="Resource health triage started. Poll GET /incidents?status=pending_approval for result.",
+        )
+
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail=f"Agent '{agent_id}' is not yet available. Phase 5 build coming soon.",
@@ -249,24 +268,33 @@ async def list_agents(
 ) -> dict:
     """List agents available to this workspace based on product tier."""
     tier = workspace.get("product_tier", "starter")
+    # Mirrors core/compliance.py's WorkspaceComplianceGuard.TIER_LIMITS --
+    # this endpoint has its own copy rather than importing it because it
+    # needs a display count, not a permission check, but the numbers must
+    # stay in sync or an agent can be "permitted" yet never listed as
+    # available (or vice versa). Growth bumped 10 -> 11, enterprise 10 -> 11
+    # (effectively "all") for the same reason WorkspaceComplianceGuard's
+    # growth cap was bumped: Agent 11 must not become Enterprise-only by
+    # numbering accident.
     tier_limits = {
         "starter":    3,
-        "growth":     10,
-        "enterprise": 10,
+        "growth":     11,
+        "enterprise": 11,
     }
     max_agents = tier_limits.get(tier, 3)
 
     all_agents = [
-        {"id": "agent_01_cicd_triage",     "name": "CI/CD Pipeline Failure Triage",           "status": "available"},
-        {"id": "agent_02_k8s_alert",       "name": "Kubernetes Alert Fatigue & Remediation",   "status": "available"},
-        {"id": "agent_03_pr_review",       "name": "PR Review for Architecture & Security",    "status": "available"},
-        {"id": "agent_04_migration",       "name": "Legacy Code & Infrastructure Migration",   "status": "available"},
-        {"id": "agent_05_iam_minimizer",   "name": "IAM Policy Minimization",                  "status": "available"},
-        {"id": "agent_06_finops",          "name": "FinOps Cost Optimization",                 "status": "available"},
-        {"id": "agent_07_runbook",         "name": "Interactive Runbook Automation",           "status": "available"},
-        {"id": "agent_08_drift_detection", "name": "Drift Detection & Auto-Correction",        "status": "available"},
-        {"id": "agent_09_onboarding_buddy","name": "Context-Aware Onboarding & On-Call Buddy", "status": "available"},
-        {"id": "agent_10_dependency_patch","name": "Dependency & Vulnerability Patching",      "status": "available"},
+        {"id": "agent_01_cicd_triage",       "name": "CI/CD Pipeline Failure Triage",             "status": "available"},
+        {"id": "agent_02_k8s_alert",         "name": "Kubernetes Alert Fatigue & Remediation",     "status": "available"},
+        {"id": "agent_03_pr_review",         "name": "PR Review for Architecture & Security",      "status": "available"},
+        {"id": "agent_04_migration",         "name": "Legacy Code & Infrastructure Migration",     "status": "available"},
+        {"id": "agent_05_iam_minimizer",     "name": "IAM Policy Minimization",                    "status": "available"},
+        {"id": "agent_06_finops",            "name": "FinOps Cost Optimization",                   "status": "available"},
+        {"id": "agent_07_runbook",           "name": "Interactive Runbook Automation",             "status": "available"},
+        {"id": "agent_08_drift_detection",   "name": "Drift Detection & Auto-Correction",          "status": "available"},
+        {"id": "agent_09_onboarding_buddy",  "name": "Context-Aware Onboarding & On-Call Buddy",   "status": "available"},
+        {"id": "agent_10_dependency_patch",  "name": "Dependency & Vulnerability Patching",        "status": "available"},
+        {"id": "agent_11_resource_health",   "name": "Cloud Resource Health Monitoring",           "status": "available"},
     ]
 
     return {

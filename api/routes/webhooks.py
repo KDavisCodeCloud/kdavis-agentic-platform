@@ -387,6 +387,86 @@ async def aks_alert_webhook(
     return {"status": "accepted", "message": "K8s alert triage initiated"}
 
 
+@router.post("/resource-health-alert")
+async def resource_health_alert_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    token: str,
+) -> dict:
+    """
+    Receive general cloud-resource health/security alerts for Agent 11
+    (any resource, not just AKS pods -- see aks_alert_webhook above for
+    the Kubernetes-specific equivalent). Supports two payload formats:
+      - Azure Monitor Common Alert Schema (register as an Action Group
+        webhook action, same URL shape as aks_alert_webhook)
+      - AWS SNS (subscribe this URL to an SNS topic fed by CloudWatch
+        Alarms) -- both SubscriptionConfirmation and Notification message
+        types are handled; core.aws_sns verifies every Notification's
+        signature before it's trusted, and confirms a
+        SubscriptionConfirmation's SubscribeURL once
+
+    Register as an Azure Monitor Action Group webhook action, or subscribe
+    this URL to an AWS SNS topic:
+      URL: https://your-api.cloud-decoded.com/webhooks/resource-health-alert?token=<ws_token>
+    """
+    from core.aws_sns import confirm_subscription, verify_signature
+
+    payload_bytes = await request.body()
+
+    db = request.app.state.db_pool
+    workspace = await _get_workspace_from_token(db, token)
+
+    if not workspace:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid workspace token")
+
+    try:
+        payload = json.loads(payload_bytes)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload")
+
+    is_azure_monitor = "data" in payload and "essentials" in payload.get("data", {})
+    is_sns = payload.get("Type") in ("SubscriptionConfirmation", "Notification", "UnsubscribeConfirmation")
+
+    if is_azure_monitor:
+        condition = payload["data"]["essentials"].get("monitorCondition", "")
+        if condition != "Fired":
+            return {"status": "ignored", "reason": f"monitorCondition='{condition}' — only 'Fired' triggers triage"}
+
+        log.info("[Webhooks] Resource health alert received — workspace=%s format=azure_monitor", workspace["id"])
+        background_tasks.add_task(_run_resource_health_alert, request.app, workspace, payload, "azure")
+        return {"status": "accepted", "message": "Resource health triage initiated"}
+
+    if is_sns:
+        if not await verify_signature(payload):
+            log.warning("[Webhooks] SNS message signature verification failed — workspace=%s", workspace["id"])
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid SNS signature")
+
+        if payload["Type"] == "SubscriptionConfirmation":
+            confirmed = await confirm_subscription(payload.get("SubscribeURL", ""))
+            return {"status": "subscription_confirmed" if confirmed else "subscription_confirm_failed"}
+
+        if payload["Type"] == "UnsubscribeConfirmation":
+            return {"status": "acknowledged"}
+
+        # Notification -- the actual CloudWatch Alarm JSON is inside "Message"
+        try:
+            alarm = json.loads(payload.get("Message", "{}"))
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SNS Message was not valid JSON")
+
+        if alarm.get("NewStateValue") != "ALARM":
+            return {"status": "ignored", "reason": f"NewStateValue='{alarm.get('NewStateValue')}' — only 'ALARM' triggers triage"}
+
+        log.info("[Webhooks] Resource health alert received — workspace=%s format=aws_cloudwatch", workspace["id"])
+        background_tasks.add_task(
+            _run_resource_health_alert, request.app, workspace, {"cloudwatch_alarm": alarm}, "aws",
+        )
+        return {"status": "accepted", "message": "Resource health triage initiated"}
+
+    log.warning("[Webhooks] Resource health alert received with unrecognized format from workspace %s", workspace["id"])
+    return {"status": "ignored", "reason": "unrecognized alert payload format"}
+
+
 # ──────────────────────────────────────────────
 # Background task — runs the agent
 # ──────────────────────────────────────────────
@@ -482,6 +562,50 @@ async def _run_k8s_alert_triage(app, workspace: dict, payload: dict, cloud_provi
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 02 failed for workspace %s: %s", workspace_id, exc)
+
+
+async def _run_resource_health_alert(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
+    """
+    Background task: runs Agent 11 for the given resource-health alert.
+    """
+    from agents.agent_11_resource_health.workflow import ResourceHealthWorkflow
+    from core.workspace_credentials import build_agent_credentials
+
+    workspace_id = str(workspace["id"])
+    checkpointer = app.state.checkpointer
+
+    try:
+        async with app.state.db_pool.acquire() as conn:
+            compliance = WorkspaceComplianceGuard(conn)
+            await compliance.assert_workspace_active(workspace_id)
+            await compliance.assert_agent_permitted(workspace_id, "agent_11_resource_health", cloud_provider)
+
+            creds = await build_agent_credentials(conn, workspace_id)
+            agent = ResourceHealthWorkflow(
+                conn, workspace_id, checkpointer, **creds,
+                llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
+            )
+            incident_id = await agent.run(payload, cloud_provider=cloud_provider)
+            log.info(
+                "[Webhooks] Agent 11 triage complete — workspace=%s incident=%s",
+                workspace_id, incident_id,
+            )
+
+    except SubscriptionError as exc:
+        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+
+    except BudgetExceededError as exc:
+        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        async with app.state.db_pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE incidents SET execution_status = 'budget_exceeded' "
+                "WHERE workspace_id = $1 AND execution_status = 'pending_approval' "
+                "ORDER BY created_at DESC LIMIT 1",
+                __import__("uuid").UUID(workspace_id),
+            )
+
+    except Exception as exc:
+        log.exception("[Webhooks] Agent 11 failed for workspace %s: %s", workspace_id, exc)
 
 
 async def _run_pr_review(app, workspace: dict, payload: dict, cloud_provider: str) -> None:

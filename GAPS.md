@@ -625,3 +625,68 @@ re-running clean). Frontend `next build`: clean, 18 routes.
 - GitHub App "the-cloud-decoded" — Kelvin confirmed it's now public.
   Live-verified: `https://github.com/apps/the-cloud-decoded` returns 200.
   Real customers can now install it.
+
+### 14. IaC deploy-failure diagnosis + live resource monitoring, domain-complete (2026-09-15)
+
+Three-phase build (plan mode, `Agent` tool not used — direct implementation)
+closing the gap between "Cloud Decoded triages CI/CD pipeline failures"
+and "Cloud Decoded surfaces IAM/Networking/Storage/Compute problems at
+every stage: deploy time, config drift, and live runtime alerts." Full
+detail: `knowledge/operator/architecture-decisions/` entry for this date.
+
+**Phase A — Agent 01 diagnosis prompt** reorganized into four domain
+sections (IAM/RBAC/Policy, Networking, Storage, Compute), each with AWS +
+Azure ARM/Bicep/Terraform/CloudFormation deploy-failure categories and
+cross-resource auth failures. New cross-cutting rule: options must be
+domain-aware, never generic; credential-exposure/unusual-auth findings
+get investigation steps only, never an auto-proposed fix.
+
+**Phase B — Agent 08 drift detection** documented across the same four
+domains (its diff engine was already domain-agnostic, needed no code
+changes for most of it). One new capability: `fetch_app_service_state()`
+(Azure ARM + Kudu VFS APIs) plus a `live_fetch` payload block in
+`_ingest_node`, turning "App Service missing an uploaded file" or
+"app settings contain invalid JSON" into normal drift items instead of
+requiring the caller to fetch live state themselves.
+
+**Phase C — new Agent 11 (Cloud Resource Health Monitoring)** — genuinely
+new agent + new webhook (`/resource-health-alert`), reusing
+`aks_alert_webhook`'s proven Azure Monitor Common Alert Schema parsing
+for Azure, adding AWS CloudWatch Alarm → SNS handling
+(`core/aws_sns.py`: subscription-confirmation handshake + real RSA
+signature verification, tested against a self-signed cert generated at
+test time, not just mocked). No live cloud-mutation API calls built —
+every option is a PR proposal or an investigation issue, gated by HITL
+same as everything else in this platform.
+
+**Real bug caught and fixed along the way:** `core/compliance.py`'s
+`TIER_LIMITS` gates purely on the numeric position extracted from
+`agent_id` (`_extract_agent_number`). Adding Agent 11 without bumping
+Growth's `max_agents` from 10 to 11 would have silently made it
+Enterprise-only by numbering coincidence, not a deliberate pricing
+decision — same issue existed a second time in `api/routes/agents.py`'s
+own separate, duplicate tier-limit dict (which also capped Enterprise at
+exactly 10, unlike `core/compliance.py`'s `-1`/unlimited). Both fixed;
+`agents.py`'s `valid_agents` agent-id-prefix check and `GET /agents`'s
+agent listing were also missing Agent 11 entirely and would have 400'd
+or hidden it. `core/compliance.py` had zero test coverage before this —
+added `tests/test_compliance.py`.
+
+**Not done, flagged not silently changed:** marketing copy
+(`frontend/src/app/features/page.tsx`, `problems/page.tsx`) still says
+"10 agents" — whether/how to publicly announce Agent 11 is a GTM
+decision, not something to fold into a backend build.
+
+**Verification status:** Phase A/B mechanically verified (sanitizer/
+diagnose pass-through, live App Service fetch logic unit-tested). Phase
+C's SNS signature verification is genuinely cryptographically tested
+(real keypair, real sign/verify round trip) but the subscription-
+confirmation handshake and Azure Action Group registration have NOT been
+live-verified against real AWS/Azure infrastructure — same "needs a real
+round trip" caveat the original plan called out before any code was written.
+
+100+ new tests across `tests/test_compliance.py`, `tests/test_aws_sns.py`,
+`tests/test_agent11.py`, plus additions to `tests/test_agent01_local.py`,
+`tests/test_agent08.py`, `tests/test_webhooks.py`. Full suite: 1388
+passing (was 1320 at the start of this build), same 4 pre-existing
+unrelated failures, zero regressions.

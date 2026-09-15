@@ -475,3 +475,117 @@ class TestRunDependencyPatchCredentialWiring:
         mock_creds.assert_awaited_once_with(conn, str(workspace["id"]))
         _, kwargs = MockWorkflow.call_args
         assert kwargs["github_token"] == "ghp_real"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# resource_health_alert_webhook -- Agent 11 (Phase C, IaC deploy-failure
+# diagnosis + live resource monitoring build). Two payload formats: Azure
+# Monitor Common Alert Schema (same shape as aks_alert_webhook already
+# proves works) and AWS SNS (SubscriptionConfirmation + Notification,
+# both signature-verified via core.aws_sns before being trusted).
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestResourceHealthAlertWebhook:
+    async def test_azure_monitor_fired_is_accepted_and_tagged_azure(self):
+        body = {"data": {"essentials": {"monitorCondition": "Fired"}}}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+
+        assert result["status"] == "accepted"
+        assert len(bg.tasks) == 1
+        assert bg.tasks[0].args[-1] == "azure"
+
+    async def test_azure_monitor_not_fired_is_ignored(self):
+        body = {"data": {"essentials": {"monitorCondition": "Resolved"}}}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+
+        assert result["status"] == "ignored"
+        assert len(bg.tasks) == 0
+
+    async def test_sns_subscription_confirmation_valid_signature_confirms(self):
+        body = {"Type": "SubscriptionConfirmation", "SubscribeURL": "https://sns.us-east-1.amazonaws.com/?x", "SigningCertURL": "https://sns.us-east-1.amazonaws.com/cert.pem", "Signature": "abc"}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        with (
+            _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=True)),
+            _patch("core.aws_sns.confirm_subscription", new=AsyncMock(return_value=True)) as mock_confirm,
+        ):
+            result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+
+        mock_confirm.assert_awaited_once()
+        assert result["status"] == "subscription_confirmed"
+        assert len(bg.tasks) == 0
+
+    async def test_sns_invalid_signature_rejected_with_403(self):
+        from fastapi import HTTPException
+
+        body = {"Type": "Notification", "Message": "{}", "SigningCertURL": "https://sns.us-east-1.amazonaws.com/cert.pem", "Signature": "abc"}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        with _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=False)):
+            with pytest.raises(HTTPException) as exc:
+                await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+
+        assert exc.value.status_code == 403
+
+    async def test_sns_notification_alarm_state_accepted_and_tagged_aws(self):
+        alarm = {"AlarmName": "cpu-high", "NewStateValue": "ALARM", "Trigger": {"Namespace": "AWS/EC2", "Dimensions": []}}
+        body = {
+            "Type": "Notification", "Message": json.dumps(alarm),
+            "SigningCertURL": "https://sns.us-east-1.amazonaws.com/cert.pem", "Signature": "abc",
+        }
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        with _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=True)):
+            result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+
+        assert result["status"] == "accepted"
+        assert len(bg.tasks) == 1
+        assert bg.tasks[0].args[-1] == "aws"
+        # payload passed to the agent wraps the alarm under cloudwatch_alarm
+        payload_arg = bg.tasks[0].args[-2]
+        assert payload_arg["cloudwatch_alarm"]["AlarmName"] == "cpu-high"
+
+    async def test_sns_notification_non_alarm_state_ignored(self):
+        alarm = {"AlarmName": "cpu-high", "NewStateValue": "OK", "Trigger": {"Namespace": "AWS/EC2", "Dimensions": []}}
+        body = {
+            "Type": "Notification", "Message": json.dumps(alarm),
+            "SigningCertURL": "https://sns.us-east-1.amazonaws.com/cert.pem", "Signature": "abc",
+        }
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        with _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=True)):
+            result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+
+        assert result["status"] == "ignored"
+        assert len(bg.tasks) == 0
+
+    async def test_unrecognized_format_is_ignored(self):
+        body = {"nonsense": True}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+
+        assert result["status"] == "ignored"
+        assert len(bg.tasks) == 0
+
+    async def test_invalid_workspace_token_rejected_with_403(self):
+        from fastapi import HTTPException
+
+        request = _make_request(None, {"data": {}})
+        bg = BackgroundTasks()
+
+        with pytest.raises(HTTPException) as exc:
+            await webhooks.resource_health_alert_webhook(request, bg, token="bad-token")
+
+        assert exc.value.status_code == 403
