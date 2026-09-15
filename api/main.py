@@ -61,6 +61,7 @@ from api.routes import audit
 from api.routes import finops_agent
 from api.routes import compliance_agent
 from api.routes import github_app_admin
+from core.error_tracking import init_sentry
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +69,11 @@ logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
 )
+
+# Must run before `FastAPI(...)` is instantiated below -- the FastAPI/
+# Starlette integrations instrument at init time. No-ops if SENTRY_DSN
+# isn't set (see core/error_tracking.py).
+init_sentry()
 
 
 # ──────────────────────────────────────────────

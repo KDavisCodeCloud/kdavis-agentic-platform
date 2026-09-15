@@ -29,6 +29,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
+from core.error_tracking import capture_exception
 from core.token_budget import BudgetExceededError
 from security.encryption import decrypt
 
@@ -517,6 +518,7 @@ async def _run_cicd_triage(app, workspace: dict, payload: dict, cloud_provider: 
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 01 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_01_cicd_triage")
 
 
 async def _run_k8s_alert_triage(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -562,6 +564,7 @@ async def _run_k8s_alert_triage(app, workspace: dict, payload: dict, cloud_provi
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 02 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_02_k8s_alert")
 
 
 async def _run_resource_health_alert(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -606,6 +609,7 @@ async def _run_resource_health_alert(app, workspace: dict, payload: dict, cloud_
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 11 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_11_resource_health")
 
 
 async def _run_pr_review(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -648,6 +652,7 @@ async def _run_pr_review(app, workspace: dict, payload: dict, cloud_provider: st
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 03 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_03_pr_review")
 
 
 async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -693,6 +698,7 @@ async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: st
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 04 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_04_migration")
 
 
 async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -738,6 +744,7 @@ async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider:
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 05 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_05_iam_minimizer")
 
 
 async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -783,6 +790,7 @@ async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) 
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 06 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_06_finops")
 
 
 async def _run_runbook(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -826,6 +834,7 @@ async def _run_runbook(app, workspace: dict, payload: dict, cloud_provider: str)
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 07 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_07_runbook")
 
 
 async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -878,6 +887,7 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 08 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_08_drift_detection")
 
 
 async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -921,6 +931,7 @@ async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provi
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 09 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_09_onboarding_buddy")
 
 
 async def _run_dependency_patch(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
@@ -966,3 +977,4 @@ async def _run_dependency_patch(app, workspace: dict, payload: dict, cloud_provi
 
     except Exception as exc:
         log.exception("[Webhooks] Agent 10 failed for workspace %s: %s", workspace_id, exc)
+        capture_exception(exc, workspace_id=workspace_id, agent_id="agent_10_dependency_patch")
