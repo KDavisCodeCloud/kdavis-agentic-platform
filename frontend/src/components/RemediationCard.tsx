@@ -1,13 +1,20 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { approveIncident } from '@/lib/api'
+import { approveIncident, resolveIncidentManually } from '@/lib/api'
 import { cn, fmtDuration } from '@/lib/utils'
 import { IMPACT_META, STATUS_META, type Incident, type RemediationOption } from '@/lib/types'
+
+// Not a real RemediationOption returned by the agent — a fourth,
+// platform-added entry rendered alongside them. Its id is never sent to
+// POST /incidents/{id}/approve; selecting it routes to its own inline
+// form and POST /incidents/{id}/resolve-manually instead (see
+// ManualResolveForm below), never the shared Approve & Execute footer.
+const MANUAL_RESOLVE_ID = 'manual_resolve'
 
 // Agent-specific log lines for the execution terminal
 const EXEC_LOGS: Record<string, string[]> = {
@@ -141,14 +148,18 @@ interface RemediationCardProps {
   incident: Incident
   token: string
   onApproved: (incidentId: string, optionId: string) => void
+  onResolvedManually: (incidentId: string, resolutionNote: string | null) => void
 }
 
-export function RemediationCard({ incident, token, onApproved }: RemediationCardProps) {
-  const [selected, setSelected]     = useState<string | null>(null)
-  const [customInput, setCustom]    = useState('')
-  const [expanded, setExpanded]     = useState<string | null>(null)
-  const [loading, setLoading]       = useState(false)
-  const [error, setError]           = useState<string | null>(null)
+export function RemediationCard({ incident, token, onApproved, onResolvedManually }: RemediationCardProps) {
+  const [selected, setSelected]         = useState<string | null>(null)
+  const [customInput, setCustom]        = useState('')
+  const [expanded, setExpanded]         = useState<string | null>(null)
+  const [loading, setLoading]           = useState(false)
+  const [error, setError]               = useState<string | null>(null)
+  const [manualNote, setManualNote]     = useState('')
+  const [manualLoading, setManualLoading] = useState(false)
+  const [manualError, setManualError]   = useState<string | null>(null)
 
   const isPending   = incident.status === 'pending_approval'
   const isExecuting = incident.status === 'executing'
@@ -171,12 +182,34 @@ export function RemediationCard({ incident, token, onApproved }: RemediationCard
     }
   }
 
+  async function handleConfirmManualResolve() {
+    setManualLoading(true)
+    setManualError(null)
+    try {
+      const result = await resolveIncidentManually(token, incident.incident_id, {
+        resolution_note: manualNote.trim() || undefined,
+      })
+      onResolvedManually(incident.incident_id, result.resolution_note)
+    } catch (e: unknown) {
+      setManualError(e instanceof Error ? e.message : 'Could not record resolution')
+    } finally {
+      setManualLoading(false)
+    }
+  }
+
   const allOptions: RemediationOption[] = [
     ...incident.options.filter((o) => o.id !== 'hold'),
     {
       id: 'custom',
       title: 'Enter custom solution',
       description: 'Describe a custom fix for the platform to execute.',
+      impact: 'low',
+      docs_url: '',
+    },
+    {
+      id: MANUAL_RESOLVE_ID,
+      title: "I'll handle this myself",
+      description: 'Resolve this outside the platform. No cloud API call, agent run, or credential access — just a record of what you did, for your own audit trail.',
       impact: 'low',
       docs_url: '',
     },
@@ -200,6 +233,8 @@ export function RemediationCard({ incident, token, onApproved }: RemediationCard
           <span className={cn('inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium', statusMeta.bg, statusMeta.color)}>
             {incident.status === 'executed'
               ? <CheckCircle2 className="h-3 w-3" />
+              : incident.status === 'resolved_manually'
+              ? <UserCheck className="h-3 w-3" />
               : incident.status === 'failed'
               ? <XCircle className="h-3 w-3" />
               : <span className={cn('h-1.5 w-1.5 rounded-full', statusMeta.dot)} />
@@ -246,11 +281,12 @@ export function RemediationCard({ incident, token, onApproved }: RemediationCard
             </p>
 
             {allOptions.map((opt) => {
-              const isSelected = selected === opt.id
-              const isExp      = expanded === opt.id
-              const isHold     = opt.id === 'hold'
-              const isCustom   = opt.id === 'custom'
-              const impact     = IMPACT_META[opt.impact]
+              const isSelected      = selected === opt.id
+              const isExp           = expanded === opt.id
+              const isHold          = opt.id === 'hold'
+              const isCustom        = opt.id === 'custom'
+              const isManualResolve = opt.id === MANUAL_RESOLVE_ID
+              const impact          = IMPACT_META[opt.impact]
 
               return (
                 <div
@@ -261,17 +297,26 @@ export function RemediationCard({ incident, token, onApproved }: RemediationCard
                     isSelected
                       ? isHold
                         ? 'border-zinc-600 bg-zinc-800'
+                        : isManualResolve
+                        ? 'border-emerald-500/60 bg-emerald-500/10'
                         : 'border-blue-500/60 bg-blue-500/10'
                       : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700 hover:bg-zinc-900/80',
                   )}
                 >
                   <div className="flex items-start gap-3">
-                    <div className={cn(
-                      'mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 transition-colors',
-                      isSelected
-                        ? isHold ? 'border-zinc-500 bg-zinc-500' : 'border-blue-500 bg-blue-500'
-                        : 'border-zinc-600',
-                    )} />
+                    {isManualResolve ? (
+                      <UserCheck className={cn(
+                        'mt-0.5 h-4 w-4 shrink-0',
+                        isSelected ? 'text-emerald-400' : 'text-zinc-500',
+                      )} />
+                    ) : (
+                      <div className={cn(
+                        'mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 transition-colors',
+                        isSelected
+                          ? isHold ? 'border-zinc-500 bg-zinc-500' : 'border-blue-500 bg-blue-500'
+                          : 'border-zinc-600',
+                      )} />
+                    )}
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -281,49 +326,55 @@ export function RemediationCard({ incident, token, onApproved }: RemediationCard
                         )}>
                           {opt.title}
                         </span>
-                        {!isHold && !isCustom && (
+                        {!isHold && !isCustom && !isManualResolve && (
                           <span className={cn('rounded border px-1.5 py-0.5 text-xs', impact.color)}>
                             {impact.label}
                           </span>
                         )}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setExpanded(isExp ? null : opt.id) }}
-                        className="mt-1 flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
-                      >
-                        {isExp ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                        {isExp ? 'Hide details' : 'Show details'}
-                      </button>
-
-                      <AnimatePresence>
-                        {isExp && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.15 }}
-                            className="overflow-hidden"
+                      {isManualResolve ? (
+                        <p className="mt-1 text-xs leading-relaxed text-zinc-500">{opt.description}</p>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setExpanded(isExp ? null : opt.id) }}
+                            className="mt-1 flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
                           >
-                            <p className="mt-2 text-xs leading-relaxed text-zinc-400">
-                              {opt.description}
-                            </p>
-                            {opt.docs_url && (
-                              <a
-                                href={opt.docs_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="mt-1.5 inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+                            {isExp ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                            {isExp ? 'Hide details' : 'Show details'}
+                          </button>
+
+                          <AnimatePresence>
+                            {isExp && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.15 }}
+                                className="overflow-hidden"
                               >
-                                <ExternalLink className="h-3 w-3" />
-                                Official docs
-                              </a>
+                                <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                                  {opt.description}
+                                </p>
+                                {opt.docs_url && (
+                                  <a
+                                    href={opt.docs_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="mt-1.5 inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+                                  >
+                                    <ExternalLink className="h-3 w-3" />
+                                    Official docs
+                                  </a>
+                                )}
+                              </motion.div>
                             )}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
+                          </AnimatePresence>
+                        </>
+                      )}
 
                       {isCustom && isSelected && (
                         <textarea
@@ -334,6 +385,40 @@ export function RemediationCard({ incident, token, onApproved }: RemediationCard
                           rows={3}
                           className="mt-2 w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
                         />
+                      )}
+
+                      {/* Inline "I'll handle this myself" form — its own
+                          Confirm button, its own endpoint. Never routes
+                          through the shared Approve & Execute footer. */}
+                      {isManualResolve && isSelected && (
+                        <div className="mt-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+                          <label className="block text-xs text-zinc-500">
+                            What did you do? <span className="text-zinc-600">(stored in your audit log)</span>
+                          </label>
+                          <textarea
+                            value={manualNote}
+                            onChange={(e) => setManualNote(e.target.value)}
+                            placeholder="Optional — e.g., 'Rotated the credential manually in the AWS console.'"
+                            rows={3}
+                            maxLength={4000}
+                            className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-emerald-500 focus:outline-none"
+                          />
+                          {manualError && (
+                            <p className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                              {manualError}
+                            </p>
+                          )}
+                          <Button
+                            size="sm"
+                            className="w-full bg-emerald-600 hover:bg-emerald-500"
+                            disabled={manualLoading}
+                            loading={manualLoading}
+                            onClick={handleConfirmManualResolve}
+                          >
+                            <UserCheck className="h-4 w-4" />
+                            Confirm
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -382,12 +467,26 @@ export function RemediationCard({ incident, token, onApproved }: RemediationCard
                 </div>
               </>
             )}
+            {incident.status === 'resolved_manually' && (
+              <>
+                <UserCheck className="h-10 w-10 text-emerald-400" />
+                <div className="max-w-xs">
+                  <p className="text-sm font-medium text-emerald-400">Resolved manually</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {incident.resolution_note
+                      ? `"${incident.resolution_note}"`
+                      : 'Marked resolved outside the platform. No action was executed here.'}
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
 
-      {/* Footer — approve buttons (pending only) */}
-      {isPending && (
+      {/* Footer — approve buttons (pending only, and not while the
+          manual-resolve form's own Confirm button is the active action) */}
+      {isPending && selected !== MANUAL_RESOLVE_ID && (
         <div className="border-t border-zinc-800 p-4 space-y-2">
           {error && (
             <p className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">

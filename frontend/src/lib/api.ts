@@ -1,14 +1,14 @@
 // Cloud Decoded — typed API client
 
 import type {
-  Incident, ApprovalRequest, ApprovalResponse, AgentsResponse,
+  Incident, ApprovalRequest, ApprovalResponse, ManualResolutionRequest, ManualResolutionResponse, AgentsResponse,
   AuditSubmissionSummary, AuditSubmissionDetail,
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
   DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
   ConnectionsStatus, AwsRoleSetup,
 } from './types'
 import {
-  getMockIncidents, mockApprove, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
+  getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
   getMockAgentStatus, mockConnectAgent, mockVerifyAgentRole,
   getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
   getMockConnectionsStatus, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
@@ -121,6 +121,21 @@ export async function approveIncident(
     }
   }
   return request<ApprovalResponse>(`/incidents/${incidentId}/approve`, token, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+// "I'll handle this myself" — not a custom execution path. See
+// db/models.py's IncidentResolveManuallyRequest / api/routes/incidents.py's
+// resolve_incident_manually for the backend side of this contract.
+export async function resolveIncidentManually(
+  token: string,
+  incidentId: string,
+  body: ManualResolutionRequest,
+): Promise<ManualResolutionResponse> {
+  if (MOCK_MODE) return mockResolveManually(incidentId, body.resolution_note)
+  return request<ManualResolutionResponse>(`/incidents/${incidentId}/resolve-manually`, token, {
     method: 'POST',
     body: JSON.stringify(body),
   })

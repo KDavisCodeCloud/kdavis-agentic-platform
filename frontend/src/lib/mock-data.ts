@@ -11,6 +11,7 @@ import type {
   FinOpsDashboardData,
   FinOpsHitlItem,
   Incident,
+  ManualResolutionResponse,
 } from './types'
 
 function ago(mins: number): string {
@@ -311,6 +312,23 @@ export function getMockIncidents(statusFilter?: string): Incident[] {
 export function mockApprove(incidentId: string, optionId: string): void {
   const inc = getStore().find(i => i.incident_id === incidentId)
   if (inc) inc.status = optionId === 'hold' ? 'held' : 'executing'
+}
+
+// "I'll handle this myself" — not a custom execution path, just a status
+// flip + note, matching the real endpoint's contract exactly.
+export function mockResolveManually(incidentId: string, resolutionNote?: string): ManualResolutionResponse {
+  const inc = getStore().find(i => i.incident_id === incidentId)
+  const note = resolutionNote && resolutionNote.trim() ? resolutionNote.trim() : null
+  if (inc) {
+    inc.status = 'resolved_manually'
+    inc.resolution_note = note
+  }
+  return {
+    incident_id: incidentId,
+    status: 'resolved_manually',
+    resolution_note: note,
+    resolved_at: new Date().toISOString(),
+  }
 }
 
 // ── Cloud Audit Remediation Plan — Mock Data ─────────────────────────

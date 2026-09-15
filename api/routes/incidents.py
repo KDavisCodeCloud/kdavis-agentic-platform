@@ -17,6 +17,7 @@ GET  /incidents              — list workspace incidents (paginated)
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -27,8 +28,10 @@ from pydantic import BaseModel
 
 from db.models import (
     IncidentApproveRequest,
+    IncidentResolveManuallyRequest,
     IncidentResponse,
     ApprovalResponse,
+    ManualResolutionResponse,
     RemediationOption,
 )
 
@@ -381,6 +384,94 @@ async def reject_incident(
         "status": "rejected",
         "reason": body.reason,
     }
+
+
+@router.post("/{incident_id}/resolve-manually", response_model=ManualResolutionResponse)
+async def resolve_incident_manually(
+    incident_id: str,
+    body: IncidentResolveManuallyRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> ManualResolutionResponse:
+    """
+    "I'll handle this myself" — the fourth option on every HITL card,
+    alongside the agent-proposed options. This is a resolution
+    acknowledgment, not a custom execution path: the platform executes
+    nothing here — no cloud API call, no agent workflow resumed, no
+    credential access. It records that the operator already resolved the
+    incident outside the platform and, optionally, what they did.
+
+    Membership plan, Phase C: same admin/approver role gate as
+    approve_incident/reject_incident — a member session needs role
+    'admin' or 'approver'; 'viewer' is rejected. A token-authenticated
+    caller is unaffected (see _caller_can_approve_or_reject).
+    """
+    if not _caller_can_approve_or_reject(workspace):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an admin or approver can resolve an incident manually",
+        )
+
+    db = request.app.state.db_pool
+
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, agent_id, execution_status FROM incidents WHERE id = $1 AND workspace_id = $2",
+            UUID(incident_id),
+            workspace["id"],
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+
+    if row["execution_status"] != "pending_approval":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Incident is '{row['execution_status']}' — only pending_approval incidents can be resolved manually",
+        )
+
+    # Blank/whitespace-only input is "no note", not a stored empty string —
+    # keeps the column and the audit metadata's presence check consistent.
+    note = body.resolution_note.strip() if body.resolution_note and body.resolution_note.strip() else None
+    resolved_at = datetime.now(timezone.utc)
+
+    async with db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE incidents
+            SET execution_status = 'resolved_manually', resolution_note = $1, resolved_at = $2
+            WHERE id = $3
+            """,
+            note,
+            resolved_at,
+            UUID(incident_id),
+        )
+        # Real audit_events row (not core/hitl.py's operator markdown log) —
+        # this is what makes "all incidents resolved manually this month"
+        # queryable for the customer's own reporting, per the request this
+        # endpoint was built for.
+        await conn.execute(
+            """
+            INSERT INTO audit_events (workspace_id, agent_id, incident_id, action, status, metadata)
+            VALUES ($1, $2, $3, 'manual_resolution', 'resolved_manually', $4)
+            """,
+            workspace["id"],
+            row["agent_id"],
+            UUID(incident_id),
+            json.dumps({"resolution_note": note} if note else {}),
+        )
+
+    log.info(
+        "[IncidentsRoute] Incident %s resolved manually%s",
+        incident_id, " with note" if note else "",
+    )
+
+    return ManualResolutionResponse(
+        incident_id=incident_id,
+        status="resolved_manually",
+        resolution_note=note,
+        resolved_at=resolved_at,
+    )
 
 
 @router.get("", response_model=list[IncidentResponse])

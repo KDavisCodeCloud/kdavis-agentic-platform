@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { GitBranch, Zap, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
+import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
@@ -28,17 +28,18 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
   ]
 
   const activeIndex: Record<IncidentStatus, number> = {
-    pending_approval: 2,
-    executing:        3,
-    executed:         4,
-    held:             2, // stopped at HITL gate — steps 3-4 stay waiting
-    failed:           3,
-    budget_exceeded:  2,
+    pending_approval:  2,
+    executing:         3,
+    executed:          4,
+    held:              2, // stopped at HITL gate — steps 3-4 stay waiting
+    failed:            3,
+    budget_exceeded:   2,
+    resolved_manually: 4, // resolved outside the platform, same terminal step as executed
   }
 
   const active = activeIndex[status] ?? 2
   // Any terminal status: the active step is done, not spinning
-  const isTerminal = ['executed', 'held', 'budget_exceeded'].includes(status)
+  const isTerminal = ['executed', 'held', 'budget_exceeded', 'resolved_manually'].includes(status)
 
   return steps.map((s, i) => ({
     ...s,
@@ -104,6 +105,9 @@ function IncidentRow({ incident, isSelected, onClick }: {
           {incident.status === 'executed' && (
             <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
           )}
+          {incident.status === 'resolved_manually' && (
+            <UserCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+          )}
           {incident.status === 'held' && (
             <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-500" />
           )}
@@ -153,12 +157,13 @@ function IncidentRow({ incident, isSelected, onClick }: {
         ))}
         <span className="ml-2 text-xs text-zinc-600">
           {{
-            pending_approval: 'Awaiting Approval',
-            executing:        'Executing',
-            executed:         'Resolved',
-            held:             'Held',
-            failed:           'Failed',
-            budget_exceeded:  'Budget Exceeded',
+            pending_approval:  'Awaiting Approval',
+            executing:         'Executing',
+            executed:          'Resolved',
+            held:              'Held',
+            failed:            'Failed',
+            budget_exceeded:   'Budget Exceeded',
+            resolved_manually: 'Resolved Manually',
           }[incident.status]}
         </span>
       </div>
@@ -177,7 +182,7 @@ export function PipelineTracker({ incidents, onSelect, selectedId }: PipelineTra
 
   const pending  = incidents.filter(i => i.status === 'pending_approval')
   const active   = incidents.filter(i => i.status === 'executing')
-  const resolved = incidents.filter(i => ['executed', 'held', 'failed', 'budget_exceeded'].includes(i.status))
+  const resolved = incidents.filter(i => ['executed', 'resolved_manually', 'held', 'failed', 'budget_exceeded'].includes(i.status))
 
   if (incidents.length === 0) {
     return (

@@ -79,6 +79,22 @@ class IncidentApproveRequest(BaseModel):
     custom_solution_input: Optional[str] = None
 
 
+class IncidentResolveManuallyRequest(BaseModel):
+    """
+    "I'll handle this myself" on the HITL card. Not a custom execution
+    path -- resolution_note is a record of what the operator already did
+    outside the platform, never an instruction the platform acts on.
+    """
+    resolution_note: Optional[str] = Field(default=None, max_length=4000)
+
+
+class ManualResolutionResponse(BaseModel):
+    incident_id: str
+    status: str
+    resolution_note: Optional[str] = None
+    resolved_at: datetime
+
+
 class Incident(BaseModel):
     id: UUID
     workspace_id: UUID

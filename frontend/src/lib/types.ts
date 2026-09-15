@@ -7,6 +7,7 @@ export type IncidentStatus =
   | 'held'
   | 'failed'
   | 'budget_exceeded'
+  | 'resolved_manually'
 
 export type ImpactLevel = 'low' | 'medium' | 'high'
 
@@ -31,6 +32,10 @@ export interface Incident {
   repository?: string
   branch?: string
   created_at?: string
+  // set locally right after a manual resolution — not returned by
+  // GET /incidents or GET /incidents/{id} (same convention as
+  // custom_solution_input on the pre-existing custom-fix path)
+  resolution_note?: string | null
 }
 
 export interface ApprovalRequest {
@@ -43,6 +48,20 @@ export interface ApprovalResponse {
   status: string
   selected_option_id: string
   message: string
+}
+
+// "I'll handle this myself" — not a custom execution path. The platform
+// executes nothing here; resolution_note is a record of what the operator
+// already did outside the platform, never an instruction it acts on.
+export interface ManualResolutionRequest {
+  resolution_note?: string
+}
+
+export interface ManualResolutionResponse {
+  incident_id: string
+  status: string
+  resolution_note: string | null
+  resolved_at: string
 }
 
 export interface AgentInfo {
@@ -98,6 +117,12 @@ export const STATUS_META: Record<
     color: 'text-orange-400',
     dot:   'bg-orange-400',
     bg:    'bg-orange-400/10 border-orange-400/30',
+  },
+  resolved_manually: {
+    label: 'Resolved Manually',
+    color: 'text-emerald-400',
+    dot:   'bg-emerald-400',
+    bg:    'bg-emerald-400/10 border-emerald-400/30',
   },
 }
 

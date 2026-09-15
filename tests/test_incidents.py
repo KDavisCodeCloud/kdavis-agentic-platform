@@ -14,6 +14,7 @@ Runs with pytest-asyncio (asyncio_mode = auto) + unittest.mock — no live DB.
 """
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -22,7 +23,7 @@ import pytest
 from fastapi import HTTPException
 
 from api.routes import incidents
-from db.models import IncidentApproveRequest
+from db.models import IncidentApproveRequest, IncidentResolveManuallyRequest
 
 
 def _make_request(fetchrow_return: dict, execute_return=None, credentials_row=None, k8s_credentials_row=None) -> SimpleNamespace:
@@ -415,3 +416,165 @@ class TestApproveRejectRoleGate:
                 workspace=self._member_workspace(workspace_id, "viewer"),
             )
         assert exc.value.status_code == 403
+
+
+class TestResolveIncidentManually:
+    """
+    "I'll handle this myself" -- the fourth HITL card option. Not a custom
+    execution path: confirms the endpoint never resumes any workflow
+    (no agent, no checkpointer, no credential lookup at all -- only two
+    conn.execute calls, the incidents UPDATE and the audit_events INSERT),
+    and that a real audit_events row is written (the feature's entire
+    reason for existing -- "queryable for the customer's own reporting").
+    """
+
+    def _member_workspace(self, workspace_id, role):
+        return {"id": workspace_id, "member_id": str(uuid4()), "member_role": role, "member_email": "x@acme.com"}
+
+    async def test_resolves_with_note_updates_status_and_writes_audit_event(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_06_finops", workspace_id)
+        request, conn = _make_request(row)
+
+        result = await incidents.resolve_incident_manually(
+            str(row["id"]),
+            IncidentResolveManuallyRequest(resolution_note="Rotated the key manually in the AWS console."),
+            request,
+            workspace={"id": workspace_id},
+        )
+
+        assert result.status == "resolved_manually"
+        assert result.resolution_note == "Rotated the key manually in the AWS console."
+        assert result.resolved_at is not None
+
+        # Exactly two writes: the incidents UPDATE, then the audit_events INSERT.
+        # No workflow class instantiated, no checkpointer touched -- this
+        # path never dispatches to _WORKFLOW_CLASSES at all.
+        assert conn.execute.await_count == 2
+        update_call, audit_call = conn.execute.await_args_list
+
+        update_sql = update_call.args[0]
+        assert "UPDATE incidents" in update_sql
+        assert "resolved_manually" in update_sql
+        assert update_call.args[1] == "Rotated the key manually in the AWS console."
+
+        audit_sql = audit_call.args[0]
+        assert "INSERT INTO audit_events" in audit_sql
+        assert audit_call.args[1] == workspace_id
+        assert audit_call.args[2] == "agent_06_finops"       # incident's own agent_id
+        assert audit_call.args[3] == row["id"]
+        assert json.loads(audit_call.args[4]) == {"resolution_note": "Rotated the key manually in the AWS console."}
+
+    async def test_resolves_with_no_note(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        result = await incidents.resolve_incident_manually(
+            str(row["id"]),
+            IncidentResolveManuallyRequest(),
+            request,
+            workspace={"id": workspace_id},
+        )
+
+        assert result.status == "resolved_manually"
+        assert result.resolution_note is None
+
+        _, audit_call = conn.execute.await_args_list
+        assert json.loads(audit_call.args[4]) == {}
+
+    async def test_blank_note_normalizes_to_none_not_empty_string(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        result = await incidents.resolve_incident_manually(
+            str(row["id"]),
+            IncidentResolveManuallyRequest(resolution_note="   "),
+            request,
+            workspace={"id": workspace_id},
+        )
+
+        assert result.resolution_note is None
+        update_call, audit_call = conn.execute.await_args_list
+        assert update_call.args[1] is None
+        assert json.loads(audit_call.args[4]) == {}
+
+    async def test_incident_not_found_raises_404(self):
+        request, conn = _make_request(None)
+        with pytest.raises(HTTPException) as exc:
+            await incidents.resolve_incident_manually(
+                str(uuid4()),
+                IncidentResolveManuallyRequest(),
+                request,
+                workspace={"id": uuid4()},
+            )
+        assert exc.value.status_code == 404
+
+    async def test_already_resolved_incident_raises_409(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        row["execution_status"] = "executed"
+        request, conn = _make_request(row)
+
+        with pytest.raises(HTTPException) as exc:
+            await incidents.resolve_incident_manually(
+                str(row["id"]),
+                IncidentResolveManuallyRequest(),
+                request,
+                workspace={"id": workspace_id},
+            )
+        assert exc.value.status_code == 409
+
+    async def test_viewer_cannot_resolve_manually(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        with pytest.raises(HTTPException) as exc:
+            await incidents.resolve_incident_manually(
+                str(row["id"]),
+                IncidentResolveManuallyRequest(),
+                request,
+                workspace=self._member_workspace(workspace_id, "viewer"),
+            )
+        assert exc.value.status_code == 403
+
+    async def test_approver_can_resolve_manually(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        result = await incidents.resolve_incident_manually(
+            str(row["id"]),
+            IncidentResolveManuallyRequest(),
+            request,
+            workspace=self._member_workspace(workspace_id, "approver"),
+        )
+        assert result.status == "resolved_manually"
+
+    async def test_admin_can_resolve_manually(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        result = await incidents.resolve_incident_manually(
+            str(row["id"]),
+            IncidentResolveManuallyRequest(),
+            request,
+            workspace=self._member_workspace(workspace_id, "admin"),
+        )
+        assert result.status == "resolved_manually"
+
+    async def test_token_auth_unaffected(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        result = await incidents.resolve_incident_manually(
+            str(row["id"]),
+            IncidentResolveManuallyRequest(),
+            request,
+            workspace={"id": workspace_id},  # no member_role key -- token path
+        )
+        assert result.status == "resolved_manually"

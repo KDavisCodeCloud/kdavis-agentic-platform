@@ -17,11 +17,12 @@ interface IncidentConsoleProps {
 type FilterTab = 'all' | IncidentStatus
 
 const FILTER_TABS: { id: FilterTab; label: string }[] = [
-  { id: 'all',              label: 'All' },
-  { id: 'pending_approval', label: 'Needs Action' },
-  { id: 'executing',        label: 'Running' },
-  { id: 'executed',         label: 'Resolved' },
-  { id: 'failed',           label: 'Failed' },
+  { id: 'all',               label: 'All' },
+  { id: 'pending_approval',  label: 'Needs Action' },
+  { id: 'executing',         label: 'Running' },
+  { id: 'executed',          label: 'Resolved' },
+  { id: 'resolved_manually', label: 'Resolved Manually' },
+  { id: 'failed',            label: 'Failed' },
 ]
 
 const POLL_INTERVAL_MS = 5_000
@@ -83,6 +84,21 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
     if (selected?.incident_id === incidentId) {
       setSelected(prev =>
         prev ? { ...prev, status: optionId === 'hold' ? 'held' : 'executing' } : null,
+      )
+    }
+  }
+
+  function handleResolvedManually(incidentId: string, resolutionNote: string | null) {
+    setIncidents(prev =>
+      prev.map(i =>
+        i.incident_id === incidentId
+          ? { ...i, status: 'resolved_manually', resolution_note: resolutionNote }
+          : i,
+      ),
+    )
+    if (selected?.incident_id === incidentId) {
+      setSelected(prev =>
+        prev ? { ...prev, status: 'resolved_manually', resolution_note: resolutionNote } : null,
       )
     }
   }
@@ -185,6 +201,7 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
                 incident={selected}
                 token={token}
                 onApproved={handleApproved}
+                onResolvedManually={handleResolvedManually}
               />
             </div>
           )}
