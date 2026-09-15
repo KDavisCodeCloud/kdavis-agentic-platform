@@ -90,8 +90,23 @@ class LockedAsyncPostgresSaver(BaseCheckpointSaver):
         task_id: str,
         task_path: str = "",
     ) -> None:
+        # task_path accepted (not forwarded): langgraph-checkpoint 2.1.2's
+        # BaseCheckpointSaver.aput_writes abstract signature added task_path,
+        # and langgraph's pregel executor always calls us with it -- but the
+        # pinned langgraph-checkpoint-postgres==2.0.4's AsyncPostgresSaver
+        # predates that addition and only takes (config, writes, task_id).
+        # Forwarding it raised TypeError on every checkpoint write, breaking
+        # HITL-gate resumption for every agent (caught live via Agent 11's
+        # Azure Monitor webhook test, 2026-09-15 -- GraphInterrupt fired
+        # correctly with a real incident_id, but the checkpoint that would
+        # let an operator's later approval resume from that exact point
+        # never got written). task_path is optional map/Send-task-fanout
+        # metadata the postgres saver's schema doesn't have a column for in
+        # this pinned version; this codebase's graphs don't use Send() fan-
+        # out, so dropping it here is safe. Revisit when
+        # langgraph-checkpoint-postgres is deliberately bumped past 2.0.x.
         async with self._lock:
-            await self._inner.aput_writes(config, writes, task_id, task_path)
+            await self._inner.aput_writes(config, writes, task_id)
 
     async def adelete_thread(self, thread_id: str) -> None:
         async with self._lock:

@@ -141,3 +141,50 @@ class TestLockedAsyncPostgresSaverConcurrency:
         inner = _FakeInnerCheckpointer()
         locked = LockedAsyncPostgresSaver(inner)
         assert locked.serde is inner.serde
+
+
+class _RealSignatureInnerCheckpointer:
+    """Mimics the ACTUAL pinned langgraph-checkpoint-postgres==2.0.4
+    AsyncPostgresSaver.aput_writes signature -- (config, writes, task_id),
+    no task_path parameter at all. _FakeInnerCheckpointer above accepts
+    task_path=\"\" happily, which is exactly why the original mock-based
+    tests never caught the live TypeError: langgraph-checkpoint 2.1.2's
+    BaseCheckpointSaver abstract interface added task_path, but the
+    pinned concrete postgres implementation predates that addition, so
+    langgraph's pregel executor calling us with 4 positional args + self
+    (task_path included) and us forwarding all of them into the inner
+    3-positional-arg method raised TypeError on every real checkpoint
+    write, breaking HITL-gate resumption for every agent. Caught live via
+    Agent 11's Azure Monitor webhook test, 2026-09-15."""
+
+    def __init__(self):
+        self.serde = MagicMock()
+        self.aput_writes_calls: list[tuple] = []
+
+    async def aput_writes(self, config, writes, task_id):
+        self.aput_writes_calls.append((config, writes, task_id))
+
+
+class TestLockedAsyncPostgresSaverAputWritesRealSignature:
+    async def test_aput_writes_does_not_forward_task_path_to_inner(self):
+        """Regression test for the live TypeError: LockedAsyncPostgresSaver
+        must accept task_path (required by the abstract interface langgraph
+        actually calls it with) but must NOT forward it to an inner
+        implementation whose aput_writes doesn't accept a fourth
+        positional argument."""
+        inner = _RealSignatureInnerCheckpointer()
+        locked = LockedAsyncPostgresSaver(inner)
+
+        # This is exactly langgraph's pregel executor's real call shape --
+        # config, writes, task_id, task_path all positional.
+        await locked.aput_writes({"configurable": {"thread_id": "t1"}}, [("chan", "val")], "task1", "path1")
+
+        assert inner.aput_writes_calls == [({"configurable": {"thread_id": "t1"}}, [("chan", "val")], "task1")]
+
+    async def test_aput_writes_works_with_default_task_path(self):
+        inner = _RealSignatureInnerCheckpointer()
+        locked = LockedAsyncPostgresSaver(inner)
+
+        await locked.aput_writes({"configurable": {"thread_id": "t1"}}, [], "task1")
+
+        assert inner.aput_writes_calls == [({"configurable": {"thread_id": "t1"}}, [], "task1")]
