@@ -22,7 +22,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from api.middleware.auth import get_workspace, get_workspace_or_member
+from api.middleware.auth import get_workspace_or_member
 from pydantic import BaseModel
 
 from db.models import (
@@ -51,6 +51,20 @@ class IncidentRejectRequest(BaseModel):
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/incidents", tags=["incidents"])
+
+# Membership plan, Phase C (RBAC). A token-authenticated caller (no
+# member_role key at all -- see get_workspace_or_member) is always
+# permitted, same full-trust model the workspace token already has for
+# everything else. A member session must be 'admin' or 'approver';
+# 'viewer' is read-only and rejected here.
+_APPROVAL_ROLES = frozenset({"admin", "approver"})
+
+
+def _caller_can_approve_or_reject(workspace: dict) -> bool:
+    member_role = workspace.get("member_role")
+    if member_role is None:
+        return True
+    return member_role in _APPROVAL_ROLES
 
 # Every agent's workflow class shares an identical constructor shape
 # (WorkflowClass(db_conn, workspace_id, checkpointer)) and .resume(thread_id,
@@ -154,7 +168,7 @@ async def approve_incident(
     incident_id: str,
     body: IncidentApproveRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> ApprovalResponse:
     """
     Operator approves a remediation option.
@@ -164,7 +178,16 @@ async def approve_incident(
     - custom_solution_input: required when selected_option_id == "custom"
 
     Governance Rule 11: No fix executes without this endpoint being called.
+    Membership plan, Phase C: a member session needs role 'admin' or
+    'approver' -- 'viewer' is rejected. A token-authenticated caller is
+    unaffected (see _caller_can_approve_or_reject).
     """
+    if not _caller_can_approve_or_reject(workspace):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an admin or approver can approve a remediation",
+        )
+
     db = request.app.state.db_pool
 
     async with db.acquire() as conn:
@@ -308,12 +331,20 @@ async def reject_incident(
     incident_id: str,
     body: IncidentRejectRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> dict:
     """
     Reject a proposed remediation fix. Records the reason to the audit trail.
     Callable from the dashboard or via the MCP server (mcp:write scope required).
+    Membership plan, Phase C: same admin/approver role gate as
+    approve_incident (_caller_can_approve_or_reject).
     """
+    if not _caller_can_approve_or_reject(workspace):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an admin or approver can reject a remediation",
+        )
+
     db = request.app.state.db_pool
 
     async with db.acquire() as conn:

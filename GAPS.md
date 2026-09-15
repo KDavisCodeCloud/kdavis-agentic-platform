@@ -1118,3 +1118,50 @@ on `/accept-invite` and that `detectSessionInUrl` actually picks up the
 resulting session client-side, end to end, exactly as designed. Someone
 with the Supabase dashboard (or the service role key) should do one real
 test invite before telling a real customer this feature exists.
+
+### 23. Membership Phases B (seats) and C (RBAC) shipped; no members-management UI built (2026-09-15)
+
+Membership/SSO/RBAC/SCIM plan, Phases B and C -- run together in one
+pass since both are small, additive changes on top of Phase A's
+foundation, matching the plan's own sequencing note.
+
+**Phase B (seats):** `core/compliance.py`'s `TIER_LIMITS` (single source
+of truth, GAPS.md #16) gains `max_seats`: starter=3, growth=15,
+enterprise=-1 (unlimited, same sentinel as every other limit in that
+dict). `assert_seat_available()` counts `workspace_members` rows in
+`('invited', 'active')` status against the cap -- an unaccepted invite
+still occupies a seat, so a workspace can't out-invite its cap and have
+them all eventually accept. Wired into `POST /workspace-members/invite`
+before the row is created. `GET /workspace-members` now returns
+`{members, seats_used, max_seats}` instead of a bare list (safe breaking
+change -- this endpoint shipped hours earlier in the same build with no
+real consumers yet).
+
+**Phase C (RBAC):** `workspace_members.role` is now `admin | approver |
+viewer` (migration 034 renames Phase A's placeholder `'member'` default
+to `'viewer'` and fixes up any existing rows). `api/routes/incidents.py`'s
+`approve_incident`/`reject_incident` now require `get_workspace_or_member`
+plus role `admin` or `approver` for a member session -- `viewer` is
+rejected with 403. A token-authenticated caller (no `member_role` key at
+all) is completely unaffected, same full-trust model the shared
+workspace token already had for every other action.
+
+**No members-management UI was built.** The plan's Phase B item
+("dashboard surfaces 'X of Y seats used'") describes a data need, which
+`GET /workspace-members`'s new `seats_used`/`max_seats` fields satisfy --
+but no frontend page actually calls that endpoint, invites a teammate
+through a form, or displays the member list/role/seat count anywhere.
+Phase A's frontend work was scoped to login + accept-invite only (GAPS.md
+#22); a real "Team" or "Members" settings page is a genuinely separate,
+not-yet-started frontend feature. Someone can invite/list/manage members
+today only via direct API calls (curl, Postman, or a future UI), not
+through the dashboard.
+
+**Role names landed as `admin | approver | viewer`** without the "map
+onto real product actions... name TBD with Kelvin" confirmation the plan
+called for -- these three names were chosen as the closest fit to the
+plan's own text (`workspace_members.role`: `admin | approver | viewer`)
+since no further input was available mid-build. Worth a quick sanity
+check with Kelvin before these are considered final/customer-facing
+language, though changing them later is a cheap rename (VARCHAR column,
+no enum type, two `_VALID_ROLES`/`_APPROVAL_ROLES` constants to update).

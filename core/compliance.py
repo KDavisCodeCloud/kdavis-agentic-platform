@@ -51,8 +51,14 @@ class WorkspaceComplianceGuard:
     copy (see GAPS.md #16 for the drift that caused).
     """
 
+    # max_seats: pricing roadmap's "multi-user seats" tier (3/15/unlimited)
+    # -- Membership plan, Phase B. Counts workspace_members rows in
+    # ('invited', 'active') status; an invited-but-not-yet-accepted seat
+    # still counts against the cap, or unlimited invites could be sent
+    # and eventually all accepted past whatever cap looked enforced at
+    # invite time. assert_seat_available() below is the enforcement point.
     TIER_LIMITS = {
-        "starter":    {"max_agents": 3,  "max_repos": 2,  "max_cloud_providers": 1, "retention_days": 90},
+        "starter":    {"max_agents": 3,  "max_repos": 2,  "max_cloud_providers": 1, "retention_days": 90,  "max_seats": 3},
         # 11, not 10 -- Agent 11 (Cloud Resource Health Monitoring) is a
         # real 2026-09-15 addition to the Growth+ roster, not an
         # Enterprise-exclusive by design. _extract_agent_number() gates
@@ -60,7 +66,7 @@ class WorkspaceComplianceGuard:
         # bumped every time a new agent is added, or the newest agent
         # accidentally becomes Enterprise-only by numbering coincidence
         # rather than a deliberate pricing decision.
-        "growth":     {"max_agents": 11, "max_repos": 15, "max_cloud_providers": 2, "retention_days": 365},
+        "growth":     {"max_agents": 11, "max_repos": 15, "max_cloud_providers": 2, "retention_days": 365, "max_seats": 15},
         # retention_days: -1 -- same "-1 == unlimited" sentinel as the
         # other limits above -- means Enterprise gets no automatic
         # deletion at all. "Configurable Enterprise" retention (a
@@ -68,7 +74,7 @@ class WorkspaceComplianceGuard:
         # has to build (a workspace-level column + admin UI), not this
         # dict; -1 is the correct default until that exists. Phase 12,
         # scale-readiness build -- core/retention.py reads this key.
-        "enterprise": {"max_agents": -1, "max_repos": -1, "max_cloud_providers": -1, "retention_days": -1},
+        "enterprise": {"max_agents": -1, "max_repos": -1, "max_cloud_providers": -1, "retention_days": -1, "max_seats": -1},
     }
 
     def __init__(self, db_conn):
@@ -135,6 +141,44 @@ class WorkspaceComplianceGuard:
                     workspace_id, "tier_limit",
                     f"Cloud provider '{cloud_provider}' not configured for workspace"
                 )
+
+    async def assert_seat_available(self, workspace_id: str) -> None:
+        """
+        Checks that inviting one more member would not exceed the
+        workspace's tier seat cap (TIER_LIMITS[tier]["max_seats"]).
+        Raises SubscriptionError if at or over the cap. Membership plan,
+        Phase B.
+
+        Counts workspace_members rows in ('invited', 'active') status --
+        an invite that's been sent but not yet accepted still occupies a
+        seat, otherwise a workspace could send unlimited invites and have
+        them all eventually accepted past whatever cap looked enforced at
+        invite time. 'deactivated' rows free their seat back up.
+        """
+        row = await self._db.fetchrow(
+            "SELECT product_tier FROM workspaces WHERE id = $1",
+            UUID(workspace_id),
+        )
+        if not row:
+            raise SubscriptionError(workspace_id, "not_found", "Workspace not found")
+
+        tier = row["product_tier"] or "starter"
+        max_seats = self.TIER_LIMITS.get(tier, self.TIER_LIMITS["starter"])["max_seats"]
+        if max_seats == -1:
+            return  # unlimited
+
+        count_row = await self._db.fetchrow(
+            "SELECT COUNT(*) AS n FROM workspace_members "
+            "WHERE workspace_id = $1 AND status IN ('invited', 'active')",
+            UUID(workspace_id),
+        )
+        current_seats = count_row["n"]
+        if current_seats >= max_seats:
+            raise SubscriptionError(
+                workspace_id, "tier_limit",
+                f"Seat limit reached (current: {current_seats}, max: {max_seats} on '{tier}' tier) "
+                f"— upgrade tier or deactivate a member to invite another"
+            )
 
     def _reason_for_status(self, status: str) -> str:
         return {

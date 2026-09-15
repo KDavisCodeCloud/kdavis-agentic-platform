@@ -321,3 +321,97 @@ class TestApproveStatusTransitions:
         with pytest.raises(HTTPException) as exc:
             await _approve(request, str(uuid4()), uuid4())
         assert exc.value.status_code == 404
+
+
+class TestApproveRejectRoleGate:
+    """
+    Membership plan, Phase C (RBAC). A member session needs role 'admin'
+    or 'approver' to approve/reject; 'viewer' is rejected. A token-
+    authenticated caller (no member_role key at all) is unaffected --
+    same full-trust model the workspace token already had.
+    """
+
+    def _member_workspace(self, workspace_id, role):
+        return {"id": workspace_id, "member_id": str(uuid4()), "member_role": role, "member_email": "x@acme.com"}
+
+    async def test_viewer_cannot_approve(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        with pytest.raises(HTTPException) as exc:
+            await incidents.approve_incident(
+                str(row["id"]),
+                IncidentApproveRequest(selected_option_id="opt_1"),
+                request,
+                workspace=self._member_workspace(workspace_id, "viewer"),
+            )
+        assert exc.value.status_code == 403
+
+    async def test_approver_can_approve(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+        with patch.dict(incidents._WORKFLOW_CLASSES, {"agent_01_cicd_triage": MockWorkflow}):
+            result = await incidents.approve_incident(
+                str(row["id"]),
+                IncidentApproveRequest(selected_option_id="opt_1"),
+                request,
+                workspace=self._member_workspace(workspace_id, "approver"),
+            )
+            await _drain_background_tasks()
+
+        assert result.selected_option_id == "opt_1"
+
+    async def test_admin_can_approve(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+        with patch.dict(incidents._WORKFLOW_CLASSES, {"agent_01_cicd_triage": MockWorkflow}):
+            result = await incidents.approve_incident(
+                str(row["id"]),
+                IncidentApproveRequest(selected_option_id="opt_1"),
+                request,
+                workspace=self._member_workspace(workspace_id, "admin"),
+            )
+            await _drain_background_tasks()
+
+        assert result.selected_option_id == "opt_1"
+
+    async def test_token_auth_unaffected(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+        with patch.dict(incidents._WORKFLOW_CLASSES, {"agent_01_cicd_triage": MockWorkflow}):
+            result = await incidents.approve_incident(
+                str(row["id"]),
+                IncidentApproveRequest(selected_option_id="opt_1"),
+                request,
+                workspace={"id": workspace_id},  # no member_role key -- token path
+            )
+            await _drain_background_tasks()
+
+        assert result.selected_option_id == "opt_1"
+
+    async def test_viewer_cannot_reject(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        with pytest.raises(HTTPException) as exc:
+            await incidents.reject_incident(
+                str(row["id"]),
+                incidents.IncidentRejectRequest(reason="not needed"),
+                request,
+                workspace=self._member_workspace(workspace_id, "viewer"),
+            )
+        assert exc.value.status_code == 403

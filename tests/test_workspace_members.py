@@ -41,13 +41,20 @@ def _member_workspace(workspace_id, role):
     return {"id": workspace_id, "member_id": str(uuid4()), "member_role": role, "member_email": "admin@acme.com"}
 
 
+def _seat_check_rows(tier="starter", seats_used=0):
+    """The two fetchrow calls assert_seat_available() makes (Phase B),
+    which now run before every fetchrow sequence below."""
+    return [{"product_tier": tier}, {"n": seats_used}]
+
+
 class TestInviteMember:
     async def test_bootstrap_via_token_permitted(self):
         workspace_id = uuid4()
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(side_effect=[
+            *_seat_check_rows(),
             None,  # no existing member with this email
-            {"id": uuid4(), "email": "new@acme.com", "role": "member", "status": "invited",
+            {"id": uuid4(), "email": "new@acme.com", "role": "viewer", "status": "invited",
              "invited_at": None, "joined_at": None},
         ])
         request = _make_request(conn)
@@ -58,7 +65,7 @@ class TestInviteMember:
             patch("supabase.create_client", return_value=mock_client),
         ):
             result = await wm.invite_member(
-                wm.InviteMemberRequest(email="new@acme.com", role="member"),
+                wm.InviteMemberRequest(email="new@acme.com", role="viewer"),
                 request,
                 workspace=_token_workspace(workspace_id),
             )
@@ -71,8 +78,9 @@ class TestInviteMember:
         workspace_id = uuid4()
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(side_effect=[
+            *_seat_check_rows(),
             None,
-            {"id": uuid4(), "email": "new@acme.com", "role": "member", "status": "invited",
+            {"id": uuid4(), "email": "new@acme.com", "role": "viewer", "status": "invited",
              "invited_at": None, "joined_at": None},
         ])
         request = _make_request(conn)
@@ -99,7 +107,7 @@ class TestInviteMember:
             await wm.invite_member(
                 wm.InviteMemberRequest(email="new@acme.com"),
                 request,
-                workspace=_member_workspace(workspace_id, "member"),
+                workspace=_member_workspace(workspace_id, "viewer"),
             )
         assert exc.value.status_code == 403
 
@@ -116,10 +124,25 @@ class TestInviteMember:
             )
         assert exc.value.status_code == 400
 
+    async def test_seat_limit_reached_403(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=_seat_check_rows(tier="starter", seats_used=3))
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.invite_member(
+                wm.InviteMemberRequest(email="new@acme.com"),
+                request,
+                workspace=_token_workspace(workspace_id),
+            )
+        assert exc.value.status_code == 403
+        assert "Seat limit" in exc.value.detail
+
     async def test_duplicate_email_409(self):
         workspace_id = uuid4()
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"id": uuid4()})  # existing row found
+        conn.fetchrow = AsyncMock(side_effect=[*_seat_check_rows(), {"id": uuid4()}])  # existing row found
         request = _make_request(conn)
 
         with pytest.raises(HTTPException) as exc:
@@ -134,8 +157,9 @@ class TestInviteMember:
         workspace_id = uuid4()
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(side_effect=[
+            *_seat_check_rows(),
             None,
-            {"id": uuid4(), "email": "new@acme.com", "role": "member", "status": "invited",
+            {"id": uuid4(), "email": "new@acme.com", "role": "viewer", "status": "invited",
              "invited_at": None, "joined_at": None},
         ])
         request = _make_request(conn)
@@ -166,16 +190,49 @@ class TestListMembers:
         conn.fetch = AsyncMock(return_value=[
             {"id": uuid4(), "email": "a@acme.com", "role": "admin", "status": "active",
              "invited_at": None, "joined_at": None},
-            {"id": uuid4(), "email": "b@acme.com", "role": "member", "status": "invited",
+            {"id": uuid4(), "email": "b@acme.com", "role": "viewer", "status": "invited",
              "invited_at": None, "joined_at": None},
         ])
         request = _make_request(conn)
 
         result = await wm.list_members(request, workspace=_token_workspace(workspace_id))
 
-        assert len(result) == 2
-        assert result[0].email == "a@acme.com"
-        assert result[1].status == "invited"
+        assert len(result.members) == 2
+        assert result.members[0].email == "a@acme.com"
+        assert result.members[1].status == "invited"
+
+    async def test_reports_seats_used_and_max_seats(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[
+            {"id": uuid4(), "email": "a@acme.com", "role": "admin", "status": "active",
+             "invited_at": None, "joined_at": None},
+            {"id": uuid4(), "email": "b@acme.com", "role": "viewer", "status": "invited",
+             "invited_at": None, "joined_at": None},
+            {"id": uuid4(), "email": "c@acme.com", "role": "viewer", "status": "deactivated",
+             "invited_at": None, "joined_at": None},
+        ])
+        request = _make_request(conn)
+
+        workspace = _token_workspace(workspace_id)
+        workspace["product_tier"] = "starter"
+        result = await wm.list_members(request, workspace=workspace)
+
+        # deactivated doesn't count toward seats_used
+        assert result.seats_used == 2
+        assert result.max_seats == 3
+
+    async def test_enterprise_reports_unlimited_max_seats(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[])
+        request = _make_request(conn)
+
+        workspace = _token_workspace(workspace_id)
+        workspace["product_tier"] = "enterprise"
+        result = await wm.list_members(request, workspace=workspace)
+
+        assert result.max_seats == -1
 
 
 class TestAcceptInvite:

@@ -9,21 +9,27 @@ Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
 Customer-facing workspace membership routes -- Membership/SSO/RBAC/SCIM
-plan, Phase A. Generalizes the Enterprise-only, admin-provisioned
+plan, Phases A-C. Generalizes the Enterprise-only, admin-provisioned
 mcp-invite pattern (api/routes/internal_workspaces.py) into a real,
 self-serve product feature: any workspace can invite teammates with
 their own Supabase Auth login, not just a shared X-Workspace-Token.
 
 POST /workspace-members/invite  -- invite a teammate (bootstrap: token
-                                    or an existing active admin member)
+                                    or an existing active admin member).
+                                    Enforces the tier seat cap (Phase B,
+                                    core/compliance.py's
+                                    assert_seat_available).
 GET  /workspace-members         -- list the caller's workspace's members
+                                    + seats_used/max_seats (Phase B).
 POST /workspace-members/accept  -- invited user accepts, links their
                                     fresh Supabase session to their row
 
-This table has ZERO role enforcement beyond "must be an active member to
-list, must be admin (or hold the bootstrap token) to invite" -- Phase C
-(RBAC) is where role-gated actions beyond invite get built. role today
-is just 'admin' | 'member', stored for that future phase to read.
+role is admin | approver | viewer (migration 034, Phase C) -- admin:
+full control including invite; approver: can approve/reject incident
+remediations (api/routes/incidents.py's approve_incident/reject_incident);
+viewer: read-only. Only invite-permission is gated here; the
+approve/reject role check lives in incidents.py itself, next to the
+action it gates.
 """
 
 import logging
@@ -34,11 +40,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 
 from api.middleware.auth import get_workspace_or_member
+from core.compliance import SubscriptionError, WorkspaceComplianceGuard
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/workspace-members", tags=["workspace-members"])
 
-_VALID_ROLES = frozenset({"admin", "member"})
+_VALID_ROLES = frozenset({"admin", "approver", "viewer"})
 
 # Deliberately simple shape check, not full RFC 5322 -- matches
 # api/routes/workspaces.py's own _EMAIL_RE convention: this codebase has
@@ -51,7 +58,7 @@ _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 class InviteMemberRequest(BaseModel):
     email: str
-    role: str = "member"
+    role: str = "viewer"
 
     @field_validator("email")
     @classmethod
@@ -76,6 +83,12 @@ class AcceptInviteResponse(BaseModel):
     email: str
     role: str
     status: str
+
+
+class MembersListResponse(BaseModel):
+    members: list[MemberResponse]
+    seats_used: int
+    max_seats: int  # -1 == unlimited, matching TIER_LIMITS' sentinel
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -124,6 +137,11 @@ async def invite_member(
 
     db = request.app.state.db_pool
     async with db.acquire() as conn:
+        try:
+            await WorkspaceComplianceGuard(conn).assert_seat_available(str(workspace["id"]))
+        except SubscriptionError as exc:
+            raise HTTPException(status_code=403, detail=exc.reason) from exc
+
         existing = await conn.fetchrow(
             "SELECT id FROM workspace_members WHERE workspace_id = $1 AND email = $2",
             workspace["id"], body.email,
@@ -188,11 +206,11 @@ async def invite_member(
     )
 
 
-@router.get("", response_model=list[MemberResponse])
+@router.get("", response_model=MembersListResponse)
 async def list_members(
     request: Request,
     workspace: dict = Depends(get_workspace_or_member),
-) -> list[MemberResponse]:
+) -> MembersListResponse:
     db = request.app.state.db_pool
     async with db.acquire() as conn:
         rows = await conn.fetch(
@@ -200,7 +218,12 @@ async def list_members(
             "WHERE workspace_id = $1 ORDER BY created_at ASC",
             workspace["id"],
         )
-    return [
+        tier = workspace.get("product_tier") or "starter"
+        max_seats = WorkspaceComplianceGuard.TIER_LIMITS.get(
+            tier, WorkspaceComplianceGuard.TIER_LIMITS["starter"]
+        )["max_seats"]
+
+    members = [
         MemberResponse(
             id=str(r["id"]),
             email=r["email"],
@@ -211,6 +234,9 @@ async def list_members(
         )
         for r in rows
     ]
+    seats_used = sum(1 for m in members if m.status in ("invited", "active"))
+
+    return MembersListResponse(members=members, seats_used=seats_used, max_seats=max_seats)
 
 
 @router.post("/accept", response_model=AcceptInviteResponse)

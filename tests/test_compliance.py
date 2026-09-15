@@ -89,3 +89,56 @@ class TestTierLimitsRetentionDays:
 
     def test_enterprise_retention_is_unlimited(self):
         assert WorkspaceComplianceGuard.TIER_LIMITS["enterprise"]["retention_days"] == -1
+
+
+class TestTierLimitsMaxSeats:
+    """Membership plan, Phase B. Same single-source-of-truth pinning as
+    TestTierLimitsRetentionDays above, for max_seats."""
+
+    def test_starter_max_seats_is_3(self):
+        assert WorkspaceComplianceGuard.TIER_LIMITS["starter"]["max_seats"] == 3
+
+    def test_growth_max_seats_is_15(self):
+        assert WorkspaceComplianceGuard.TIER_LIMITS["growth"]["max_seats"] == 15
+
+    def test_enterprise_max_seats_is_unlimited(self):
+        assert WorkspaceComplianceGuard.TIER_LIMITS["enterprise"]["max_seats"] == -1
+
+
+class TestAssertSeatAvailable:
+    def _mock_conn(self, tier, seats_used):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            {"product_tier": tier},
+            {"n": seats_used},
+        ])
+        return conn
+
+    async def test_under_cap_permitted(self):
+        guard = WorkspaceComplianceGuard(self._mock_conn("starter", 2))
+        await guard.assert_seat_available(str(uuid4()))  # must not raise
+
+    async def test_at_cap_blocked(self):
+        guard = WorkspaceComplianceGuard(self._mock_conn("starter", 3))
+        with pytest.raises(SubscriptionError):
+            await guard.assert_seat_available(str(uuid4()))
+
+    async def test_over_cap_blocked(self):
+        guard = WorkspaceComplianceGuard(self._mock_conn("starter", 4))
+        with pytest.raises(SubscriptionError):
+            await guard.assert_seat_available(str(uuid4()))
+
+    async def test_enterprise_always_permitted(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"product_tier": "enterprise"})
+        guard = WorkspaceComplianceGuard(conn)
+        await guard.assert_seat_available(str(uuid4()))  # must not raise
+        # unlimited tier short-circuits before the seat-count query
+        assert conn.fetchrow.await_count == 1
+
+    async def test_unknown_workspace_raises(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        guard = WorkspaceComplianceGuard(conn)
+        with pytest.raises(SubscriptionError):
+            await guard.assert_seat_available(str(uuid4()))
