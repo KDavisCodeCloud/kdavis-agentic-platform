@@ -166,8 +166,22 @@ ingest → diagnose (LLM) → hitl_gate [PAUSE] → execute → complete
 Unit-tested with synthetic Azure Common Alert Schema and SNS payloads,
 including a real cryptographic signature round-trip
 (`tests/test_aws_sns.py`) against a self-signed certificate generated at
-test time. **Not yet live-verified** against a real Azure Action Group or
-a real AWS SNS topic — do the Azure path first if piloting this (it
-reuses the exact parsing `aks_alert_webhook` already proves works in
-production for AKS alerts); the AWS SNS subscription-confirmation
-handshake specifically needs a real topic to verify end-to-end.
+test time.
+
+**AWS SNS path: live-verified end-to-end against production on
+2026-09-15.** A real SNS topic was created and this URL subscribed as an
+HTTPS endpoint; AWS's own `SubscriptionConfirmation` was received and
+auto-confirmed by `confirm_subscription()` (0s — no polling delay
+needed). A real, AWS-signed CloudWatch-alarm-shaped `Notification` (RDS
+CPU threshold breach) was then published to the topic; `verify_signature()`
+accepted AWS's real signature, the background task ran, and an incident
+landed in `incidents` at `pending_approval` with a correct plain-English
+`parsed_error` within 6 seconds. Test topic, subscription, and workspace
+were all torn down immediately after.
+
+**Azure Action Group path: not yet live-verified** — no Azure Service
+Principal credential is configured on this backend service to test
+against a real Action Group. It reuses the exact Common Alert Schema
+parsing `aks_alert_webhook` already proves works in production for AKS
+alerts, so the risk here is low, but it hasn't been exercised end-to-end
+the way the AWS path now has.
