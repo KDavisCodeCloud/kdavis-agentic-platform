@@ -8,6 +8,7 @@ Agents never call provider SDKs directly — they call:
 """
 
 import os
+import random
 import yaml
 import time
 import logging
@@ -18,6 +19,52 @@ PROVIDERS_PATH = Path(__file__).parent / "providers"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [ROUTER] %(message)s")
 log = logging.getLogger("llm-router")
+
+# Phase 9, scale-readiness build. Retry-with-backoff for a transient error
+# on ONE provider, tried before falling through to complete()'s existing
+# cross-provider failover -- a momentary 429 should get a couple of quick
+# retries on the same provider first, not immediately burn the whole
+# failover chain (anthropic -> openrouter -> ollama) for what's often a
+# few-second blip.
+_MAX_RETRIES = 3
+_BASE_BACKOFF_SECONDS = 1.0
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    """429 (rate limit) or 5xx (transient server-side) -- retryable.
+    Everything else (bad request, auth failure, etc.) is not, and
+    retrying it would just waste the retry budget on a guaranteed repeat
+    failure."""
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        return status_code == 429 or 500 <= status_code < 600
+    # Fallback for SDKs/exception types that don't expose status_code
+    # uniformly -- match on the exception class name.
+    name = type(exc).__name__
+    return any(
+        keyword in name
+        for keyword in ("RateLimit", "APITimeout", "APIConnection", "InternalServerError", "ServiceUnavailable")
+    )
+
+
+def _call_with_retry(dispatch_fn, model, messages, system, max_tokens, temperature, provider):
+    """Calls dispatch_fn, retrying up to _MAX_RETRIES times with
+    exponential backoff + jitter on a transient error. A non-transient
+    error, or exhausting all retries, re-raises -- complete()'s own
+    try/except then falls through to the next provider in the failover
+    chain, unchanged from before this existed."""
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return dispatch_fn(model, messages, system, max_tokens, temperature)
+        except Exception as exc:
+            if not _is_transient_error(exc) or attempt == _MAX_RETRIES:
+                raise
+            backoff = _BASE_BACKOFF_SECONDS * (2**attempt) + random.uniform(0, 1)
+            log.warning(
+                f"Transient error on '{provider}' attempt {attempt + 1}/{_MAX_RETRIES + 1}: "
+                f"{exc} — retrying in {backoff:.1f}s"
+            )
+            time.sleep(backoff)
 
 
 def load_config():
@@ -151,7 +198,9 @@ def complete(
             if provider not in PROVIDER_DISPATCH:
                 raise ValueError(f"No dispatch handler for '{provider}'")
 
-            result = PROVIDER_DISPATCH[provider](model, messages, system_prompt, _max_tokens, _temperature)
+            result = _call_with_retry(
+                PROVIDER_DISPATCH[provider], model, messages, system_prompt, _max_tokens, _temperature, provider,
+            )
             elapsed = round(time.time() - start, 2)
             log.info(f"Success — {provider} / {model} / {elapsed}s")
             _write_audit_log(config, provider, model, task_type, elapsed)

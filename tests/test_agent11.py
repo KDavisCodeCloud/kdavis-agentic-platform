@@ -581,7 +581,52 @@ class TestDiagnoseNode:
         messages = call_args.kwargs.get("messages") or call_args.args[1]
         combined = " ".join(m["content"] for m in messages)
         assert "acme-prod-storage" in combined
-        assert "storage" in combined
+
+    async def test_llm_unavailable_produces_degraded_diagnosis_not_error_state(
+        self, mock_db, workspace_id, mock_router,
+    ):
+        """Phase 9, scale-readiness build: when .llm/router.py exhausts
+        every provider (retries + failover both exhausted), _diagnose_node
+        must NOT set state["error"] (that skips hitl_gate entirely,
+        silently dropping the alert with no incident ever created) --
+        it must return a normal-shaped degraded diagnosis so a real
+        incident still gets created."""
+        mock_router.complete.side_effect = RuntimeError("All providers exhausted. Last error: rate limited")
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id)
+
+        with patch.object(wf.budget, "assert_budget_available", return_value=None):
+            result = await wf._diagnose_node(state)
+
+        assert result.get("error") is None
+        assert "LLM diagnosis unavailable" in result["parsed_error"]
+        assert "retry manually" in result["parsed_error"]
+        assert len(result["remediation_options"]) == 1
+        assert result["remediation_options"][0]["id"] == "hold"
+
+    async def test_llm_unavailable_diagnosis_reaches_hitl_gate_and_creates_incident(
+        self, mock_db, workspace_id, mock_router,
+    ):
+        """End-to-end proof: the degraded diagnosis from a fully-exhausted
+        LLM call flows through to _hitl_gate_node and actually creates an
+        incident, rather than being skipped."""
+        mock_router.complete.side_effect = RuntimeError("All providers exhausted. Last error: rate limited")
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf.hitl.create_incident = AsyncMock(return_value="incident-degraded-1")
+        wf.record_token_usage = AsyncMock()
+        state = _base_state(workspace_id)
+
+        with patch.object(wf.budget, "assert_budget_available", return_value=None):
+            diagnose_result = await wf._diagnose_node(state)
+
+        state.update(diagnose_result)
+        with patch("agents.agent_11_resource_health.workflow.interrupt", return_value={"id": "hold"}):
+            gate_result = await wf._hitl_gate_node(state)
+
+        assert gate_result["incident_id"] == "incident-degraded-1"
+        wf.hitl.create_incident.assert_awaited_once()
+        call_kwargs = wf.hitl.create_incident.await_args.kwargs
+        assert "LLM diagnosis unavailable" in call_kwargs["parsed_error"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────

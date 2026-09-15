@@ -862,3 +862,35 @@ both reduce how much this matters in practice (more headroom before a
 long-held connection becomes contention), but the underlying hold-window
 issue is unchanged. Needs its own dedicated pass if it becomes a real
 bottleneck under load.
+
+### 19. LLM retry/backoff shipped platform-wide; degraded-incident fallback only built for Agent 11 so far (2026-09-15)
+
+Phase 9, scale-readiness build. `.llm/router.py`'s `complete()` -- the
+single entry point every one of the 11 agents' `call_llm()` routes
+through -- now retries a transient error (429, 5xx, or a matching SDK
+exception name) up to 3 times with exponential backoff + jitter on the
+SAME provider before falling through to the existing cross-provider
+failover chain (anthropic → openrouter → ollama). This applies to all
+11 agents automatically, no per-agent change needed.
+
+**Only Agent 11 also got the "create a real incident instead of
+silently dropping the alert" half.** Previously, if `call_llm()` raised
+after all providers were exhausted, the exception propagated uncaught
+out of `_diagnose_node` -- no incident, no trace beyond a log line +
+Sentry capture. Agent 11's `_diagnose_node` now catches that final
+failure and returns a normal-shaped degraded diagnosis (`parsed_error`
+= "LLM diagnosis unavailable — retry manually", a single `hold` option)
+instead of setting `state["error"]` (which `_hitl_gate_node` treats as
+"skip creating an incident entirely") -- so a real incident still gets
+created and is visible to an operator.
+
+**Deliberately not generalized to Agents 01-10 in this pass** --
+Phase 10 (structured logging + failed-run visibility) is already
+building a broader, general mechanism for exactly this class of problem
+(any diagnose-node failure, not just an LLM-provider-exhausted one,
+creating a real `execution_status='failed'` incident instead of being
+silently skipped). Building a second, narrower LLM-specific version now
+across 10 more agents would mean maintaining two separate fallback
+mechanisms doing overlapping jobs. Once Phase 10 lands, Agent 11's
+LLM-specific fallback here should be reconciled with it rather than
+kept as a separate special case.

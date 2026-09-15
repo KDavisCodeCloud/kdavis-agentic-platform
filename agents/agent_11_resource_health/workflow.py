@@ -485,11 +485,40 @@ class ResourceHealthWorkflow(BaseAgent):
 
         await self.check_budget(estimated_tokens=3000, model="claude-sonnet-4-20250514")
 
-        response, estimated_tokens = self.call_llm(
-            task_type="resource_health_triage",
-            messages=[{"role": "user", "content": user_message}],
-            system_prompt=self._diagnose_prompt,
-        )
+        try:
+            response, estimated_tokens = self.call_llm(
+                task_type="resource_health_triage",
+                messages=[{"role": "user", "content": user_message}],
+                system_prompt=self._diagnose_prompt,
+            )
+        except Exception as exc:
+            # Phase 9, scale-readiness build: .llm/router.py already
+            # retries transient errors with backoff and fails over across
+            # providers before ever raising here -- reaching this means
+            # every provider in the failover chain was genuinely
+            # exhausted. Returning a degraded-but-normal diagnosis shape
+            # (rather than setting state["error"], which _hitl_gate_node
+            # treats as "skip creating an incident entirely") means a
+            # real incident still gets created and is visible to an
+            # operator, instead of the alert silently vanishing.
+            log.error("[Agent11] LLM diagnosis unavailable — all providers exhausted: %s", exc)
+            self._write_audit("diagnose", "llm_unavailable")
+            return {
+                "parsed_error": f"LLM diagnosis unavailable — retry manually. (All LLM providers failed: {exc})",
+                "remediation_options": [{
+                    "id": "hold",
+                    "title": "Stay broken / submit custom solution",
+                    "description": (
+                        "Automated diagnosis could not run because every configured LLM "
+                        "provider failed. Review the alert manually — see the incident's "
+                        "raw log for details."
+                    ),
+                    "impact": "low",
+                    "docs_url": "",
+                }],
+                "estimated_duration_seconds": None,
+                "tokens_used": state.get("tokens_used", 0),
+            }
 
         try:
             diagnosis = self.parse_llm_json(response, context="resource_health_diagnose_node")
