@@ -52,7 +52,7 @@ class TestAksAlertWebhookCloudProviderLabeling:
         request = _make_request(_workspace_row(), body)
         bg = BackgroundTasks()
 
-        result = await webhooks.aks_alert_webhook(request, bg, token="ws-token")
+        result = await webhooks.aks_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "accepted"
         assert len(bg.tasks) == 1
@@ -70,7 +70,7 @@ class TestAksAlertWebhookCloudProviderLabeling:
         request = _make_request(_workspace_row(), body)
         bg = BackgroundTasks()
 
-        result = await webhooks.aks_alert_webhook(request, bg, token="ws-token")
+        result = await webhooks.aks_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "accepted"
         assert len(bg.tasks) == 1
@@ -128,7 +128,7 @@ class TestGithubWebhookSignatureValidation:
         bg = BackgroundTasks()
 
         with pytest.raises(_HTTPException) as exc:
-            await webhooks.github_webhook(request, bg, token="ws-token")
+            await webhooks.github_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert exc.value.status_code == 403
 
@@ -148,7 +148,7 @@ class TestGithubWebhookSignatureValidation:
             })
             bg = BackgroundTasks()
 
-            result = await webhooks.github_webhook(request, bg, token="ws-token")
+            result = await webhooks.github_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "accepted"
 
@@ -168,7 +168,7 @@ class TestGithubWebhookSignatureValidation:
             bg = BackgroundTasks()
 
             with pytest.raises(_HTTPException) as exc:
-                await webhooks.github_webhook(request, bg, token="ws-token")
+                await webhooks.github_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert exc.value.status_code == 401
 
@@ -187,7 +187,7 @@ class TestAzureDevOpsWebhookSignatureValidation:
         bg = BackgroundTasks()
 
         with pytest.raises(_HTTPException) as exc:
-            await webhooks.azure_devops_webhook(request, bg, token="ws-token")
+            await webhooks.azure_devops_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert exc.value.status_code == 403
 
@@ -203,7 +203,7 @@ class TestAzureDevOpsWebhookSignatureValidation:
             request = _make_request_with_headers(row, body, {"Authorization": _sign_azure_devops(raw_secret)})
             bg = BackgroundTasks()
 
-            result = await webhooks.azure_devops_webhook(request, bg, token="ws-token")
+            result = await webhooks.azure_devops_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "accepted"
 
@@ -220,7 +220,7 @@ class TestAzureDevOpsWebhookSignatureValidation:
             bg = BackgroundTasks()
 
             with pytest.raises(_HTTPException) as exc:
-                await webhooks.azure_devops_webhook(request, bg, token="ws-token")
+                await webhooks.azure_devops_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert exc.value.status_code == 401
 
@@ -491,7 +491,7 @@ class TestResourceHealthAlertWebhook:
         request = _make_request(_workspace_row(), body)
         bg = BackgroundTasks()
 
-        result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "accepted"
         assert len(bg.tasks) == 1
@@ -502,7 +502,7 @@ class TestResourceHealthAlertWebhook:
         request = _make_request(_workspace_row(), body)
         bg = BackgroundTasks()
 
-        result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "ignored"
         assert len(bg.tasks) == 0
@@ -516,7 +516,7 @@ class TestResourceHealthAlertWebhook:
             _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=True)),
             _patch("core.aws_sns.confirm_subscription", new=AsyncMock(return_value=True)) as mock_confirm,
         ):
-            result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+            result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         mock_confirm.assert_awaited_once()
         assert result["status"] == "subscription_confirmed"
@@ -531,7 +531,7 @@ class TestResourceHealthAlertWebhook:
 
         with _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=False)):
             with pytest.raises(HTTPException) as exc:
-                await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+                await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert exc.value.status_code == 403
 
@@ -545,7 +545,7 @@ class TestResourceHealthAlertWebhook:
         bg = BackgroundTasks()
 
         with _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=True)):
-            result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+            result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "accepted"
         assert len(bg.tasks) == 1
@@ -564,7 +564,7 @@ class TestResourceHealthAlertWebhook:
         bg = BackgroundTasks()
 
         with _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=True)):
-            result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+            result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "ignored"
         assert len(bg.tasks) == 0
@@ -574,7 +574,7 @@ class TestResourceHealthAlertWebhook:
         request = _make_request(_workspace_row(), body)
         bg = BackgroundTasks()
 
-        result = await webhooks.resource_health_alert_webhook(request, bg, token="ws-token")
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
 
         assert result["status"] == "ignored"
         assert len(bg.tasks) == 0
@@ -586,6 +586,6 @@ class TestResourceHealthAlertWebhook:
         bg = BackgroundTasks()
 
         with pytest.raises(HTTPException) as exc:
-            await webhooks.resource_health_alert_webhook(request, bg, token="bad-token")
+            await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="bad-token")
 
         assert exc.value.status_code == 403

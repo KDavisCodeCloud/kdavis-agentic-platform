@@ -5,12 +5,13 @@ Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 WorkspaceTierMiddleware
 
 Sets request.state.workspace_tier before the route handler runs.
-This allows the rate limiter's _tier_limit() callable to read the tier
-from request.state and enforce per-tier request limits without a second
-DB lookup inside the endpoint.
+This allows the rate limiter's _tier_limit()/_webhook_tier_limit()
+callables to read the tier from request.state and enforce per-tier
+request limits without a second DB lookup inside the endpoint.
 
-Only acts on /api/v1/agents/* requests — everything else gets the
-"starter" default and passes through without a DB query.
+Only acts on /api/v1/agents/* and /api/v1/webhooks/* requests —
+everything else gets the "starter" default and passes through without a
+DB query.
 """
 
 import hashlib
@@ -22,7 +23,7 @@ from starlette.responses import Response
 
 log = logging.getLogger(__name__)
 
-_RATE_LIMITED_PREFIX = "/api/v1/agents"
+_RATE_LIMITED_PREFIXES = ("/api/v1/agents", "/api/v1/webhooks")
 
 
 class WorkspaceTierMiddleware(BaseHTTPMiddleware):
@@ -37,10 +38,16 @@ class WorkspaceTierMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         request.state.workspace_tier = "starter"  # safe default
 
-        if not request.url.path.startswith(_RATE_LIMITED_PREFIX):
+        if not request.url.path.startswith(_RATE_LIMITED_PREFIXES):
             return await call_next(request)
 
-        token = request.headers.get("X-Workspace-Token")
+        # Manual-trigger routes (api/routes/agents.py) send the workspace
+        # token as the X-Workspace-Token header; webhook routes
+        # (api/routes/webhooks.py) send it as a ?token= query param
+        # instead -- POST /webhooks/github?token=<workspace_token>. Both
+        # need to resolve a real tier, or every webhook customer silently
+        # rate-limits at the Starter floor regardless of what they pay for.
+        token = request.headers.get("X-Workspace-Token") or request.query_params.get("token")
         if not token:
             return await call_next(request)
 

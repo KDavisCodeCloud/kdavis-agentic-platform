@@ -28,6 +28,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
+from api.middleware.rate_limiter import limiter, _webhook_tier_limit
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 from core.error_tracking import capture_exception
 from core.token_budget import BudgetExceededError
@@ -91,6 +92,7 @@ async def _get_workspace_from_token(db_pool, token: str) -> Optional[dict]:
 # ──────────────────────────────────────────────
 
 @router.post("/github")
+@limiter.limit(_webhook_tier_limit)
 async def github_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -178,6 +180,7 @@ async def github_webhook(
 
 
 @router.post("/azure-devops")
+@limiter.limit(_webhook_tier_limit)
 async def azure_devops_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -318,6 +321,7 @@ async def github_app_webhook(request: Request, background_tasks: BackgroundTasks
 
 
 @router.post("/aks-alert")
+@limiter.limit(_webhook_tier_limit)
 async def aks_alert_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -389,6 +393,7 @@ async def aks_alert_webhook(
 
 
 @router.post("/resource-health-alert")
+@limiter.limit(_webhook_tier_limit)
 async def resource_health_alert_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
