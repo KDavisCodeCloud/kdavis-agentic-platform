@@ -18,6 +18,7 @@ are never stored.
 import hashlib
 import logging
 import os
+from typing import Optional
 from uuid import UUID
 
 from fastapi import Request, HTTPException, status
@@ -28,6 +29,21 @@ log = logging.getLogger(__name__)
 WORKSPACE_TOKEN_HEADER = APIKeyHeader(name="X-Workspace-Token", auto_error=False)
 
 _MCP_SERVICE_KEY = os.environ.get("MCP_SERVICE_KEY", "")
+
+# Shared by _get_workspace_by_mcp_service, _get_workspace_by_token, and
+# get_workspace_member's _get_workspace_row_by_id below -- previously
+# duplicated verbatim in the first two, which is exactly the kind of
+# drift risk GAPS.md #16 (TIER_LIMITS) already burned this codebase on
+# once. One source of truth for "what a workspace row auth returns."
+_WORKSPACE_SELECT_COLUMNS = (
+    "id, company_name, stripe_subscription_status, product_tier, "
+    "encrypted_llm_key, llm_provider, monthly_token_budget_usd, current_month_spend_usd, "
+    "github_pat_encrypted, github_pat_verified_at, github_app_installation_id, "
+    "encrypted_github_webhook_secret, aws_role_arn, aws_external_id, "
+    "aws_role_verified_at, azure_tenant_id, azure_client_id, "
+    "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at, "
+    "azure_devops_pat_verified_at, k8s_verified_at"
+)
 
 # 'pending_payment' -- the default status for every newly-created workspace
 # (db/migrations/021_workspace_pending_payment.sql) -- is the actual paywall
@@ -81,14 +97,7 @@ async def _get_workspace_by_mcp_service(request: Request, service_key: str) -> d
     db = request.app.state.db_pool
     async with db.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, company_name, stripe_subscription_status, product_tier, "
-            "encrypted_llm_key, llm_provider, monthly_token_budget_usd, current_month_spend_usd, "
-            "github_pat_encrypted, github_pat_verified_at, github_app_installation_id, "
-            "encrypted_github_webhook_secret, aws_role_arn, aws_external_id, "
-            "aws_role_verified_at, azure_tenant_id, azure_client_id, "
-            "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at, "
-            "azure_devops_pat_verified_at, k8s_verified_at "
-            "FROM workspaces WHERE id = $1",
+            f"SELECT {_WORKSPACE_SELECT_COLUMNS} FROM workspaces WHERE id = $1",
             ws_uuid,
         )
 
@@ -121,14 +130,7 @@ async def _get_workspace_by_token(request: Request, blocked_statuses: tuple[str,
 
     async with db.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, company_name, stripe_subscription_status, product_tier, "
-            "encrypted_llm_key, llm_provider, monthly_token_budget_usd, current_month_spend_usd, "
-            "github_pat_encrypted, github_pat_verified_at, github_app_installation_id, "
-            "encrypted_github_webhook_secret, aws_role_arn, aws_external_id, "
-            "aws_role_verified_at, azure_tenant_id, azure_client_id, "
-            "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at, "
-            "azure_devops_pat_verified_at, k8s_verified_at "
-            "FROM workspaces WHERE workspace_token = $1",
+            f"SELECT {_WORKSPACE_SELECT_COLUMNS} FROM workspaces WHERE workspace_token = $1",
             token_hash,
         )
 
@@ -210,3 +212,136 @@ async def get_workspace_any_status(request: Request) -> dict:
         return await _get_workspace_by_mcp_service(request, mcp_key)
 
     return await _get_workspace_by_token(request, ())
+
+
+async def _get_workspace_row_by_id(conn, workspace_id) -> Optional[dict]:
+    row = await conn.fetchrow(
+        f"SELECT {_WORKSPACE_SELECT_COLUMNS} FROM workspaces WHERE id = $1",
+        workspace_id,
+    )
+    return dict(row) if row else None
+
+
+async def get_workspace_member(request: Request) -> dict:
+    """
+    FastAPI dependency: validates a Supabase session JWT
+    (Authorization: Bearer <token>) and resolves it to a workspace via
+    the workspace_members table (migration 033) -- the human-dashboard-
+    session auth path. Membership plan, Phase A: additive to
+    get_workspace()'s X-Workspace-Token path, not a replacement --
+    webhooks, CI integrations, and MCP service-to-service calls never
+    send an Authorization: Bearer header and are completely unaffected.
+
+    Validates the token via an online Supabase API call
+    (client.auth.get_user()), same as api/middleware/internal_auth.py's
+    get_internal_user -- deliberately NOT mcp/auth/oauth.py's offline
+    JWT-decode approach, since mcp/ is a separate deployable service
+    (own Dockerfile/requirements.txt/config.py) this codebase does not
+    import from, and online validation catches a revoked session
+    immediately rather than only at next token expiry.
+
+    Raises 401 if the session token is missing/invalid, 403 if the
+    Supabase user has no active workspace_members row, 402 if the
+    resolved workspace's subscription is blocked (same statuses as
+    get_workspace). Returns the SAME shape as get_workspace() (the full
+    workspace row) plus member_id/member_role/member_email, so any route
+    depending on get_workspace_or_member sees a consistent dict
+    regardless of which credential the caller used.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization: Bearer <session token> required",
+        )
+    token = auth_header.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization: Bearer <session token> required",
+        )
+
+    # Lazy import -- matches this repo's convention (internal_auth.py,
+    # internal_workspaces.py, core/engine.py) of never importing
+    # third-party clients at module top level.
+    from supabase import create_client
+
+    url = os.environ.get("SUPABASE_URL")
+    service_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+    if not url or not service_key:
+        log.error("[Auth] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not configured")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Member auth is not configured on this server",
+        )
+
+    client = create_client(url, service_key)
+    try:
+        user_resp = client.auth.get_user(token)
+    except Exception:
+        log.warning("[Auth] Member session token verification failed")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+        )
+
+    user = getattr(user_resp, "user", None)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+        )
+
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        member_row = await conn.fetchrow(
+            "SELECT id, workspace_id, role, email FROM workspace_members "
+            "WHERE supabase_user_id = $1 AND status = 'active'",
+            UUID(str(user.id)),
+        )
+        if not member_row:
+            log.warning("[Auth] Supabase user=%s has no active workspace_members row", user.id)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No active workspace membership for this account",
+            )
+
+        workspace_row = await _get_workspace_row_by_id(conn, member_row["workspace_id"])
+
+    if not workspace_row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+
+    status_val = workspace_row["stripe_subscription_status"]
+    if status_val in _BLOCKED_SUBSCRIPTION_STATUSES:
+        log.warning(
+            "[Auth] Workspace %s blocked (member session) — subscription status: %s",
+            workspace_row["id"], status_val,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Workspace subscription {status_val} — access denied",
+        )
+
+    workspace_row["member_id"] = str(member_row["id"])
+    workspace_row["member_role"] = member_row["role"]
+    workspace_row["member_email"] = member_row["email"]
+    return workspace_row
+
+
+async def get_workspace_or_member(request: Request) -> dict:
+    """
+    Accepts EITHER credential: X-Workspace-Token/X-MCP-Service-Key
+    (existing, unchanged, routed through get_workspace) or
+    Authorization: Bearer <supabase session> resolved via
+    workspace_members (get_workspace_member, Phase A membership plan).
+
+    Prefers the token path only when a token/service-key header is
+    actually present, so a request carrying only a Bearer header
+    doesn't get a misleading "token required" 401 from the wrong path.
+    Use this (not get_workspace directly) on any route that should
+    support a logged-in human member session, not just the shared
+    workspace token.
+    """
+    if request.headers.get("X-Workspace-Token") or request.headers.get("X-MCP-Service-Key"):
+        return await get_workspace(request)
+    return await get_workspace_member(request)

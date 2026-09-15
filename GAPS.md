@@ -1031,3 +1031,61 @@ safety → durable queue → semaphore/timeout → DB pool/workers → LLM
 retry → structured logging/failed-run visibility → RLS → retention/
 indexes). See DECISIONS.md for the running architectural log across all
 12 phases.
+
+### 22. Membership Phase A shipped backend-side; dual-auth rollout deliberately narrow, RBAC enforcement not yet real (2026-09-15)
+
+Membership/SSO/RBAC/SCIM plan, Phase A. Real workspace membership now
+exists: `db/migrations/033_workspace_members.sql` adds `workspace_members`
+(one row per human, `role` admin|member, `status` invited|active|
+deactivated), generalizing the admin-only, Enterprise-only mcp-invite
+pattern into `api/routes/workspace_members.py`'s self-serve
+`POST /workspace-members/invite` / `GET /workspace-members` /
+`POST /workspace-members/accept`. `api/middleware/auth.py` gains
+`get_workspace_member()` (validates a Supabase session via
+`client.auth.get_user()` -- the same online-validation approach
+`internal_auth.py`'s `get_internal_user` already uses, deliberately NOT
+`mcp/auth/oauth.py`'s offline JWT decode, since `mcp/` is a separately
+deployed service this codebase doesn't import from) and
+`get_workspace_or_member()` (tries `X-Workspace-Token`/
+`X-MCP-Service-Key` first, falls back to a Bearer session) as a second,
+additive auth path -- the existing token path is completely unchanged.
+
+**Only `get_incident`/`list_incidents` (api/routes/incidents.py) accept
+`get_workspace_or_member` so far** -- the same two routes Phase 11 wired
+for DB-level workspace scoping, and the pair the plan's own Phase A
+"Verification" section names (list the same workspace's incidents as two
+different logged-in users). `approve_incident`/`reject_incident` and
+every other token-gated route in the codebase still take `get_workspace`
+only -- a member session cannot yet approve a remediation, view billing,
+manage credentials, etc. Rolling `get_workspace_or_member` out further is
+mechanical (swap the `Depends()`) but deliberately not done blind across
+every route in this pass, matching this session's established
+"targeted, not platform-wide" scoping discipline (Phase 10's logging,
+Phase 11's RLS wiring).
+
+**No real RBAC enforcement yet -- `role` is stored, not checked, beyond
+invite.** `invite_member`'s `_caller_is_authorized_to_invite` is the ONE
+place `role == 'admin'` is actually gated on. A `member`-role session can
+already read incidents via the dual-auth wiring above with no role check
+at all -- fine today (read-only, same data a `viewer` role would see
+under Phase C's real RBAC design), but Phase C ("`workspace_members.role`:
+`admin | approver | viewer`... map onto real product actions") is where
+role actually starts gating write actions. Don't mistake the `role`
+column existing for RBAC being built.
+
+**Bootstrap trust model, worth being explicit about:** the very first
+invite for a workspace has no admin member yet to authorize it, so
+`invite_member` accepts EITHER an active admin member session OR the
+bare workspace token (`get_workspace`, no `member_role` key at all) --
+meaning anyone holding the shared token (a CI system, a webhook
+integration, or the original signup holder) can invite the first human
+members. This is the deliberate, minimal bootstrap the plan's own Phase
+A description anticipates ("whoever holds the workspace token can invite
+the first human member(s)"), not an oversight -- but it does mean the
+workspace token remains a full-trust credential for this action, same as
+it already is for everything else it can currently do.
+
+**Frontend not yet built as of this commit** -- `/login`'s rework to
+real Supabase email/password and the `/accept-invite` page are the next
+piece of this same phase, tracked as a direct continuation, not a
+separate gap.

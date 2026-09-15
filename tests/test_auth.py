@@ -17,11 +17,15 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from unittest.mock import patch
+
 from api.middleware.auth import (
     _hash_token,
     get_workspace,
     get_workspace_allow_pending_payment,
     get_workspace_any_status,
+    get_workspace_member,
+    get_workspace_or_member,
 )
 
 
@@ -167,3 +171,128 @@ class TestGetWorkspaceAnyStatus:
         with pytest.raises(HTTPException) as exc:
             await get_workspace_any_status(request)
         assert exc.value.status_code == 403
+
+
+# ── get_workspace_member / get_workspace_or_member (Phase A, membership plan) ──
+
+def _make_bearer_request(token: str | None, member_row: dict | None, workspace_row: dict | None) -> SimpleNamespace:
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(side_effect=[member_row, workspace_row])
+    pool_ctx = AsyncMock()
+    pool_ctx.__aenter__ = AsyncMock(return_value=conn)
+    pool_ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=pool_ctx)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return SimpleNamespace(headers=headers, app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
+
+
+def _member_row(member_id, workspace_id, role="member"):
+    return {"id": member_id, "workspace_id": workspace_id, "role": role, "email": "member@acme.com"}
+
+
+def _mock_supabase_user(user_id, email="member@acme.com"):
+    mock_client = MagicMock()
+    mock_client.auth.get_user.return_value = MagicMock(user=MagicMock(id=user_id, email=email))
+    return mock_client
+
+
+class TestGetWorkspaceMember:
+    async def test_missing_bearer_header_401(self):
+        request = _make_bearer_request(None, None, None)
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_member(request)
+        assert exc.value.status_code == 401
+
+    async def test_invalid_session_token_401(self):
+        request = _make_bearer_request("bogus", None, None)
+        mock_client = MagicMock()
+        mock_client.auth.get_user.side_effect = Exception("invalid")
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_workspace_member(request)
+        assert exc.value.status_code == 401
+
+    async def test_no_active_membership_403(self):
+        user_id = uuid4()
+        request = _make_bearer_request("tok", None, None)  # member lookup returns None
+        mock_client = _mock_supabase_user(user_id)
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_workspace_member(request)
+        assert exc.value.status_code == 403
+
+    async def test_active_member_resolves_workspace(self):
+        user_id = uuid4()
+        workspace_id = uuid4()
+        member_id = uuid4()
+        request = _make_bearer_request(
+            "tok",
+            _member_row(member_id, workspace_id, role="admin"),
+            _workspace_row("active"),
+        )
+        mock_client = _mock_supabase_user(user_id)
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            result = await get_workspace_member(request)
+
+        assert result["member_id"] == str(member_id)
+        assert result["member_role"] == "admin"
+        assert result["member_email"] == "member@acme.com"
+        assert result["stripe_subscription_status"] == "active"
+
+    async def test_blocked_workspace_subscription_402(self):
+        user_id = uuid4()
+        workspace_id = uuid4()
+        member_id = uuid4()
+        request = _make_bearer_request(
+            "tok",
+            _member_row(member_id, workspace_id),
+            _workspace_row("suspended"),
+        )
+        mock_client = _mock_supabase_user(user_id)
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_workspace_member(request)
+        assert exc.value.status_code == 402
+
+
+class TestGetWorkspaceOrMember:
+    async def test_prefers_token_path_when_token_header_present(self):
+        request = _make_request("cd_ws_real", _workspace_row("active"))
+        result = await get_workspace_or_member(request)
+        assert "member_id" not in result
+
+    async def test_falls_back_to_member_path_when_only_bearer_present(self):
+        user_id = uuid4()
+        workspace_id = uuid4()
+        member_id = uuid4()
+        request = _make_bearer_request(
+            "tok",
+            _member_row(member_id, workspace_id),
+            _workspace_row("active"),
+        )
+        mock_client = _mock_supabase_user(user_id)
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            result = await get_workspace_or_member(request)
+        assert result["member_id"] == str(member_id)
+
+    async def test_no_credential_at_all_401(self):
+        request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(db_pool=MagicMock())))
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_or_member(request)
+        assert exc.value.status_code == 401

@@ -22,7 +22,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace, get_workspace_or_member
 from pydantic import BaseModel
 
 from db.models import (
@@ -109,7 +109,7 @@ _CREDENTIALED_AGENTS = {
 async def get_incident(
     incident_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> IncidentResponse:
     """
     Get current status of an incident, including diagnosis and options.
@@ -355,7 +355,7 @@ async def reject_incident(
 @router.get("", response_model=list[IncidentResponse])
 async def list_incidents(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
     status_filter: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
