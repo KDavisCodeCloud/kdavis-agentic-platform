@@ -219,6 +219,25 @@ export interface ConnectionsStatus {
   llm_provider: string | null
 }
 
+// Ticketing integrations (Jira/Linear/GitHub Issues/ServiceNow) -- fires on
+// incident RESOLUTION, not creation. api/routes/workspace_ticketing.py. A
+// workspace may have zero or one of these configured at a time.
+export interface TicketingChannelStatus {
+  channel_type: string
+  enabled: boolean
+}
+
+export interface TicketingStatus {
+  channel: TicketingChannelStatus | null
+}
+
+export interface JiraConnectInput {
+  instance_url: string
+  api_token: string
+  project_key: string
+  issue_type?: string
+}
+
 export interface AwsRoleSetup {
   external_id: string
   trust_policy: Record<string, unknown>

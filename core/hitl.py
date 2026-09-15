@@ -316,11 +316,13 @@ class HITLGate:
         log.info(f"[HITL] Incident {incident_id} -> {new_status} (option={selected_option_id})")
 
     async def mark_executed(self, incident_id: str, tokens_used: int = 0) -> None:
-        await self._db.execute(
+        row = await self._db.fetchrow(
             """
             UPDATE incidents
             SET execution_status = $1, resolved_at = $2, tokens_used = tokens_used + $3
             WHERE id = $4
+            RETURNING workspace_id, agent_id, resource_name, resource_group, metric_name,
+                      parsed_error, selected_option_id, resolved_at, cloud_provider
             """,
             STATUS_EXECUTED,
             datetime.now(timezone.utc),
@@ -328,6 +330,8 @@ class HITLGate:
             UUID(incident_id),
         )
         self._write_audit_entry("unknown", "hitl_gate", incident_id, "executed", tokens_used)
+        if row is not None:
+            self._fire_ticketing_notification(incident_id, dict(row))
 
     async def mark_failed(self, incident_id: str, reason: str = "") -> None:
         await self._db.execute(
@@ -424,6 +428,46 @@ class HITLGate:
             log.warning(
                 f"[HITL] Failed to schedule notification dispatch for incident {incident_id}: {exc}",
                 extra={"workspace_id": workspace_id, "incident_id": incident_id},
+            )
+
+    def _fire_ticketing_notification(self, incident_id: str, row: dict) -> None:
+        """
+        Best-effort, fire-and-forget ticketing dispatch on resolution --
+        mirrors _fire_notification above but fires on execution_status
+        becoming STATUS_EXECUTED rather than on creation. See
+        core/ticketing.py's notify_resolution for the full non-fatal shape.
+
+        resolved_by is always None on this path: mark_executed runs deep
+        inside a resumed LangGraph workflow (agents/agent_0N_*/workflow.py's
+        resume(), called from api/routes/incidents.py's approve_incident),
+        several calls removed from the approval endpoint that actually knew
+        which workspace member approved it -- that identity is not
+        currently threaded through the resume() call chain into here. A
+        real gap, not invented away: threading member_id through eleven
+        separate workflow classes' resume() signatures is a larger, riskier
+        change than this ticketing build's scope. api/routes/incidents.py's
+        resolve_incident_manually (the OTHER resolution call site) does
+        have the approver's member_id available and passes it through.
+        """
+        try:
+            from core.ticketing import schedule_resolution_notification
+
+            incident_summary = {
+                "incident_id": incident_id,
+                "agent_id": row.get("agent_id"),
+                "resource_name": row.get("resource_name"),
+                "resource_group": row.get("resource_group"),
+                "metric_name": row.get("metric_name"),
+                "parsed_error": row.get("parsed_error"),
+                "selected_option_id": row.get("selected_option_id"),
+                "resolved_at": row["resolved_at"].isoformat() if row.get("resolved_at") else None,
+                "cloud_provider": row.get("cloud_provider"),
+            }
+            schedule_resolution_notification(str(row["workspace_id"]), incident_summary, resolved_by=None)
+        except Exception as exc:
+            log.warning(
+                f"[HITL] Failed to schedule ticketing dispatch for incident {incident_id}: {exc}",
+                extra={"incident_id": incident_id},
             )
 
     def _write_audit_entry(

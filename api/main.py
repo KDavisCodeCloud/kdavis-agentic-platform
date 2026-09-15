@@ -62,6 +62,7 @@ from api.routes import workspaces
 from api.routes import workspace_credentials
 from api.routes import workspace_members
 from api.routes import workspace_notifications
+from api.routes import workspace_ticketing
 from api.routes import scim
 from api.routes import audit
 from api.routes import finops_agent
@@ -326,6 +327,7 @@ app.include_router(workspaces.router,      prefix="/api/v1")
 app.include_router(workspace_credentials.router, prefix="/api/v1")
 app.include_router(workspace_members.router,     prefix="/api/v1")
 app.include_router(workspace_notifications.router, prefix="/api/v1")
+app.include_router(workspace_ticketing.router,   prefix="/api/v1")
 app.include_router(scim.router)
 app.include_router(audit.router,           prefix="/api/v1")
 app.include_router(finops_agent.router,    prefix="/api/v1")

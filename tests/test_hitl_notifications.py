@@ -120,3 +120,64 @@ class TestCreateFailedIncidentFiresNotification:
             await _drain_scheduled_tasks()
 
         assert incident_id is not None
+
+
+class TestMarkExecutedFiresTicketingNotification:
+    """
+    Ticketing build (2026-09-15): mark_executed() fires a best-effort
+    resolution-ticketing dispatch (core/ticketing.py's
+    schedule_resolution_notification) after a successful UPDATE ...
+    RETURNING -- the resolution-side mirror of create_incident's
+    notify_incident_channels dispatch on creation.
+    """
+
+    async def test_fires_schedule_resolution_notification_with_incident_fields(self):
+        db = _mock_db()
+        workspace_id = uuid4()
+        db.fetchrow.return_value = {
+            "workspace_id": workspace_id,
+            "agent_id": "agent_06_finops",
+            "resource_name": "vm-1",
+            "resource_group": "rg-1",
+            "metric_name": "cpu",
+            "parsed_error": "CPU high",
+            "selected_option_id": "opt_1",
+            "resolved_at": None,
+            "cloud_provider": "azure",
+        }
+        gate = HITLGate(db)
+
+        with patch("core.ticketing.schedule_resolution_notification") as mock_schedule:
+            await gate.mark_executed(str(uuid4()), tokens_used=10)
+
+        mock_schedule.assert_called_once()
+        called_workspace_id, incident_summary = mock_schedule.call_args.args
+        assert called_workspace_id == str(workspace_id)
+        assert incident_summary["agent_id"] == "agent_06_finops"
+        assert incident_summary["resource_name"] == "vm-1"
+        assert incident_summary["parsed_error"] == "CPU high"
+        assert mock_schedule.call_args.kwargs["resolved_by"] is None
+
+    async def test_no_returning_row_skips_ticketing_dispatch(self):
+        db = _mock_db()
+        db.fetchrow.return_value = None
+        gate = HITLGate(db)
+
+        with patch("core.ticketing.schedule_resolution_notification") as mock_schedule:
+            await gate.mark_executed(str(uuid4()), tokens_used=0)
+
+        mock_schedule.assert_not_called()
+
+    async def test_ticketing_scheduling_failure_does_not_raise(self):
+        db = _mock_db()
+        db.fetchrow.return_value = {
+            "workspace_id": uuid4(), "agent_id": "agent_01_cicd_triage",
+            "resource_name": None, "resource_group": None, "metric_name": None,
+            "parsed_error": "x", "selected_option_id": "opt_1", "resolved_at": None,
+            "cloud_provider": None,
+        }
+        gate = HITLGate(db)
+
+        with patch("core.ticketing.schedule_resolution_notification", side_effect=Exception("boom")):
+            # Must complete without raising.
+            await gate.mark_executed(str(uuid4()), tokens_used=0)

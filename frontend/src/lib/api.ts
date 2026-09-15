@@ -5,7 +5,7 @@ import type {
   AuditSubmissionSummary, AuditSubmissionDetail,
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
   DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
-  ConnectionsStatus, AwsRoleSetup,
+  ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -13,6 +13,7 @@ import {
   getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
   getMockConnectionsStatus, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
   mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s, mockSaveLlmKey,
+  getMockTicketingStatus, mockConnectJira,
 } from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -737,6 +738,26 @@ export async function connectAzureDevOps(
 export async function connectK8sCluster(token: string, body: K8sClusterInput): Promise<{ id: string }> {
   if (MOCK_MODE) return mockConnectK8s()
   return request<{ id: string }>('/workspace/credentials/k8s', token, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+// -- Ticketing (Jira/Linear/GitHub Issues/ServiceNow -- fires on incident
+// RESOLUTION, not creation) -- api/routes/workspace_ticketing.py. At most
+// one channel at a time. ---------------------------------------------------
+
+export async function getTicketingStatus(token: string): Promise<TicketingStatus> {
+  if (MOCK_MODE) return getMockTicketingStatus()
+  return request<TicketingStatus>('/workspace/ticketing', token)
+}
+
+export async function connectJira(
+  token: string,
+  body: JiraConnectInput,
+): Promise<{ channel_type: string; enabled: boolean }> {
+  if (MOCK_MODE) return mockConnectJira(body)
+  return request<{ channel_type: string; enabled: boolean }>('/workspace/ticketing/jira', token, {
     method: 'PATCH',
     body: JSON.stringify(body),
   })

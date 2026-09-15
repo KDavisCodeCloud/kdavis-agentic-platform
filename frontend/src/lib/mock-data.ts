@@ -11,7 +11,9 @@ import type {
   FinOpsDashboardData,
   FinOpsHitlItem,
   Incident,
+  JiraConnectInput,
   ManualResolutionResponse,
+  TicketingStatus,
 } from './types'
 
 function ago(mins: number): string {
@@ -655,4 +657,19 @@ export function mockConnectAzureDevOps(): { status: string; webhook_secret: stri
 export function mockConnectK8s(): { id: string } {
   _connectionsStatus = { ..._connectionsStatus, k8s_connected: true }
   return { id: 'demo-workspace-001' }
+}
+
+// -- Ticketing (Jira/Linear/GitHub Issues/ServiceNow) -- fires on incident
+// RESOLUTION, not creation. api/routes/workspace_ticketing.py. At most one
+// channel at a time. --------------------------------------------------
+
+let _ticketingStatus: TicketingStatus = { channel: null }
+
+export function getMockTicketingStatus(): TicketingStatus {
+  return _ticketingStatus
+}
+
+export function mockConnectJira(_body: JiraConnectInput): { channel_type: string; enabled: boolean } {
+  _ticketingStatus = { channel: { channel_type: 'jira', enabled: true } }
+  return { channel_type: 'jira', enabled: true }
 }

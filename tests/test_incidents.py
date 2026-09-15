@@ -618,3 +618,57 @@ class TestResolveIncidentManually:
             workspace={"id": workspace_id},  # no member_role key -- token path
         )
         assert result.status == "resolved_manually"
+
+    async def test_fires_resolution_ticketing_with_note_and_member_id(self):
+        """Ticketing build (2026-09-15): a fire-and-forget dispatch to
+        core.ticketing.schedule_resolution_notification, carrying the
+        resolution_note (not selected_option_id -- there's no agent-chosen
+        remediation on this path) and the acting member's id."""
+        workspace_id = uuid4()
+        row = _incident_row("agent_06_finops", workspace_id)
+        request, conn = _make_request(row)
+
+        with patch("core.ticketing.schedule_resolution_notification") as mock_schedule:
+            await incidents.resolve_incident_manually(
+                str(row["id"]),
+                IncidentResolveManuallyRequest(resolution_note="Rotated the key manually."),
+                request,
+                workspace=self._member_workspace(workspace_id, "admin"),
+            )
+
+        mock_schedule.assert_called_once()
+        called_workspace_id, incident_summary = mock_schedule.call_args.args
+        assert called_workspace_id == str(workspace_id)
+        assert incident_summary["incident_id"] == str(row["id"])
+        assert incident_summary["agent_id"] == "agent_06_finops"
+        assert incident_summary["resolution_note"] == "Rotated the key manually."
+        assert mock_schedule.call_args.kwargs["resolved_by"] is not None
+
+    async def test_fires_resolution_ticketing_with_none_resolved_by_for_token_auth(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        with patch("core.ticketing.schedule_resolution_notification") as mock_schedule:
+            await incidents.resolve_incident_manually(
+                str(row["id"]),
+                IncidentResolveManuallyRequest(),
+                request,
+                workspace={"id": workspace_id},
+            )
+
+        assert mock_schedule.call_args.kwargs["resolved_by"] is None
+
+    async def test_ticketing_scheduling_failure_does_not_block_response(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        with patch("core.ticketing.schedule_resolution_notification", side_effect=Exception("boom")):
+            result = await incidents.resolve_incident_manually(
+                str(row["id"]),
+                IncidentResolveManuallyRequest(),
+                request,
+                workspace={"id": workspace_id},
+            )
+        assert result.status == "resolved_manually"

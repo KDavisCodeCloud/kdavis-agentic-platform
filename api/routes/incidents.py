@@ -430,7 +430,11 @@ async def resolve_incident_manually(
 
     async with db.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, agent_id, execution_status FROM incidents WHERE id = $1 AND workspace_id = $2",
+            """
+            SELECT id, agent_id, execution_status, resource_name, resource_group,
+                   metric_name, parsed_error, cloud_provider
+            FROM incidents WHERE id = $1 AND workspace_id = $2
+            """,
             UUID(incident_id),
             workspace["id"],
         )
@@ -479,6 +483,39 @@ async def resolve_incident_manually(
         "[IncidentsRoute] Incident %s resolved manually%s",
         incident_id, " with note" if note else "",
     )
+
+    # Best-effort resolution ticketing (Jira/Linear/GitHub Issues/
+    # ServiceNow) + PagerDuty resolve-sync -- fire-and-forget, never blocks
+    # or raises into this response. resolved_by is the acting workspace
+    # member's id when this call came from a member session (None for a
+    # token-authenticated caller) -- see api/middleware/auth.py's
+    # get_workspace_or_member, which sets member_id in the workspace dict.
+    # Wrapped in try/except at this call site too (belt-and-suspenders,
+    # same double-guard core/hitl.py's _fire_notification/
+    # _fire_ticketing_notification use) even though
+    # schedule_resolution_notification already guards its own
+    # asyncio.create_task scheduling -- a manual resolution response must
+    # never fail because of this best-effort side effect.
+    try:
+        from core.ticketing import schedule_resolution_notification
+
+        schedule_resolution_notification(
+            str(workspace["id"]),
+            {
+                "incident_id": incident_id,
+                "agent_id": row["agent_id"],
+                "resource_name": row.get("resource_name"),
+                "resource_group": row.get("resource_group"),
+                "metric_name": row.get("metric_name"),
+                "parsed_error": row.get("parsed_error"),
+                "resolution_note": note,
+                "resolved_at": resolved_at.isoformat(),
+                "cloud_provider": row.get("cloud_provider"),
+            },
+            resolved_by=workspace.get("member_id"),
+        )
+    except Exception as exc:
+        log.warning("[IncidentsRoute] Failed to schedule resolution ticketing for %s: %s", incident_id, exc)
 
     return ManualResolutionResponse(
         incident_id=incident_id,

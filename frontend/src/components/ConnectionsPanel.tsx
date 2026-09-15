@@ -6,15 +6,15 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle, Key, AlertTriangle } from 'lucide-react'
+import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle, Key, AlertTriangle, Ticket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CodeBlock } from '@/components/ui/code-block'
 import { cn } from '@/lib/utils'
 import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
-  connectAzureDevOps, connectK8sCluster, saveLlmKey,
+  connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira,
 } from '@/lib/api'
-import type { ConnectionsStatus, AwsRoleSetup } from '@/lib/types'
+import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus } from '@/lib/types'
 
 // Connects a workspace's real credentials to the core platform's own
 // Agents 01 (CI/CD), 02 (K8s Alert), 05 (IAM), 06 (FinOps), 08 (Drift) --
@@ -75,6 +75,16 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Ticketing (Jira today; Linear/GitHub Issues/ServiceNow land in later
+  // phases of this build) -- fires on incident RESOLUTION, not creation.
+  // At most one ticketing channel at a time.
+  const [ticketingStatus, setTicketingStatus] = useState<TicketingStatus | null>(null)
+  const [jiraInstanceUrl, setJiraInstanceUrl] = useState('')
+  const [jiraApiToken, setJiraApiToken] = useState('')
+  const [jiraProjectKey, setJiraProjectKey] = useState('')
+  const [jiraIssueType, setJiraIssueType] = useState('Task')
+  const [jiraBusy, setJiraBusy] = useState(false)
+
   // GitHub -- item 4 App migration: no PAT form, just an install-URL redirect
   const [githubBusy, setGithubBusy] = useState(false)
 
@@ -113,7 +123,12 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
     setLoading(true)
     setError(null)
     try {
-      setStatus(await getConnectionsStatus(token))
+      const [connections, ticketing] = await Promise.all([
+        getConnectionsStatus(token),
+        getTicketingStatus(token),
+      ])
+      setStatus(connections)
+      setTicketingStatus(ticketing)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load connection status')
     } finally {
@@ -218,6 +233,25 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       setError(e instanceof Error ? e.message : 'Could not verify cluster access')
     } finally {
       setK8sBusy(false)
+    }
+  }
+
+  async function handleConnectJira() {
+    setJiraBusy(true)
+    setError(null)
+    try {
+      await connectJira(token, {
+        instance_url: jiraInstanceUrl.trim(),
+        api_token: jiraApiToken.trim(),
+        project_key: jiraProjectKey.trim(),
+        issue_type: jiraIssueType.trim() || 'Task',
+      })
+      setJiraApiToken('')
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not save that Jira connection')
+    } finally {
+      setJiraBusy(false)
     }
   }
 
@@ -459,6 +493,61 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
               onClick={handleConnectK8s}
             >
               {status.k8s_connected ? 'Update' : 'Verify'}
+            </Button>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          icon={Ticket}
+          title="Ticketing"
+          description="Automatically open a ticket when an incident resolves -- Jira today, more providers landing soon. A workspace can connect one ticketing system at a time."
+          connected={!!ticketingStatus?.channel}
+        >
+          {ticketingStatus?.channel && ticketingStatus.channel.channel_type !== 'jira' && (
+            <p className="mb-3 text-xs text-zinc-500">
+              Currently connected to <span className="font-mono text-zinc-300">{ticketingStatus.channel.channel_type}</span>.
+              Connecting Jira below will replace it.
+            </p>
+          )}
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={jiraInstanceUrl}
+              onChange={e => setJiraInstanceUrl(e.target.value)}
+              placeholder="Jira instance URL (e.g. https://acme.atlassian.net)"
+              className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+            />
+            <input
+              type="password"
+              value={jiraApiToken}
+              onChange={e => setJiraApiToken(e.target.value)}
+              placeholder="API token"
+              className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={jiraProjectKey}
+                onChange={e => setJiraProjectKey(e.target.value)}
+                placeholder="Project key (e.g. OPS)"
+                className="flex-1 rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <input
+                type="text"
+                value={jiraIssueType}
+                onChange={e => setJiraIssueType(e.target.value)}
+                placeholder="Issue type"
+                className="w-28 rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+            </div>
+            <Button
+              size="sm"
+              className="w-full"
+              disabled={jiraBusy || !jiraInstanceUrl.trim() || !jiraApiToken.trim() || !jiraProjectKey.trim()}
+              loading={jiraBusy}
+              onClick={handleConnectJira}
+            >
+              {ticketingStatus?.channel?.channel_type === 'jira' ? 'Update Jira connection' : 'Connect Jira'}
             </Button>
           </div>
         </SectionCard>

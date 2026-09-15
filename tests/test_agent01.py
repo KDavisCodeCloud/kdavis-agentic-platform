@@ -1025,8 +1025,13 @@ class TestHITLGate:
             await gate.get_approved_option(str(incident_uuid))
 
     async def test_mark_executed_updates_status(self, gate, mock_db, incident_uuid):
+        # Ticketing build (2026-09-15): mark_executed now does UPDATE ...
+        # RETURNING (via fetchrow, not a bare execute) so it can build a
+        # resolution-ticketing payload without a second round-trip -- see
+        # core/hitl.py's _fire_ticketing_notification / core/ticketing.py.
         await gate.mark_executed(str(incident_uuid), tokens_used=500)
-        mock_db.execute.assert_called_once()
-        query = mock_db.execute.call_args.args[0]
+        mock_db.fetchrow.assert_called_once()
+        query = mock_db.fetchrow.call_args.args[0]
         assert "UPDATE incidents" in query
-        assert "executed" in str(mock_db.execute.call_args.args)
+        assert "RETURNING" in query
+        assert "executed" in str(mock_db.fetchrow.call_args.args)
