@@ -32,6 +32,19 @@ What each test proves:
   test_execute_node_dispatches_github_rerun
     _execute_node calls tools.execute_option with the approved option and
     context derived from the state — no cloud call, just dispatch logic.
+
+  test_iac_failure_logs_pass_sanitizer_without_false_positive_redaction
+  test_iam_azure_log_still_gets_its_planted_key_redacted
+  test_diagnose_node_handles_each_iac_domain_and_cloud
+    Phase A of the IaC deploy-failure diagnosis build: prove the existing
+    sanitize -> diagnose pipeline is domain/cloud-agnostic -- a Terraform/
+    ARM/Bicep/CloudFormation log from any of the four infrastructure
+    domains (IAM/RBAC/Policy, Networking, Storage, Compute) x either cloud
+    (AWS, Azure) flows through exactly the same mechanics as an npm or
+    Docker log today. This does NOT (and
+    can't, offline) verify the LLM gives good Terraform/ARM/CFN-specific
+    advice -- prompts/diagnose.md's new categories are unverified beyond
+    this mechanical pass-through, same caveat documented in the plan.
 """
 
 import json
@@ -47,6 +60,7 @@ from tests.mocks.aws_fixtures import (
     MOCK_GITHUB_WEBHOOK_FAILURE,
 )
 from tests.mocks.azure_fixtures import MOCK_AZURE_DEVOPS_WEBHOOK_FAILURE
+from tests.mocks.iac_fixtures import IAC_DOMAIN_FIXTURES, MOCK_IAM_AZURE_FAILURE_LOG
 
 # Canonical mock LLM response — same shape the real router would return
 MOCK_LLM_DIAGNOSIS = json.dumps({
@@ -381,3 +395,59 @@ async def test_execute_node_dispatches_github_rerun(mock_db, workspace_id, mock_
 
     assert result["execution_result"]["status"] == "triggered"
     print(f"\n  execution_result={result['execution_result']}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase A — IaC deploy-failure diagnosis (Terraform / ARM / Bicep /
+# CloudFormation / cross-resource auth), organized by infrastructure domain
+# (IAM/RBAC/Policy, Networking, Storage, Compute) x cloud (AWS, Azure) --
+# mechanical pass-through only, see module docstring for what this does
+# and doesn't prove.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_iac_failure_logs_pass_sanitizer_without_false_positive_redaction():
+    """Resource names/ARNs/IDs in IaC failure logs must not be mistaken for
+    credentials -- a false-positive redaction would remove exactly the
+    detail (bucket name, resource group, subnet ID) the diagnosis needs."""
+    for kind, log in IAC_DOMAIN_FIXTURES.items():
+        result = shield.sanitize(log, context="test_local")
+        if kind == "iam_azure":
+            continue  # this one intentionally plants a real-shaped key, checked separately
+        assert result.redaction_count == 0, (
+            f"{kind} log triggered {result.redaction_count} false-positive redaction(s)"
+        )
+        assert result.sanitized_text == log, f"{kind} log was altered by the sanitizer"
+    print(f"\n  checked {len(IAC_DOMAIN_FIXTURES) - 1} IaC logs, zero false-positive redactions")
+
+
+def test_iam_azure_log_still_gets_its_planted_key_redacted():
+    """The one fixture with a real-shaped credential must still be caught --
+    proves the sanitizer runs on this new log category, not skipped."""
+    result = shield.sanitize(MOCK_IAM_AZURE_FAILURE_LOG, context="test_local")
+
+    assert "AKIAIOSFODNN7EXAMPLE" not in result.sanitized_text
+    assert "[REDACTED" in result.sanitized_text
+    assert "KeyVaultReference resolution failed" in result.sanitized_text, (
+        "the actual error detail must survive redaction, only the key should go"
+    )
+    print(f"\n  redaction_count={result.redaction_count}")
+
+
+async def test_diagnose_node_handles_each_iac_domain_and_cloud(mock_db, workspace_id, mock_router):
+    """_diagnose_node's sanitize -> LLM -> parse pipeline must work
+    identically regardless of domain or cloud -- same mechanics test as
+    test_diagnose_node_returns_three_options, run across all 8 fixtures
+    (4 domains x AWS/Azure)."""
+    for kind, log in IAC_DOMAIN_FIXTURES.items():
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _github_state(workspace_id)
+        state["log_excerpt"] = log
+
+        with patch.object(wf.budget, "assert_budget_available"):
+            result = await wf._diagnose_node(state)
+
+        assert result.get("error") is None, f"{kind}: unexpected error {result.get('error')}"
+        assert result["parsed_error"] is not None, f"{kind}: parsed_error missing"
+        assert len(result["remediation_options"]) == 3, f"{kind}: expected 3 options"
+    print(f"\n  all {len(IAC_DOMAIN_FIXTURES)} domain/cloud IaC failure logs passed diagnose_node cleanly")
