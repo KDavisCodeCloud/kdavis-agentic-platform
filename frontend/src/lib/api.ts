@@ -6,6 +6,7 @@ import type {
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
   DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
   ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput, LinearConnectInput, GithubIssuesConnectInput,
+  ServiceNowConnectInput,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -13,7 +14,7 @@ import {
   getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
   getMockConnectionsStatus, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
   mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s, mockSaveLlmKey,
-  getMockTicketingStatus, mockConnectJira, mockConnectLinear, mockConnectGithubIssues,
+  getMockTicketingStatus, mockConnectJira, mockConnectLinear, mockConnectGithubIssues, mockConnectServiceNow,
 } from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -780,6 +781,20 @@ export async function connectGithubIssues(
 ): Promise<{ channel_type: string; enabled: boolean }> {
   if (MOCK_MODE) return mockConnectGithubIssues(body)
   return request<{ channel_type: string; enabled: boolean }>('/workspace/ticketing/github-issues', token, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+// Enterprise tier only -- the backend 402s on starter/growth; this call
+// site does not pre-check tier client-side beyond hiding the form (see
+// ConnectionsPanel.tsx), the server enforcement is what actually matters.
+export async function connectServiceNow(
+  token: string,
+  body: ServiceNowConnectInput,
+): Promise<{ channel_type: string; enabled: boolean }> {
+  if (MOCK_MODE) return mockConnectServiceNow(body)
+  return request<{ channel_type: string; enabled: boolean }>('/workspace/ticketing/servicenow', token, {
     method: 'PATCH',
     body: JSON.stringify(body),
   })

@@ -172,6 +172,77 @@ class TestConnectGithubIssues:
             wt_routes.ConnectGithubIssuesRequest(repo="not-a-valid-repo")
 
 
+class TestConnectServiceNow:
+    def _servicenow_request(self, tier: str) -> wt_routes.ConnectServiceNowRequest:
+        return wt_routes.ConnectServiceNowRequest(
+            instance_url="https://acme.service-now.com",
+            username="cd_integration",
+            password="secret-pass",
+            assignment_group="cloud-ops",
+        )
+
+    async def test_rejects_starter_tier_with_402(self):
+        request, conn = _make_request()
+        workspace_id = uuid4()
+
+        with pytest.raises(HTTPException) as exc:
+            await wt_routes.connect_servicenow(
+                self._servicenow_request("starter"),
+                request,
+                workspace={"id": workspace_id, "product_tier": "starter"},
+            )
+        assert exc.value.status_code == 402
+        assert "Enterprise" in exc.value.detail
+        conn.execute.assert_not_awaited()
+
+    async def test_rejects_growth_tier_with_402(self):
+        request, conn = _make_request()
+        workspace_id = uuid4()
+
+        with pytest.raises(HTTPException) as exc:
+            await wt_routes.connect_servicenow(
+                self._servicenow_request("growth"),
+                request,
+                workspace={"id": workspace_id, "product_tier": "growth"},
+            )
+        assert exc.value.status_code == 402
+        conn.execute.assert_not_awaited()
+
+    async def test_succeeds_on_enterprise_tier_and_never_echoes_password(self):
+        request, conn = _make_request()
+        workspace_id = uuid4()
+
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            result = await wt_routes.connect_servicenow(
+                self._servicenow_request("enterprise"),
+                request,
+                workspace={"id": workspace_id, "product_tier": "enterprise"},
+            )
+
+        assert result.channel_type == "servicenow"
+        assert result.enabled is True
+        assert "password" not in result.model_dump()
+
+        conn.execute.assert_awaited_once()
+        sql, *params = conn.execute.await_args.args
+        assert "workspace_notification_channels" in sql
+        assert "servicenow" in params
+        assert "secret-pass" not in params
+
+    async def test_missing_product_tier_defaults_to_starter_and_is_rejected(self):
+        """No product_tier key at all (e.g. an old/odd workspace row) must
+        fail closed -- default to starter, not silently allow Enterprise
+        access."""
+        request, conn = _make_request()
+        with pytest.raises(HTTPException) as exc:
+            await wt_routes.connect_servicenow(
+                self._servicenow_request("unknown"),
+                request,
+                workspace={"id": uuid4()},
+            )
+        assert exc.value.status_code == 402
+
+
 class TestGetTicketingStatus:
     async def test_no_channel_configured_returns_none(self):
         request, conn = _make_request()

@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
   connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear, connectGithubIssues,
+  connectServiceNow,
 } from '@/lib/api'
 import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus } from '@/lib/types'
 
@@ -22,10 +23,13 @@ import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus } from '@/lib/typ
 // *agent* tabs, which proxies to the separately-deployed satellite products
 // instead. Backend: api/routes/workspace_credentials.py (migration 022).
 
-const TICKETING_PROVIDER_LABELS: Record<'jira' | 'linear' | 'github_issues', string> = {
+type TicketingProvider = 'jira' | 'linear' | 'github_issues' | 'servicenow'
+
+const TICKETING_PROVIDER_LABELS: Record<TicketingProvider, string> = {
   jira: 'Jira',
   linear: 'Linear',
   github_issues: 'GitHub Issues',
+  servicenow: 'ServiceNow',
 }
 
 interface ConnectionsPanelProps {
@@ -87,7 +91,7 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   // switches which config form is shown, matching whichever channel (if
   // any) is already connected.
   const [ticketingStatus, setTicketingStatus] = useState<TicketingStatus | null>(null)
-  const [ticketingProvider, setTicketingProvider] = useState<'jira' | 'linear' | 'github_issues'>('jira')
+  const [ticketingProvider, setTicketingProvider] = useState<TicketingProvider>('jira')
   const [jiraInstanceUrl, setJiraInstanceUrl] = useState('')
   const [jiraApiToken, setJiraApiToken] = useState('')
   const [jiraProjectKey, setJiraProjectKey] = useState('')
@@ -98,6 +102,11 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [linearBusy, setLinearBusy] = useState(false)
   const [githubIssuesRepo, setGithubIssuesRepo] = useState('')
   const [githubIssuesBusy, setGithubIssuesBusy] = useState(false)
+  const [snowInstanceUrl, setSnowInstanceUrl] = useState('')
+  const [snowUsername, setSnowUsername] = useState('')
+  const [snowPassword, setSnowPassword] = useState('')
+  const [snowAssignmentGroup, setSnowAssignmentGroup] = useState('')
+  const [snowBusy, setSnowBusy] = useState(false)
 
   // GitHub -- item 4 App migration: no PAT form, just an install-URL redirect
   const [githubBusy, setGithubBusy] = useState(false)
@@ -146,7 +155,8 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       if (
         ticketing.channel?.channel_type === 'jira' ||
         ticketing.channel?.channel_type === 'linear' ||
-        ticketing.channel?.channel_type === 'github_issues'
+        ticketing.channel?.channel_type === 'github_issues' ||
+        ticketing.channel?.channel_type === 'servicenow'
       ) {
         setTicketingProvider(ticketing.channel.channel_type)
       }
@@ -300,6 +310,25 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       setError(e instanceof Error ? e.message : 'Could not save that GitHub Issues connection')
     } finally {
       setGithubIssuesBusy(false)
+    }
+  }
+
+  async function handleConnectServiceNow() {
+    setSnowBusy(true)
+    setError(null)
+    try {
+      await connectServiceNow(token, {
+        instance_url: snowInstanceUrl.trim(),
+        username: snowUsername.trim(),
+        password: snowPassword.trim(),
+        assignment_group: snowAssignmentGroup.trim(),
+      })
+      setSnowPassword('')
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not save that ServiceNow connection')
+    } finally {
+      setSnowBusy(false)
     }
   }
 
@@ -548,7 +577,7 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
         <SectionCard
           icon={Ticket}
           title="Ticketing"
-          description="Automatically open a ticket when an incident resolves -- Jira, Linear, and GitHub Issues today, more providers landing soon. A workspace can connect one ticketing system at a time."
+          description="Automatically open a ticket when an incident resolves -- Jira, Linear, GitHub Issues, and ServiceNow (Enterprise) today. A workspace can connect one ticketing system at a time."
           connected={!!ticketingStatus?.channel}
         >
           {ticketingStatus?.channel && ticketingStatus.channel.channel_type !== ticketingProvider && (
@@ -559,7 +588,11 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
           )}
 
           <div className="mb-3 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
-            {(['jira', 'linear', 'github_issues'] as const).map(provider => (
+            {(
+              ticketingStatus?.product_tier === 'enterprise'
+                ? (['jira', 'linear', 'github_issues', 'servicenow'] as const)
+                : (['jira', 'linear', 'github_issues'] as const)
+            ).map(provider => (
               <button
                 key={provider}
                 type="button"
@@ -644,7 +677,7 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                 {ticketingStatus?.channel?.channel_type === 'linear' ? 'Update Linear connection' : 'Connect Linear'}
               </Button>
             </div>
-          ) : (
+          ) : ticketingProvider === 'github_issues' ? (
             <div className="space-y-2">
               <p className="text-xs text-zinc-500">
                 Uses the GitHub App connection above -- install it first if you haven&apos;t. Only the repo is
@@ -667,6 +700,55 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                 {ticketingStatus?.channel?.channel_type === 'github_issues'
                   ? 'Update GitHub Issues connection'
                   : 'Connect GitHub Issues'}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-zinc-500">Enterprise tier only.</p>
+              <input
+                type="text"
+                value={snowInstanceUrl}
+                onChange={e => setSnowInstanceUrl(e.target.value)}
+                placeholder="Instance URL (e.g. https://acme.service-now.com)"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <input
+                type="text"
+                value={snowUsername}
+                onChange={e => setSnowUsername(e.target.value)}
+                placeholder="Username"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <input
+                type="password"
+                value={snowPassword}
+                onChange={e => setSnowPassword(e.target.value)}
+                placeholder="Password"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <input
+                type="text"
+                value={snowAssignmentGroup}
+                onChange={e => setSnowAssignmentGroup(e.target.value)}
+                placeholder="Assignment group"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={
+                  snowBusy ||
+                  !snowInstanceUrl.trim() ||
+                  !snowUsername.trim() ||
+                  !snowPassword.trim() ||
+                  !snowAssignmentGroup.trim()
+                }
+                loading={snowBusy}
+                onClick={handleConnectServiceNow}
+              >
+                {ticketingStatus?.channel?.channel_type === 'servicenow'
+                  ? 'Update ServiceNow connection'
+                  : 'Connect ServiceNow'}
               </Button>
             </div>
           )}

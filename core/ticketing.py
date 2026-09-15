@@ -385,6 +385,64 @@ async def create_github_issue_ticket(
     return {"external_id": str(issue_number), "ticket_url": issue.get("html_url", "")}
 
 
+# ── ServiceNow (Phase 5, Enterprise tier only) ───────────────────────────
+
+async def create_servicenow_ticket(config: dict, incident_summary: dict, resolved_by: Optional[str]) -> dict:
+    """
+    POSTs a change_request to ServiceNow's Table API, state=closed (the
+    incident already resolved by the time this fires). Basic Auth with
+    the workspace's stored ServiceNow username/password -- ServiceNow's
+    Table API supports OAuth too, but Basic Auth against a dedicated
+    integration user is the documented baseline and matches this
+    provider's config shape (username + password, no OAuth client
+    registration step for the customer to do).
+
+    GAP, stated plainly: ServiceNow's `state` field for change_request is
+    normally a numeric choice-list value whose actual codes vary per
+    instance (a customer's ServiceNow admin can remap them) -- there is
+    no universal "closed" constant. This sends the literal string
+    "closed" per the spec's own wording; a real customer's instance may
+    require a numeric code instead (commonly "3" or "7" for Closed/
+    Complete, but not guaranteed). Flagged here rather than silently
+    guessing a numeric value that might be wrong for a given instance.
+
+    Raises on failure -- callers (notify_resolution) catch and log.
+    """
+    instance_url = config["instance_url"].rstrip("/")
+    username = config["username"]
+    password = config["password"]
+    assignment_group = config.get("assignment_group")
+
+    if incident_summary.get("resolution_note"):
+        short_description = f"Cloud Decoded incident resolved manually: {_summary_line(incident_summary)}"
+    else:
+        short_description = f"Cloud Decoded incident resolved: {_summary_line(incident_summary)}"
+
+    payload = {
+        "short_description": short_description[:160],
+        "work_notes": _build_narrative(incident_summary),
+        "state": "closed",
+    }
+    if assignment_group:
+        payload["assignment_group"] = assignment_group
+
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{instance_url}/api/now/table/change_request",
+            auth=(username, password),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            json=payload,
+        )
+        response.raise_for_status()
+
+    body = response.json()
+    result = body.get("result", {})
+    sys_id = result.get("sys_id", "")
+    number = result.get("number", sys_id)
+    ticket_url = f"{instance_url}/nav_to.do?uri=change_request.do?sys_id={sys_id}" if sys_id else ""
+    return {"external_id": number, "ticket_url": ticket_url}
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────
 
 async def _dispatch_ticket(
@@ -401,6 +459,8 @@ async def _dispatch_ticket(
         return await create_linear_ticket(config, incident_summary, resolved_by)
     if channel_type == "github_issues":
         return await create_github_issue_ticket(conn, workspace_id, config, incident_summary, resolved_by)
+    if channel_type == "servicenow":
+        return await create_servicenow_ticket(config, incident_summary, resolved_by)
     raise ValueError(f"No ticketing sender registered for channel_type={channel_type!r}")
 
 

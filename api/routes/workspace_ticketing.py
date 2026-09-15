@@ -27,6 +27,10 @@ notification channels can coexist, but this is a different category
 PATCH  /workspace/ticketing/jira            -- set/update Jira config
 PATCH  /workspace/ticketing/linear          -- set/update Linear config
 PATCH  /workspace/ticketing/github-issues   -- set/update GitHub Issues config
+PATCH  /workspace/ticketing/servicenow      -- set/update ServiceNow config
+                                                (Enterprise tier only -- 402 otherwise,
+                                                same pattern as core/compliance.py's
+                                                WorkspaceComplianceGuard 402s)
 GET    /workspace/ticketing                 -- current ticketing channel status
                                                 (never returns decrypted secrets)
 """
@@ -61,6 +65,14 @@ class ConnectLinearRequest(BaseModel):
     enabled: bool = True
 
 
+class ConnectServiceNowRequest(BaseModel):
+    instance_url: str = Field(..., min_length=1)
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    assignment_group: str = Field(..., min_length=1)
+    enabled: bool = True
+
+
 class ConnectGithubIssuesRequest(BaseModel):
     # "owner/repo" -- no credentials here at all. create_github_issue_ticket
     # reuses the workspace's existing GitHub App installation token via
@@ -77,6 +89,10 @@ class TicketingChannelStatusResponse(BaseModel):
 
 class TicketingStatusResponse(BaseModel):
     channel: TicketingChannelStatusResponse | None = None
+    # Surfaced so the frontend can gate the ServiceNow form to Enterprise-
+    # tier workspaces without a second round-trip -- ConnectionsPanel.tsx
+    # already calls this endpoint on load.
+    product_tier: str = "starter"
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────────
@@ -104,6 +120,25 @@ async def _assert_no_conflicting_ticketing_channel(request: Request, workspace_i
                 f"This workspace already has a '{existing}' ticketing channel configured. "
                 "A workspace may have only one ticketing integration at a time -- "
                 "remove the existing one before connecting a different provider."
+            ),
+        )
+
+
+def _assert_enterprise_tier(workspace: dict) -> None:
+    """
+    ServiceNow is Enterprise-only. Same 402 pattern api/routes/agents.py
+    uses for core/compliance.py's WorkspaceComplianceGuard SubscriptionError
+    (tier_limit reason) -- raised directly here rather than routed through
+    WorkspaceComplianceGuard itself, since this is a config-save gate on a
+    specific integration, not an agent-invocation permission check.
+    """
+    tier = workspace.get("product_tier", "starter")
+    if tier in ("starter", "growth"):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                f"ServiceNow integration requires Enterprise tier (current: {tier}) -- "
+                "upgrade at cloud-decoded.com or contact sales"
             ),
         )
 
@@ -189,6 +224,35 @@ async def connect_github_issues(
     return TicketingChannelStatusResponse(channel_type="github_issues", enabled=body.enabled)
 
 
+@router.patch("/servicenow", response_model=TicketingChannelStatusResponse)
+async def connect_servicenow(
+    body: ConnectServiceNowRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> TicketingChannelStatusResponse:
+    """Enterprise tier only -- 402 on starter/growth, checked before the
+    one-ticketing-channel conflict check so a blocked workspace gets the
+    billing reason, not a confusing 409 about a channel it can't connect
+    anyway."""
+    _assert_enterprise_tier(workspace)
+    workspace_id = workspace["id"]
+    await _assert_no_conflicting_ticketing_channel(request, workspace_id, "servicenow")
+    await _upsert_ticketing_channel(
+        request,
+        workspace_id,
+        "servicenow",
+        {
+            "instance_url": body.instance_url,
+            "username": body.username,
+            "password": body.password,
+            "assignment_group": body.assignment_group,
+        },
+        body.enabled,
+    )
+    log.info("[WorkspaceTicketing] ServiceNow channel configured workspace=%s", workspace_id)
+    return TicketingChannelStatusResponse(channel_type="servicenow", enabled=body.enabled)
+
+
 @router.get("", response_model=TicketingStatusResponse)
 async def get_ticketing_status(
     request: Request,
@@ -207,8 +271,10 @@ async def get_ticketing_status(
             workspace["id"],
             list(TICKETING_CHANNEL_TYPES),
         )
+    tier = workspace.get("product_tier", "starter")
     if row is None:
-        return TicketingStatusResponse(channel=None)
+        return TicketingStatusResponse(channel=None, product_tier=tier)
     return TicketingStatusResponse(
-        channel=TicketingChannelStatusResponse(channel_type=row["channel_type"], enabled=row["enabled"])
+        channel=TicketingChannelStatusResponse(channel_type=row["channel_type"], enabled=row["enabled"]),
+        product_tier=tier,
     )

@@ -229,6 +229,16 @@ export interface TicketingChannelStatus {
 
 export interface TicketingStatus {
   channel: TicketingChannelStatus | null
+  // Only used to gate the ServiceNow form to Enterprise-tier workspaces --
+  // the config-save endpoint enforces the real 402 either way.
+  product_tier: string
+}
+
+export interface ServiceNowConnectInput {
+  instance_url: string
+  username: string
+  password: string
+  assignment_group: string
 }
 
 export interface JiraConnectInput {

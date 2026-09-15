@@ -310,6 +310,90 @@ class TestDispatchTicketRoutesGithubIssues:
         assert mock_audit.call_args.kwargs["metadata"]["provider"] == "github_issues"
 
 
+class TestCreateServiceNowTicket:
+    def _client(self, status_code: int = 201, result: dict | None = None):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.json = MagicMock(return_value={"result": result or {"sys_id": "abc123", "number": "CHG0001234"}})
+        resp.raise_for_status = MagicMock()
+        if status_code >= 400:
+            resp.raise_for_status.side_effect = Exception(f"HTTP {status_code}")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=resp)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client, resp
+
+    async def test_posts_change_request_with_basic_auth_and_closed_state(self):
+        client, _ = self._client()
+        config = {
+            "instance_url": "https://acme.service-now.com",
+            "username": "cd_integration",
+            "password": "secret-pass",
+            "assignment_group": "cloud-ops",
+        }
+        incident_summary = {"incident_id": "abc", "parsed_error": "CPU high", "cloud_provider": "azure"}
+
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            result = await ticketing.create_servicenow_ticket(config, incident_summary, resolved_by=None)
+
+        url = client.post.await_args.args[0]
+        assert url == "https://acme.service-now.com/api/now/table/change_request"
+        assert client.post.await_args.kwargs["auth"] == ("cd_integration", "secret-pass")
+
+        payload = client.post.await_args.kwargs["json"]
+        assert payload["state"] == "closed"
+        assert payload["assignment_group"] == "cloud-ops"
+        assert "CPU high" in payload["work_notes"]
+
+        assert result["external_id"] == "CHG0001234"
+        assert "abc123" in result["ticket_url"]
+
+    async def test_manual_resolution_note_in_short_description_and_work_notes(self):
+        client, _ = self._client()
+        config = {
+            "instance_url": "https://acme.service-now.com", "username": "u", "password": "p", "assignment_group": "g",
+        }
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            await ticketing.create_servicenow_ticket(
+                config, {"incident_id": "x", "resolution_note": "Fixed by hand"}, resolved_by="member-1",
+            )
+        payload = client.post.await_args.kwargs["json"]
+        assert "resolved manually" in payload["short_description"].lower()
+        assert "Fixed by hand" in payload["work_notes"]
+
+    async def test_raises_on_http_error(self):
+        client, _ = self._client(status_code=401)
+        config = {
+            "instance_url": "https://acme.service-now.com", "username": "u", "password": "p", "assignment_group": "g",
+        }
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            with pytest.raises(Exception):
+                await ticketing.create_servicenow_ticket(config, {"incident_id": "x"}, resolved_by=None)
+
+
+class TestDispatchTicketRoutesServiceNow:
+    async def test_notify_resolution_dispatches_servicenow_channel(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[None, {"channel_type": "servicenow", "config_encrypted": "enc-sn"}])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.ticketing.os.environ.get", return_value="postgresql://x"),
+            patch("core.ticketing.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.ticketing.decrypt", return_value=json.dumps({
+                "instance_url": "https://x.service-now.com", "username": "u", "password": "p", "assignment_group": "g",
+            })),
+            patch("core.ticketing.create_servicenow_ticket", new=AsyncMock(return_value={"external_id": "CHG1", "ticket_url": "https://x/CHG1"})) as mock_sn,
+            patch("core.ticketing.schedule_audit_event") as mock_audit,
+        ):
+            await ticketing.notify_resolution("ws-1", {"incident_id": "i-1", "agent_id": "agent_06_finops"})
+
+        mock_sn.assert_awaited_once()
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args.kwargs["metadata"]["provider"] == "servicenow"
+
+
 class TestDispatchPagerdutyResolve:
     """Phase 3: PagerDuty resolution sync -- reuses the workspace's
     existing PagerDuty *notification* channel (a separate category from
