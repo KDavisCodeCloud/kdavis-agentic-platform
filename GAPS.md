@@ -894,3 +894,21 @@ across 10 more agents would mean maintaining two separate fallback
 mechanisms doing overlapping jobs. Once Phase 10 lands, Agent 11's
 LLM-specific fallback here should be reconciled with it rather than
 kept as a separate special case.
+
+**RESOLVED 2026-09-15 (Phase 10).** `core/hitl.py` gained
+`create_failed_incident()` and all 11 agents' `_hitl_gate_node` now call
+it from the upstream-error branch instead of silently `return {}`-ing --
+Agent 11's LLM-exhaustion path (the degraded-diagnosis fallback added
+above) was left as-is since it deliberately avoids setting
+`state["error"]` at all (producing a normal, non-failed diagnosis
+instead), so it doesn't hit `create_failed_incident` and isn't a
+duplicate of it -- the two mechanisms are complementary, not competing:
+Agent 11 tries to give the operator something actionable when only the
+LLM step failed; `create_failed_incident` is the catch-all for every
+other kind of node failure, across all 11 agents. `execution_status =
+'failed'` is now a real, queryable state platform-wide. Structured JSON
+logging (`core/json_logging.py`) also shipped in this phase -- Railway
+logs are now one JSON object per line with `extra={}` fields (
+`workspace_id`, `agent_id`, `incident_id`, provider/retry fields on LLM
+calls, subscription/budget-block reasons on webhook ingestion) promoted
+to top-level queryable keys, instead of opaque message strings.

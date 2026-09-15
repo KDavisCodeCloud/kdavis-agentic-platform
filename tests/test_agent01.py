@@ -779,15 +779,22 @@ class TestCICDTriageHITLGateNode:
     async def test_skips_incident_creation_when_error_set(
         self, mock_db, workspace_id, mock_router
     ):
+        """Phase 10, scale-readiness build: an upstream error no longer
+        skips incident creation entirely -- it creates a real
+        execution_status='failed' incident (via create_failed_incident,
+        a single INSERT) instead of the normal create_incident flow."""
         wf = _make_workflow(mock_db, workspace_id, mock_router)
         state = _base_cicd_state(workspace_id)
         state["error"] = "LLM parse failed upstream"
 
         mock_db.fetchrow.reset_mock()
-        await wf._hitl_gate_node(state)
+        mock_db.fetchrow.return_value = {"id": "11111111-1111-1111-1111-111111111111"}
+        result = await wf._hitl_gate_node(state)
 
-        # create_incident must NOT be called when there was an upstream error
-        mock_db.fetchrow.assert_not_called()
+        mock_db.fetchrow.assert_called_once()
+        insert_sql = mock_db.fetchrow.await_args.args[0]
+        assert "INSERT INTO incidents" in insert_sql
+        assert result == {"incident_id": "11111111-1111-1111-1111-111111111111"}
 
     async def test_returns_incident_id_and_selected_option(
         self, mock_db, workspace_id, mock_router

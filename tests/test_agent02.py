@@ -656,11 +656,17 @@ class TestK8sHITLGateNode:
         assert "options" in payload
 
     async def test_skips_incident_creation_when_error_set(self, mock_db, workspace_id, mock_router):
+        """Phase 10, scale-readiness build: creates a real
+        execution_status='failed' incident instead of skipping entirely."""
         wf = _make_workflow(mock_db, workspace_id, mock_router)
         state = _base_k8s_state(workspace_id)
         state["error"] = "LLM parse failed"
 
         mock_db.fetchrow.reset_mock()
-        await wf._hitl_gate_node(state)
+        mock_db.fetchrow.return_value = {"id": "11111111-1111-1111-1111-111111111111"}
+        result = await wf._hitl_gate_node(state)
 
-        mock_db.fetchrow.assert_not_called()
+        mock_db.fetchrow.assert_called_once()
+        insert_sql = mock_db.fetchrow.await_args.args[0]
+        assert "INSERT INTO incidents" in insert_sql
+        assert result == {"incident_id": "11111111-1111-1111-1111-111111111111"}

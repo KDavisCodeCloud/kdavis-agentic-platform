@@ -177,7 +177,10 @@ class HITLGate:
 
         created_id = str(row["id"])
         self._write_audit_entry(workspace_id, agent_id, created_id, "created", tokens_used)
-        log.info(f"[HITL] Incident {created_id} created — awaiting operator approval")
+        log.info(
+            f"[HITL] Incident {created_id} created — awaiting operator approval",
+            extra={"workspace_id": workspace_id, "agent_id": agent_id, "incident_id": created_id},
+        )
         return created_id
 
     async def find_open_incident(
@@ -328,6 +331,58 @@ class HITLGate:
             UUID(incident_id),
         )
         self._write_audit_entry("unknown", "hitl_gate", incident_id, f"failed:{reason}", 0)
+
+    async def create_failed_incident(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        error_message: str,
+        raw_log: str = "",
+        cloud_provider: Optional[str] = None,
+    ) -> str:
+        """
+        Persist a FAILED incident directly -- no interrupt(), no operator
+        approval needed, since there's nothing to approve when diagnosis
+        itself never completed. Phase 10, scale-readiness build: this is
+        what makes "all failed runs for workspace X in the last 24 hours"
+        a single query against incidents (WHERE execution_status =
+        'failed') instead of a cross-system stitch between audit_events
+        and Sentry.
+
+        Called from every agent's _hitl_gate_node when state["error"] is
+        set -- previously that branch just logged and returned {},
+        skipping incident creation entirely and silently dropping the
+        run with no queryable trace.
+        """
+        raw_log_hash = hashlib.sha256(raw_log.encode()).hexdigest()
+        row = await self._db.fetchrow(
+            """
+            INSERT INTO incidents (
+                workspace_id, agent_id, cloud_provider, raw_log_hash,
+                parsed_error, remediation_options, execution_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id
+            """,
+            workspace_id,
+            agent_id,
+            cloud_provider,
+            raw_log_hash,
+            error_message,
+            json.dumps([]),
+            STATUS_FAILED,
+        )
+        created_id = str(row["id"])
+        self._write_audit_entry(workspace_id, agent_id, created_id, "failed", 0)
+        log.info(
+            f"[HITL] Incident {created_id} created with status=failed — {error_message[:100]}",
+            extra={
+                "workspace_id": workspace_id,
+                "agent_id": agent_id,
+                "incident_id": created_id,
+                "execution_status": STATUS_FAILED,
+            },
+        )
+        return created_id
 
     def _write_audit_entry(
         self,

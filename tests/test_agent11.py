@@ -652,15 +652,20 @@ class TestHITLGateNode:
         mock_interrupt.assert_called_once()
         assert result["incident_id"] == str(incident_uuid)
 
-    async def test_skips_when_error_set(self, mock_db, workspace_id, mock_router):
+    async def test_creates_failed_incident_when_error_set(self, mock_db, workspace_id, mock_router):
+        """Phase 10, scale-readiness build: creates a real
+        execution_status='failed' incident instead of skipping entirely."""
         wf = _make_workflow(mock_db, workspace_id, mock_router)
         state = _base_state(workspace_id)
         state["error"] = "LLM parse failed upstream"
+        mock_db.fetchrow.return_value = {"id": "11111111-1111-1111-1111-111111111111"}
 
         result = await wf._hitl_gate_node(state)
 
-        assert result == {}
-        mock_db.fetchrow.assert_not_called()
+        assert result == {"incident_id": "11111111-1111-1111-1111-111111111111"}
+        mock_db.fetchrow.assert_called_once()
+        insert_sql = mock_db.fetchrow.await_args.args[0]
+        assert "INSERT INTO incidents" in insert_sql
 
 
 # ──────────────────────────────────────────────────────────────────────────────

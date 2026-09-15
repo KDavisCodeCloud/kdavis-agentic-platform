@@ -1195,12 +1195,14 @@ class TestHITLGateNode:
 
         mock_hitl = AsyncMock()
         mock_hitl.create_incident = AsyncMock()
+        mock_hitl.create_failed_incident = AsyncMock(return_value="failed-incident-1")
         wf.hitl = mock_hitl
 
         result = await wf._hitl_gate_node(state)
 
         mock_hitl.create_incident.assert_not_called()
-        assert result == {}
+        mock_hitl.create_failed_incident.assert_awaited_once()
+        assert result == {"incident_id": "failed-incident-1"}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -329,7 +329,14 @@ class K8sAlertWorkflow(BaseAgent):
         """
         if state.get("error"):
             log.error("[Agent02] Skipping HITL gate due to upstream error: %s", state["error"])
-            return {}
+            incident_id = await self.hitl.create_failed_incident(
+                workspace_id=self.workspace_id,
+                agent_id=self.agent_id,
+                error_message=state["error"],
+                raw_log=state.get("log_excerpt", ""),
+                cloud_provider=state.get("cloud_provider"),
+            )
+            return {"incident_id": incident_id}
 
         incident_id = await self.hitl.create_incident(
             workspace_id=self.workspace_id,

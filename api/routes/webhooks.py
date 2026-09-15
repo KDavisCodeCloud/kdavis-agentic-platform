@@ -532,10 +532,16 @@ async def _run_cicd_triage(
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         # Update incident to budget_exceeded if it was created before the error
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
@@ -592,10 +598,16 @@ async def _run_k8s_alert_triage(
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -645,10 +657,16 @@ async def _run_resource_health_alert(
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -696,10 +714,16 @@ async def _run_pr_review(
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -748,10 +772,16 @@ async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: st
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -795,10 +825,16 @@ async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider:
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -842,10 +878,16 @@ async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) 
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -887,10 +929,16 @@ async def _run_runbook(app, workspace: dict, payload: dict, cloud_provider: str)
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -941,10 +989,16 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -986,10 +1040,16 @@ async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provi
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "
@@ -1033,10 +1093,16 @@ async def _run_dependency_patch(app, workspace: dict, payload: dict, cloud_provi
             )
 
     except SubscriptionError as exc:
-        log.error("[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Subscription blocked for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "block_reason": str(exc)},
+        )
 
     except BudgetExceededError as exc:
-        log.error("[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc)
+        log.error(
+            "[Webhooks] Budget exceeded for workspace %s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id, "budget_error": str(exc)},
+        )
         async with app.state.db_pool.acquire() as conn:
             await conn.execute(
                 "UPDATE incidents SET execution_status = 'budget_exceeded' "

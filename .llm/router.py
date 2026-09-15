@@ -62,7 +62,8 @@ def _call_with_retry(dispatch_fn, model, messages, system, max_tokens, temperatu
             backoff = _BASE_BACKOFF_SECONDS * (2**attempt) + random.uniform(0, 1)
             log.warning(
                 f"Transient error on '{provider}' attempt {attempt + 1}/{_MAX_RETRIES + 1}: "
-                f"{exc} — retrying in {backoff:.1f}s"
+                f"{exc} — retrying in {backoff:.1f}s",
+                extra={"provider": provider, "attempt": attempt + 1, "transient_error": str(exc)},
             )
             time.sleep(backoff)
 
@@ -202,15 +203,25 @@ def complete(
                 PROVIDER_DISPATCH[provider], model, messages, system_prompt, _max_tokens, _temperature, provider,
             )
             elapsed = round(time.time() - start, 2)
-            log.info(f"Success — {provider} / {model} / {elapsed}s")
+            log.info(
+                f"Success — {provider} / {model} / {elapsed}s",
+                extra={"provider": provider, "model": model, "task_type": task_type, "elapsed_seconds": elapsed},
+            )
             _write_audit_log(config, provider, model, task_type, elapsed)
             return result
 
         except Exception as e:
-            log.warning(f"Provider '{provider}' failed: {e}")
+            log.warning(
+                f"Provider '{provider}' failed: {e}",
+                extra={"provider": provider, "task_type": task_type, "provider_error": str(e)},
+            )
             last_error = e
             continue
 
+    log.error(
+        f"All providers exhausted for task '{task_type}'. Last error: {last_error}",
+        extra={"task_type": task_type, "attempted_providers": attempt_order, "last_error": str(last_error)},
+    )
     raise RuntimeError(f"All providers exhausted. Last error: {last_error}")
 
 

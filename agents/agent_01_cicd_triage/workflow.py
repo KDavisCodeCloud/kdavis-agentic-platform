@@ -279,7 +279,14 @@ class CICDTriageWorkflow(BaseAgent):
         """
         if state.get("error"):
             log.error("[Agent01] Skipping HITL gate due to upstream error: %s", state["error"])
-            return {}
+            incident_id = await self.hitl.create_failed_incident(
+                workspace_id=self.workspace_id,
+                agent_id=self.agent_id,
+                error_message=state["error"],
+                raw_log=state.get("log_excerpt", ""),
+                cloud_provider=state.get("cloud_provider"),
+            )
+            return {"incident_id": incident_id}
 
         # Save incident to DB before pausing -- incident_id is pre-generated
         # in run() and equals the LangGraph checkpoint thread_id (see run()'s

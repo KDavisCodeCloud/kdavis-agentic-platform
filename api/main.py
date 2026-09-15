@@ -63,13 +63,18 @@ from api.routes import compliance_agent
 from api.routes import github_app_admin
 from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
+from core.json_logging import configure_logging
 from core.pool_timeout import TimeoutBoundPool
 
 log = logging.getLogger(__name__)
 
-logging.basicConfig(
+# LOG_FORMAT=json (default) emits one structured JSON object per log line --
+# queryable by field (workspace_id, agent_id, incident_id, ...) in Railway's
+# log viewer instead of grepping message text. LOG_FORMAT=text keeps the
+# original human-readable format for local dev.
+configure_logging(
     level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    fmt=os.environ.get("LOG_FORMAT", "json"),
 )
 
 # Must run before `FastAPI(...)` is instantiated below -- the FastAPI/
