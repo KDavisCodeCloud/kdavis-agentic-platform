@@ -743,3 +743,60 @@ migration was actually applied to production. The current state — schema
 changes and application code deploy independently, with nothing enforcing
 they stay in sync — is what let this go undetected through multiple
 merged PRs and deploys.
+
+### 16. No error monitoring on Cloud Decoded's own backend — RESOLVED (2026-09-15)
+
+Flagged by the 2026-09-15 operational readiness audit: `api/` and `core/`
+had no `sentry_sdk` or equivalent anywhere — an unhandled exception or
+crash in Cloud Decoded's own backend had no record beyond raw Railway
+container logs, which nobody was watching proactively. Notably ironic for
+a product whose entire pitch is catching infrastructure problems for
+customers — nothing was watching Cloud Decoded itself.
+
+**Built:** `core/error_tracking.py` — `init_sentry()` reads `SENTRY_DSN`
+from the environment and no-ops entirely if it isn't set (local dev and
+tests work identically with or without a Sentry account, never raising or
+blocking startup on a missing/invalid DSN). Wired into `api/main.py`
+before the `FastAPI` app is instantiated (the FastAPI/Starlette
+integrations instrument at init time). `capture_exception()` tags every
+error with `workspace_id` (and `agent_id` where applicable) via a Sentry
+scope, so errors are traceable per tenant — added to all 11 of
+`api/routes/webhooks.py`'s `_run_*` background-task functions' existing
+`except Exception` blocks (the same functions `api/routes/agents.py`'s
+manual-trigger endpoint reuses, so direct-invocation job failures are
+covered too). Unhandled exceptions in the synchronous request path are
+captured automatically by Sentry's FastAPI/Starlette integrations —
+expected control flow (`HTTPException`s like invalid-token 403s,
+`SubscriptionError`, `BudgetExceededError`) is deliberately not routed to
+Sentry to avoid alert noise on normal business logic.
+
+8 new tests in `tests/test_error_tracking.py` (DSN-unset no-op, DSN-set
+init call shape, tag/extra behavior, safe-no-op-when-uninitialized).
+
+### 17. Duplicate tier-limit dict in `api/routes/agents.py` — RESOLVED (2026-09-15)
+
+Flagged by the 2026-09-15 operational readiness audit as residual risk
+from entry #14: after Agent 11 shipped, both `core/compliance.py`'s
+`WorkspaceComplianceGuard.TIER_LIMITS` and `api/routes/agents.py`'s own
+separate `tier_limits` dict (used by `GET /agents`'s `list_agents`) were
+bumped to the correct values and made consistent — but the duplication
+itself remained. `agents.py`'s copy hardcoded enterprise to a fixed count
+(`11`) instead of `compliance.py`'s `-1`/unlimited semantics, so the next
+agent added would silently under-list at Enterprise again unless someone
+remembered to bump both dicts in lockstep — the exact class of bug that
+made Agent 11 briefly Enterprise-only by numbering accident in the first
+place.
+
+**Fixed:** `core/compliance.py`'s `TIER_LIMITS` is now the single source
+of truth; `list_agents()` reads `WorkspaceComplianceGuard.TIER_LIMITS`
+directly instead of keeping its own copy. Handled explicitly: a plain
+list slice with `max_agents = -1` (enterprise's unlimited marker) would
+silently drop the *last* agent (`all_agents[:-1]`) rather than returning
+everything — `list_agents()` now branches on `-1` explicitly rather than
+slicing with it.
+
+6 new tests in `tests/test_agents_route_tier_limits.py`, including a
+direct regression guard for the `-1`-slice bug (enterprise must see all
+11 agents, `agent_11_resource_health` included, not 10). Full suite:
+1412 passing (was 1398), same 4 pre-existing unrelated failures, zero
+regressions.
