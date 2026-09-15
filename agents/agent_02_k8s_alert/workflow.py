@@ -261,7 +261,9 @@ class K8sAlertWorkflow(BaseAgent):
             "current_cpu_limit": current_cpu_limit,
             "log_excerpt": sanitized.sanitized_text,
             "tokens_used": 0,
-            "incident_id": None,
+            # incident_id intentionally NOT returned here -- it's pre-seeded
+            # in run()'s initial_state (== the LangGraph thread_id) and must
+            # survive this node's update untouched, not get reset to None.
             "parsed_error": None,
             "remediation_options": None,
             "estimated_duration_seconds": None,
@@ -339,6 +341,7 @@ class K8sAlertWorkflow(BaseAgent):
             return {"incident_id": incident_id}
 
         incident_id = await self.hitl.create_incident(
+            incident_id=state["incident_id"],
             workspace_id=self.workspace_id,
             agent_id=self.agent_id,
             raw_log=state["log_excerpt"],
@@ -439,6 +442,20 @@ class K8sAlertWorkflow(BaseAgent):
         """
         import uuid
 
+        # thread_id generated before initial_state so incident_id can be
+        # pre-seeded to the same value -- see _hitl_gate_node's
+        # create_incident(incident_id=state["incident_id"], ...) call.
+        # Real bug found live, 2026-09-15: this agent never adopted that
+        # fix (unlike agent_01/05/06/08), so the incidents-table row got a
+        # random DB-generated id disconnected from the actual LangGraph
+        # checkpoint thread_id -- POST /incidents/{id}/approve then called
+        # resume(that_id, ...), which looked up a checkpoint under an id
+        # the graph was never invoked with, and LangGraph silently treated
+        # every real approval as a fresh __start__ invocation instead
+        # (langgraph.errors.InvalidUpdateError, since Command(resume=...)
+        # is not valid raw state input for __start__).
+        thread_id = str(uuid.uuid4())
+
         initial_state: K8sAlertState = {
             "workspace_id": self.workspace_id,
             "cloud_provider": cloud_provider,
@@ -454,7 +471,7 @@ class K8sAlertWorkflow(BaseAgent):
             "current_memory_limit": "unknown",
             "current_cpu_limit": "unknown",
             "log_excerpt": "",
-            "incident_id": None,
+            "incident_id": thread_id,
             "parsed_error": None,
             "remediation_options": None,
             "estimated_duration_seconds": None,
@@ -464,7 +481,6 @@ class K8sAlertWorkflow(BaseAgent):
             "error": None,
         }
 
-        thread_id = str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
 
         log.info("[Agent02] Starting K8s alert workflow — thread_id=%s", thread_id)

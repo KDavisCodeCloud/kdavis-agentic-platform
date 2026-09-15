@@ -239,7 +239,9 @@ class DependencyPatchWorkflow(BaseAgent):
             "critical_count":        0,
             "high_count":            0,
             "tokens_used":           0,
-            "incident_id":           None,
+            # incident_id intentionally NOT returned here -- it's pre-seeded
+            # in run()'s initial_state (== the LangGraph thread_id) and must
+            # survive this node's update untouched, not get reset to None.
             "parsed_error":          None,
             "patch_summary":         None,
             "vulnerable_packages":   None,
@@ -397,6 +399,7 @@ class DependencyPatchWorkflow(BaseAgent):
         )
 
         incident_id = await self.hitl.create_incident(
+            incident_id=state["incident_id"],
             workspace_id=self.workspace_id,
             agent_id=self.agent_id,
             raw_log=raw_log,
@@ -523,6 +526,20 @@ class DependencyPatchWorkflow(BaseAgent):
         byok_encrypted_key: Optional[str] = None,
     ) -> str:
         """Trigger the dependency patch workflow. Returns incident_id after HITL pause."""
+        # thread_id generated before initial_state so incident_id can be
+        # pre-seeded to the same value -- see _hitl_gate_node's
+        # create_incident(incident_id=state["incident_id"], ...) call.
+        # Real bug found live, 2026-09-15: this agent never adopted that
+        # fix (unlike agent_01/05/06/08), so the incidents-table row got a
+        # random DB-generated id disconnected from the actual LangGraph
+        # checkpoint thread_id -- POST /incidents/{id}/approve then called
+        # resume(that_id, ...), which looked up a checkpoint under an id
+        # the graph was never invoked with, and LangGraph silently treated
+        # every real approval as a fresh __start__ invocation instead
+        # (langgraph.errors.InvalidUpdateError, since Command(resume=...)
+        # is not valid raw state input for __start__).
+        thread_id = str(uuid.uuid4())
+
         initial_state: PatchState = {
             "workspace_id":          self.workspace_id,
             "cloud_provider":        cloud_provider,
@@ -541,7 +558,7 @@ class DependencyPatchWorkflow(BaseAgent):
             "critical_count":        0,
             "high_count":            0,
             "tokens_used":           0,
-            "incident_id":           None,
+            "incident_id":           thread_id,
             "parsed_error":          None,
             "patch_summary":         None,
             "vulnerable_packages":   None,
@@ -552,7 +569,6 @@ class DependencyPatchWorkflow(BaseAgent):
             "error":                 None,
         }
 
-        thread_id = str(uuid.uuid4())
         config    = {"configurable": {"thread_id": thread_id}}
 
         log.info("[Agent10] Starting dependency patch workflow — thread_id=%s", thread_id)
