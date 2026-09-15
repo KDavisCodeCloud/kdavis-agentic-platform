@@ -90,6 +90,28 @@ async def send_pagerduty_notification(routing_key: str, incident_summary: dict) 
         response.raise_for_status()
 
 
+async def send_pagerduty_resolve_event(routing_key: str, incident_summary: dict) -> None:
+    """
+    Ticketing build, Phase 3 (2026-09-15): sends the resolve event this
+    module's own docstring above called out as "not built yet". Uses the
+    SAME dedup_key (the incident id) as send_pagerduty_notification's own
+    trigger event above -- PagerDuty correlates trigger/resolve purely by
+    an exact dedup_key match, so this must read incident_summary["incident_id"]
+    the identical way, never re-derive or reformat it. No `payload` block:
+    unlike a trigger event, PagerDuty's Events API v2 resolve/acknowledge
+    events take only routing_key + event_action + dedup_key. Raises on
+    failure -- callers (core/ticketing.py's notify_resolution) catch.
+    """
+    body = {
+        "routing_key": routing_key,
+        "event_action": "resolve",
+        "dedup_key": incident_summary.get("incident_id"),
+    }
+    async with httpx.AsyncClient(timeout=_PAGERDUTY_TIMEOUT_SECONDS) as client:
+        response = await client.post(_PAGERDUTY_EVENTS_URL, json=body)
+        response.raise_for_status()
+
+
 def _format_slack_text(incident_summary: dict) -> str:
     status = incident_summary.get("execution_status")
     header = "Cloud Decoded — run failed" if status == "failed" else "Cloud Decoded — incident needs approval"

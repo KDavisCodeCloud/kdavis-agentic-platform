@@ -49,6 +49,7 @@ import asyncpg
 import httpx
 
 from core.audit import schedule_audit_event
+from core.notifications import send_pagerduty_resolve_event
 from security.encryption import decrypt
 
 log = logging.getLogger(__name__)
@@ -315,6 +316,55 @@ async def _dispatch_ticket(channel_type: str, config: dict, incident_summary: di
     raise ValueError(f"No ticketing sender registered for channel_type={channel_type!r}")
 
 
+async def _dispatch_pagerduty_resolve(conn, workspace_id: str, incident_summary: dict) -> None:
+    """
+    Independent of the one-ticketing-channel dispatch below -- reuses the
+    workspace's existing PagerDuty *notification* channel (migration 037,
+    the same row core/notifications.py's send_pagerduty_notification
+    already sends a trigger event to on incident creation), not the
+    ticketing-channel category. Best-effort: any failure here (no channel
+    configured, decrypt failure, HTTP failure) is caught and logged, never
+    raised -- a workspace with no PagerDuty channel at all is the normal
+    case and must not log a warning for it, so a missing row is a silent
+    no-op, not treated as a failure.
+    """
+    try:
+        row = await conn.fetchrow(
+            "SELECT config_encrypted FROM workspace_notification_channels "
+            "WHERE workspace_id = $1 AND channel_type = 'pagerduty' AND enabled = true",
+            workspace_id,
+        )
+        if row is None:
+            return
+
+        config = json.loads(decrypt(row["config_encrypted"]))
+        await send_pagerduty_resolve_event(config["routing_key"], incident_summary)
+        schedule_audit_event(
+            workspace_id=workspace_id,
+            action="ticket_created",
+            status="success",
+            incident_id=incident_summary.get("incident_id"),
+            agent_id=incident_summary.get("agent_id"),
+            metadata={"provider": "pagerduty_resolve"},
+        )
+    except Exception as exc:
+        log.warning(
+            "[Ticketing] PagerDuty resolve-event failed for workspace=%s: %s", workspace_id, exc,
+            extra={"workspace_id": workspace_id},
+        )
+        try:
+            schedule_audit_event(
+                workspace_id=workspace_id,
+                action="ticket_creation_failed",
+                status="failed",
+                incident_id=incident_summary.get("incident_id"),
+                agent_id=incident_summary.get("agent_id"),
+                metadata={"provider": "pagerduty_resolve", "error": str(exc)[:500]},
+            )
+        except Exception:
+            pass
+
+
 async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_by: Optional[str] = None) -> None:
     """
     Best-effort, fire-and-forget dispatch on incident resolution. Never
@@ -325,11 +375,13 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
     scheduled it (schedule_resolution_notification below) with nothing
     left to propagate a failure back to.
 
-    Looks up the workspace's single configured ticketing channel (if any)
-    and creates a ticket via the matching provider. (Phase 3 adds a second,
-    independent dispatch here for PagerDuty resolution-sync, reusing the
-    workspace's existing PagerDuty *notification* channel -- a separate
-    category from the ticketing channels above, see module docstring.)
+    Does two independent things: (1) sends a PagerDuty resolve event via
+    _dispatch_pagerduty_resolve if the workspace has a PagerDuty
+    *notification* channel configured (a separate category from ticketing
+    channels, see module docstring); (2) looks up the workspace's single
+    configured ticketing channel (if any) and creates a ticket via the
+    matching provider. Either, both, or neither may fire for a given
+    resolution depending on what the workspace has configured.
     """
     incident_summary = {**incident_summary, "resolved_by": resolved_by}
 
@@ -352,6 +404,8 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
         return
 
     try:
+        await _dispatch_pagerduty_resolve(conn, workspace_id, incident_summary)
+
         try:
             row = await conn.fetchrow(
                 "SELECT channel_type, config_encrypted FROM workspace_notification_channels "

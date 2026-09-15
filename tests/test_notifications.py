@@ -81,6 +81,64 @@ class TestSendPagerDutyNotification:
         assert url == "https://events.pagerduty.com/v2/enqueue"
 
 
+class TestSendPagerDutyResolveEvent:
+    """Ticketing build, Phase 3 (2026-09-15): the resolve event this
+    module's TestSendPagerDutyNotification class notes wasn't built yet."""
+
+    async def test_posts_resolve_event_action(self):
+        client, _ = _mock_httpx_client()
+        with patch("core.notifications.httpx.AsyncClient", return_value=client):
+            await notifications.send_pagerduty_resolve_event(
+                "routing-key-123", {"incident_id": "abc", "agent_id": "agent_01"},
+            )
+
+        body = client.post.await_args.kwargs["json"]
+        assert body["event_action"] == "resolve"
+        assert body["routing_key"] == "routing-key-123"
+
+    async def test_dedup_key_matches_trigger_events_dedup_key_extraction(self):
+        """Both the original trigger event (send_pagerduty_notification)
+        and this resolve event must derive dedup_key from
+        incident_summary['incident_id'] the identical way -- PagerDuty
+        correlates them purely by an exact dedup_key string match."""
+        client, _ = _mock_httpx_client()
+        incident_summary = {"incident_id": "abc-123", "agent_id": "agent_06_finops"}
+
+        with patch("core.notifications.httpx.AsyncClient", return_value=client):
+            await notifications.send_pagerduty_resolve_event("routing-key-123", incident_summary)
+        resolve_dedup_key = client.post.await_args.kwargs["json"]["dedup_key"]
+
+        client2, _ = _mock_httpx_client()
+        with patch("core.notifications.httpx.AsyncClient", return_value=client2):
+            await notifications.send_pagerduty_notification("routing-key-123", incident_summary)
+        trigger_dedup_key = client2.post.await_args.kwargs["json"]["dedup_key"]
+
+        assert resolve_dedup_key == trigger_dedup_key == "abc-123"
+
+    async def test_no_payload_block(self):
+        """Unlike a trigger event, PagerDuty's resolve/acknowledge events
+        take no `payload` -- confirms this doesn't carry one over from
+        send_pagerduty_notification's shape by accident."""
+        client, _ = _mock_httpx_client()
+        with patch("core.notifications.httpx.AsyncClient", return_value=client):
+            await notifications.send_pagerduty_resolve_event("routing-key-123", {"incident_id": "x"})
+
+        assert "payload" not in client.post.await_args.kwargs["json"]
+
+    async def test_posts_to_pagerduty_events_endpoint(self):
+        client, _ = _mock_httpx_client()
+        with patch("core.notifications.httpx.AsyncClient", return_value=client):
+            await notifications.send_pagerduty_resolve_event("routing-key-123", {"incident_id": "x"})
+
+        assert client.post.await_args.args[0] == "https://events.pagerduty.com/v2/enqueue"
+
+    async def test_raises_on_http_error(self):
+        client, _ = _mock_httpx_client(status_code=500)
+        with patch("core.notifications.httpx.AsyncClient", return_value=client):
+            with pytest.raises(Exception):
+                await notifications.send_pagerduty_resolve_event("routing-key-123", {"incident_id": "x"})
+
+
 class TestNotifyIncidentChannels:
     async def test_no_database_url_skips_without_raising(self):
         with patch("core.notifications.os.environ.get", return_value=""):

@@ -173,7 +173,7 @@ class TestCreateLinearTicket:
 class TestDispatchTicketRoutesLinear:
     async def test_notify_resolution_dispatches_linear_channel(self):
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"channel_type": "linear", "config_encrypted": "enc-linear"})
+        conn.fetchrow = AsyncMock(side_effect=[None, {"channel_type": "linear", "config_encrypted": "enc-linear"}])
         conn.close = AsyncMock()
 
         with (
@@ -188,6 +188,106 @@ class TestDispatchTicketRoutesLinear:
         mock_linear.assert_awaited_once()
         mock_audit.assert_called_once()
         assert mock_audit.call_args.kwargs["metadata"]["provider"] == "linear"
+
+
+class TestDispatchPagerdutyResolve:
+    """Phase 3: PagerDuty resolution sync -- reuses the workspace's
+    existing PagerDuty *notification* channel (a separate category from
+    the one-ticketing-channel dispatch), independent of whatever ticketing
+    provider (if any) is also configured."""
+
+    async def test_no_pagerduty_channel_is_a_silent_noop(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        with patch("core.ticketing.send_pagerduty_resolve_event", new=AsyncMock()) as mock_pd:
+            await ticketing._dispatch_pagerduty_resolve(conn, "ws-1", {"incident_id": "i-1"})
+        mock_pd.assert_not_awaited()
+
+    async def test_configured_channel_sends_resolve_event_with_matching_dedup_key(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"config_encrypted": "enc-pd"})
+
+        with (
+            patch("core.ticketing.decrypt", return_value=json.dumps({"routing_key": "pd-key-1"})),
+            patch("core.ticketing.send_pagerduty_resolve_event", new=AsyncMock()) as mock_pd,
+            patch("core.ticketing.schedule_audit_event") as mock_audit,
+        ):
+            await ticketing._dispatch_pagerduty_resolve(conn, "ws-1", {"incident_id": "abc-123", "agent_id": "agent_01"})
+
+        mock_pd.assert_awaited_once_with("pd-key-1", {"incident_id": "abc-123", "agent_id": "agent_01"})
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args.kwargs["metadata"]["provider"] == "pagerduty_resolve"
+        assert mock_audit.call_args.kwargs["status"] == "success"
+
+    async def test_send_failure_schedules_failure_audit_and_does_not_raise(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"config_encrypted": "enc-pd"})
+
+        with (
+            patch("core.ticketing.decrypt", return_value=json.dumps({"routing_key": "pd-key-1"})),
+            patch("core.ticketing.send_pagerduty_resolve_event", new=AsyncMock(side_effect=Exception("pd down"))),
+            patch("core.ticketing.schedule_audit_event") as mock_audit,
+        ):
+            # Must complete without raising.
+            await ticketing._dispatch_pagerduty_resolve(conn, "ws-1", {"incident_id": "i-1"})
+
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args.kwargs["status"] == "failed"
+        assert mock_audit.call_args.kwargs["metadata"]["provider"] == "pagerduty_resolve"
+
+
+class TestNotifyResolutionDispatchesBothCategories:
+    """notify_resolution fires the PagerDuty resolve-sync and the
+    ticketing-channel dispatch independently -- both, either, or neither
+    can fire depending on what's configured."""
+
+    async def test_pagerduty_and_ticketing_channel_both_fire(self):
+        conn = AsyncMock()
+        # First fetchrow call is _dispatch_pagerduty_resolve's lookup,
+        # second is the ticketing-channel lookup.
+        conn.fetchrow = AsyncMock(side_effect=[
+            {"config_encrypted": "enc-pd"},
+            {"channel_type": "jira", "config_encrypted": "enc-jira"},
+        ])
+        conn.close = AsyncMock()
+
+        def _fake_decrypt(value):
+            if value == "enc-pd":
+                return json.dumps({"routing_key": "pd-key"})
+            return json.dumps({"instance_url": "https://x", "api_token": "t", "project_key": "OPS"})
+
+        with (
+            patch("core.ticketing.os.environ.get", return_value="postgresql://x"),
+            patch("core.ticketing.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.ticketing.decrypt", side_effect=_fake_decrypt),
+            patch("core.ticketing.send_pagerduty_resolve_event", new=AsyncMock()) as mock_pd,
+            patch("core.ticketing.create_jira_ticket", new=AsyncMock(return_value={"external_id": "OPS-1"})) as mock_jira,
+            patch("core.ticketing.schedule_audit_event"),
+        ):
+            await ticketing.notify_resolution("ws-1", {"incident_id": "i-1", "agent_id": "agent_01_cicd_triage"})
+
+        mock_pd.assert_awaited_once()
+        mock_jira.assert_awaited_once()
+
+    async def test_only_pagerduty_configured_ticketing_channel_lookup_finds_nothing(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            {"config_encrypted": "enc-pd"},
+            None,
+        ])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.ticketing.os.environ.get", return_value="postgresql://x"),
+            patch("core.ticketing.decrypt", return_value=json.dumps({"routing_key": "pd-key"})),
+            patch("core.ticketing.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.ticketing.send_pagerduty_resolve_event", new=AsyncMock()) as mock_pd,
+            patch("core.ticketing.schedule_audit_event"),
+        ):
+            # Must complete without raising even though there's no ticketing channel.
+            await ticketing.notify_resolution("ws-1", {"incident_id": "i-1"})
+
+        mock_pd.assert_awaited_once()
 
 
 class TestNotifyResolution:
@@ -212,7 +312,11 @@ class TestNotifyResolution:
         proven audit_events writer (GAPS.md #28) -- not a second, parallel
         ad-hoc INSERT."""
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"channel_type": "jira", "config_encrypted": "enc-jira"})
+        # First fetchrow is _dispatch_pagerduty_resolve's own lookup (None
+        # -- no PagerDuty channel configured, so it's a silent no-op and
+        # never touches schedule_audit_event); second is the ticketing-
+        # channel lookup this test is actually about.
+        conn.fetchrow = AsyncMock(side_effect=[None, {"channel_type": "jira", "config_encrypted": "enc-jira"}])
         conn.close = AsyncMock()
 
         with (
@@ -237,7 +341,7 @@ class TestNotifyResolution:
 
     async def test_ticket_creation_failure_schedules_failure_audit_event_and_does_not_raise(self):
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"channel_type": "jira", "config_encrypted": "enc-jira"})
+        conn.fetchrow = AsyncMock(side_effect=[None, {"channel_type": "jira", "config_encrypted": "enc-jira"}])
         conn.close = AsyncMock()
 
         with (
@@ -266,7 +370,7 @@ class TestNotifyResolution:
 
     async def test_resolved_by_merged_into_incident_summary(self):
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value={"channel_type": "jira", "config_encrypted": "enc-jira"})
+        conn.fetchrow = AsyncMock(side_effect=[None, {"channel_type": "jira", "config_encrypted": "enc-jira"}])
         conn.execute = AsyncMock(return_value=None)
         conn.close = AsyncMock()
 
