@@ -3,42 +3,42 @@ import { MarketingHead, MarketingNav, MarketingFooter, Eyebrow, PrimaryCta, PAGE
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://theclouddecoded.com'),
-  title: 'Security — SOC 2 Readiness, Tenant Isolation, HITL Audit Trail | Cloud Decoded',
+  title: 'Security — SOC 2 Readiness, Tenant Isolation, Full Audit Trail | Cloud Decoded',
   description:
-    'How Cloud Decoded protects your infrastructure and data: per-tenant isolation, a human-approval gate that can’t be silently disabled, full audit logging, and a SOC 2 readiness posture built in from day one.',
+    'How Cloud Decoded protects your infrastructure and data: per-tenant isolation, an approval step that can’t be silently disabled, full audit logging, and a SOC 2 readiness posture built in from day one.',
   alternates: { canonical: 'https://theclouddecoded.com/security' },
   openGraph: {
     type: 'website',
     url: 'https://theclouddecoded.com/security',
     title: 'Security — Cloud Decoded',
-    description: 'SOC 2 readiness posture, tenant isolation, HITL audit trail, and data retention — stated plainly.',
+    description: 'SOC 2 readiness posture, tenant isolation, a full audit trail, and data retention — stated plainly.',
   },
 }
 
 const PILLARS = [
   {
     title: 'Human approval, not a configuration option',
-    body: 'Every agent — all eleven — stops at a hard HITL gate before any proposed fix executes against your infrastructure. This isn’t a setting you can turn off; it’s how the platform is built. Detection and triage are automatic. Action is never autonomous.',
+    body: 'Every capability stops at a hard approval step before any proposed fix executes against your infrastructure. This isn’t a setting you can turn off; it’s how the platform is built. Detection and diagnosis are automatic. Action never happens without your team.',
   },
   {
     title: 'Per-tenant isolation, enforced at the database layer',
     body: 'Every table is scoped by workspace, with row-level security enforced at the Postgres layer — not just application logic. A query without a workspace scope fails closed, not open. One customer’s data is never reachable from another’s workspace, by construction.',
   },
   {
-    title: 'Data sanitization before anything reaches an LLM',
-    body: 'Every piece of text sent to any LLM — log excerpts, config content, PR diffs — passes through a redaction layer first: API keys, credentials, and PII patterns are stripped before the data ever leaves your workspace context, regardless of which model provider is handling that request.',
+    title: 'Data sanitization before anything leaves your workspace context',
+    body: 'Every piece of text used for diagnosis — log excerpts, config content, PR diffs — passes through a redaction layer first: API keys, credentials, and PII patterns are stripped before the data ever leaves your workspace context, regardless of which provider is handling that request.',
   },
   {
     title: 'Full audit trail, every action, win or lose',
-    body: 'Every agent run — approved, rejected, or held — is logged with actor, action, resource, outcome, and timestamp. Nothing is deleted from the audit trail. If an agent proposed it, you can see exactly what it proposed and what happened to that proposal.',
+    body: 'Every run — approved, rejected, or held — is logged with actor, action, resource, outcome, and timestamp. Nothing is deleted from the audit trail. If a fix was proposed, you can see exactly what it proposed and what happened to that proposal.',
   },
   {
     title: 'Bring your own cloud credentials, scoped to what’s needed',
     body: 'AWS access is a cross-account role assumed with an external ID — never a stored access key. Azure access is a Service Principal you create and can revoke at any time. GitHub access is a real GitHub App installation with fine-grained, revocable permissions — not a personal access token tied to one person’s account.',
   },
   {
-    title: 'A circuit breaker on every agent run',
-    body: 'Every execution has a hard spend cap and a call-count limit. If an agent run exceeds either, it stops — it doesn’t retry, and it doesn’t silently keep going. Runaway cost or a stuck loop can’t turn into a surprise bill or an unbounded action.',
+    title: 'A circuit breaker on every run',
+    body: 'Every execution has a hard spend cap and a call-count limit. If a run exceeds either, it stops — it doesn’t retry, and it doesn’t silently keep going. Runaway cost or a stuck loop can’t turn into a surprise bill or an unbounded action.',
   },
 ]
 
@@ -99,9 +99,9 @@ export default function SecurityPage() {
           </h2>
           <ul style={{ margin: 0, padding: '0 0 0 20px', fontSize: 14.5, lineHeight: 1.9, color: 'rgba(232,236,242,.66)' }}>
             <li>Audit log entries are retained indefinitely and are never modified after being written.</li>
-            <li>Log excerpts and diffs sent to an LLM for a single triage pass are not retained by Cloud Decoded beyond that run’s record — the sanitized excerpt is what’s stored, not the raw source.</li>
+            <li>Log excerpts and diffs used for a single diagnostic pass are not retained by Cloud Decoded beyond that run’s record — the sanitized excerpt is what’s stored, not the raw source.</li>
             <li>Closing a workspace archives its data rather than immediately deleting it, so a full account deletion request can be honored on request without ambiguity about what still exists.</li>
-            <li>Bring-your-own LLM API keys and cloud credentials are encrypted at rest and decrypted only for the duration of the specific call that needs them — never cached in plaintext.</li>
+            <li>Bring-your-own API keys and cloud credentials are encrypted at rest and decrypted only for the duration of the specific call that needs them — never cached in plaintext.</li>
           </ul>
         </section>
 

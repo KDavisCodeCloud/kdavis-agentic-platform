@@ -50,7 +50,7 @@ const ROWS: Row[] = [
   },
   {
     label: 'Audit trail',
-    cd: 'Every proposal, approval, and rejection logged, HITL-first by design',
+    cd: 'Every proposal, approval, and rejection logged — your team stays in control by design',
     msft: 'Depends on the specific product and configuration',
     aws: 'Depends on the specific service and CloudTrail configuration',
   },

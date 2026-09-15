@@ -6,8 +6,8 @@ export const metadata: Metadata = {
   // features/, comparison/, problems/, security/) still each set their own
   // canonical/openGraph/title, but don't need to repeat metadataBase.
   metadataBase: new URL('https://theclouddecoded.com'),
-  title: 'Cloud Decoded — DevOps Agent Platform',
-  description: 'Autonomous DevOps agents for mid-market engineering teams. HITL remediation for CI/CD, Kubernetes, IAM, FinOps, and more.',
+  title: 'Cloud Decoded — Infrastructure Monitoring & Remediation for Azure and AWS',
+  description: 'Cloud Decoded monitors Azure and AWS, surfaces every issue with a clear diagnosis, and gives your team fix options — nothing executes until you approve.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

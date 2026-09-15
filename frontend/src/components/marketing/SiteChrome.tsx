@@ -68,6 +68,7 @@ export function MarketingNav() {
         <a href="/problems" style={LINK}>Why Cloud Decoded</a>
         <a href="/comparison" style={LINK}>Comparison</a>
         <a href="/security" style={LINK}>Security</a>
+        <a href="/blog" style={LINK}>Blog</a>
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
         <a href="/login" style={{ fontSize: 13, color: 'rgba(232,236,242,.7)', textDecoration: 'none' }}>
@@ -112,6 +113,7 @@ export function MarketingFooter() {
           <a href="/problems" style={LINK}>Why Cloud Decoded</a>
           <a href="/comparison" style={LINK}>Comparison</a>
           <a href="/security" style={LINK}>Security</a>
+          <a href="/blog" style={LINK}>Blog</a>
           <a href="/#pricing" style={LINK}>Pricing</a>
           <a href="/#faq" style={LINK}>FAQ</a>
         </nav>
@@ -121,6 +123,7 @@ export function MarketingFooter() {
         <nav style={{ display: 'flex', gap: 16, fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
           <a href="/terms" style={{ color: 'rgba(232,236,242,.4)', textDecoration: 'none' }}>Terms</a>
           <a href="/privacy" style={{ color: 'rgba(232,236,242,.4)', textDecoration: 'none' }}>Privacy</a>
+          <a href="/status" style={{ color: 'rgba(232,236,242,.4)', textDecoration: 'none' }}>Status</a>
         </nav>
         <a
           href="mailto:hello@theclouddecoded.com?subject=Enterprise%20inquiry"

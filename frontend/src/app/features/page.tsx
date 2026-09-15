@@ -3,15 +3,15 @@ import { MarketingHead, MarketingNav, MarketingFooter, Eyebrow, PrimaryCta, PAGE
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://theclouddecoded.com'),
-  title: 'Features — All 11 Cloud Decoded Agents | Cloud Decoded',
+  title: 'Features — Every Cloud Decoded Capability | Cloud Decoded',
   description:
-    'Every Cloud Decoded agent workflow: CI/CD triage, Kubernetes alerts, PR review, migration, IAM, FinOps, runbooks, drift detection, on-call knowledge, dependency patching, and live resource health monitoring. Each one detects, triages, and proposes — you approve before anything executes.',
+    'Every Cloud Decoded capability: CI/CD triage, Kubernetes alerts, PR review, migration, IAM, FinOps, runbooks, drift detection, on-call knowledge, dependency patching, and live resource health monitoring. Each one detects, diagnoses, and proposes — you approve before anything executes.',
   alternates: { canonical: 'https://theclouddecoded.com/features' },
   openGraph: {
     type: 'website',
     url: 'https://theclouddecoded.com/features',
-    title: 'Features — All 11 Cloud Decoded Agents',
-    description: 'Every agent workflow, what it does, what it touches, and the approval gate in front of every one of them.',
+    title: 'Features — Every Cloud Decoded Capability',
+    description: 'Every capability, what it does, what it touches, and the approval step in front of every one of them.',
   },
 }
 
@@ -100,7 +100,7 @@ function AgentCard({ a, index }: { a: (typeof AGENTS)[number]; index: number }) 
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <span style={{ fontFamily: MONO_FONT, fontSize: 10, color: 'rgba(232,236,242,.45)' }}>
-          AGENT·{String(index + 1).padStart(2, '0')}
+          CAPABILITY·{String(index + 1).padStart(2, '0')}
         </span>
         <span
           style={{
@@ -139,18 +139,18 @@ export default function FeaturesPage() {
         <MarketingNav />
 
         <section style={{ padding: '64px 40px 20px', maxWidth: 1140, margin: '0 auto' }}>
-          <Eyebrow label="FEATURES" sub="11 agents · every one HITL-gated" />
+          <Eyebrow label="FEATURES" sub="11 capabilities · every one under your control" />
           <h1
             style={{
               fontFamily: HEAD_FONT, fontWeight: 600, fontSize: 46, lineHeight: 1.08,
               letterSpacing: '-.025em', color: '#fff', margin: '0 0 18px', maxWidth: 820,
             }}
           >
-            Eleven agents. One rule none of them can break.
+            Eleven capabilities. One rule none of them can break.
           </h1>
           <p style={{ fontSize: 18, lineHeight: 1.6, color: 'rgba(232,236,242,.66)', margin: '0 0 20px', maxWidth: 720 }}>
-            Every workflow below detects, triages, and proposes a fix — and every one of them stops at a hard
-            approval gate before anything touches your infrastructure. Detection is automatic. Action never is,
+            Every capability below detects, diagnoses, and proposes a fix — and every one of them stops at a hard
+            approval step before anything touches your infrastructure. Detection is automatic. Action never is,
             unless you say so.
           </p>
         </section>
