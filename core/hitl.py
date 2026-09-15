@@ -180,6 +180,65 @@ class HITLGate:
         log.info(f"[HITL] Incident {created_id} created — awaiting operator approval")
         return created_id
 
+    async def find_open_incident(
+        self,
+        workspace_id: str,
+        resource_id: Optional[str],
+        alert_name: Optional[str],
+    ) -> Optional[dict]:
+        """
+        Dedup lookup (Phase 3, GAPS.md scale-readiness build): an OPEN
+        incident (pending_approval or executing) for this exact
+        workspace+resource+alert_name combination. A resolved/held/failed/
+        budget_exceeded prior incident for the same resource+alert is a
+        legitimate new occurrence, not a duplicate of something already
+        closed out, so only those two statuses count as "open" here.
+
+        Returns None (never keys a dedup lookup) if resource_id or
+        alert_name is missing/"unknown" -- there's nothing meaningful to
+        match against, and a bare "unknown"=="unknown" match would
+        incorrectly collapse unrelated alerts from different resources
+        that both failed to parse a real identifier.
+        """
+        if not resource_id or resource_id == "unknown" or not alert_name or alert_name == "unknown":
+            return None
+
+        row = await self._db.fetchrow(
+            """
+            SELECT id, occurrence_count
+            FROM incidents
+            WHERE workspace_id = $1
+              AND resource_id = $2
+              AND alert_name = $3
+              AND execution_status = ANY($4)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            workspace_id,
+            resource_id,
+            alert_name,
+            [STATUS_PENDING, STATUS_EXECUTING],
+        )
+        return dict(row) if row else None
+
+    async def bump_occurrence(self, incident_id: str) -> None:
+        """Increment occurrence_count and refresh last_seen_at on an
+        existing open incident -- called instead of create_incident when a
+        flapping alert repeats for the same resource+alert_name, so a
+        resource alerting every 5 minutes produces one incident row with a
+        rising occurrence count, not a new row (and a new LLM call) every
+        time."""
+        await self._db.execute(
+            """
+            UPDATE incidents
+            SET occurrence_count = occurrence_count + 1, last_seen_at = $2
+            WHERE id = $1
+            """,
+            UUID(str(incident_id)),
+            datetime.now(timezone.utc),
+        )
+        self._write_audit_entry("unknown", "hitl_gate", str(incident_id), "deduplicated", 0)
+
     async def get_approved_option(self, incident_id: str) -> Optional[dict]:
         """
         Returns the approved option dict if the incident is approved, else None.

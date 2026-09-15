@@ -285,18 +285,30 @@ class ResourceHealthWorkflow(BaseAgent):
     def _build_graph(self):
         graph = StateGraph(ResourceHealthState)
 
-        graph.add_node("ingest",    self._ingest_node)
-        graph.add_node("diagnose",  self._diagnose_node)
-        graph.add_node("hitl_gate", self._hitl_gate_node)
-        graph.add_node("execute",   self._execute_node)
-        graph.add_node("complete",  self._complete_node)
+        graph.add_node("ingest",         self._ingest_node)
+        graph.add_node("dedup_check",    self._dedup_check_node)
+        graph.add_node("dedup_complete", self._dedup_complete_node)
+        graph.add_node("diagnose",       self._diagnose_node)
+        graph.add_node("hitl_gate",      self._hitl_gate_node)
+        graph.add_node("execute",        self._execute_node)
+        graph.add_node("complete",       self._complete_node)
 
-        graph.add_edge(START,       "ingest")
-        graph.add_edge("ingest",    "diagnose")
-        graph.add_edge("diagnose",  "hitl_gate")
-        graph.add_edge("hitl_gate", "execute")
-        graph.add_edge("execute",   "complete")
-        graph.add_edge("complete",  END)
+        graph.add_edge(START,          "ingest")
+        graph.add_edge("ingest",       "dedup_check")
+        # A flapping alert for a resource+alert_name that already has an
+        # open incident short-circuits straight to dedup_complete --
+        # bumps occurrence_count, never reaches diagnose, never spends
+        # another LLM call on the same underlying problem (Phase 3,
+        # GAPS.md scale-readiness build).
+        graph.add_conditional_edges(
+            "dedup_check", self._route_after_dedup,
+            {"existing": "dedup_complete", "new": "diagnose"},
+        )
+        graph.add_edge("dedup_complete", END)
+        graph.add_edge("diagnose",     "hitl_gate")
+        graph.add_edge("hitl_gate",    "execute")
+        graph.add_edge("execute",      "complete")
+        graph.add_edge("complete",     END)
 
         return graph.compile(checkpointer=self._checkpointer)
 
@@ -416,6 +428,45 @@ class ResourceHealthWorkflow(BaseAgent):
             "execution_result": None,
             "error": None,
         }
+
+    async def _dedup_check_node(self, state: ResourceHealthState) -> dict:
+        """
+        Look up an existing OPEN incident for this exact
+        (workspace_id, resource_id, alert_name) before spending an LLM
+        call on what might be the same flapping alert firing again. Runs
+        BEFORE diagnose specifically so a repeat delivery genuinely never
+        makes a new LLM call, not just never creates a second row.
+
+        Sets incident_id in state when a match is found -- _route_after_
+        dedup reads that to route to dedup_complete instead of diagnose.
+        """
+        if state.get("error"):
+            return {}
+
+        existing = await self.hitl.find_open_incident(
+            workspace_id=self.workspace_id,
+            resource_id=state.get("resource_id"),
+            alert_name=state.get("alert_name"),
+        )
+        if not existing:
+            return {}
+
+        existing_id = str(existing["id"])
+        await self.hitl.bump_occurrence(existing_id)
+        log.info(
+            "[Agent11] Deduplicated against existing incident %s (occurrence #%d) — resource=%s alert=%s",
+            existing_id, existing.get("occurrence_count", 0) + 1, state.get("resource_id"), state.get("alert_name"),
+        )
+        return {"incident_id": existing_id}
+
+    def _route_after_dedup(self, state: ResourceHealthState) -> str:
+        return "existing" if state.get("incident_id") else "new"
+
+    async def _dedup_complete_node(self, state: ResourceHealthState) -> dict:
+        """Terminal node for a deduplicated alert -- incident_id is already
+        set in state by _dedup_check_node, nothing left to do but record it."""
+        self._write_audit("dedup", "existing_incident_bumped", incident_id=state.get("incident_id"))
+        return {}
 
     async def _diagnose_node(self, state: ResourceHealthState) -> dict:
         """Call LLM via router to diagnose the resource-health alert. Parse JSON response."""

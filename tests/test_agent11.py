@@ -429,6 +429,110 @@ class TestIngestNodeStructuredResourceExtraction:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# ResourceHealthWorkflow._dedup_check_node() / _route_after_dedup() --
+# Phase 3, scale-readiness build. A flapping alert for the same
+# (workspace_id, resource_id, alert_name) must not create a new incident
+# or spend a new LLM call while a prior one is still open.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestDedupCheckNode:
+    async def test_first_delivery_no_existing_incident_falls_through(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf.hitl.find_open_incident = AsyncMock(return_value=None)
+        wf.hitl.bump_occurrence = AsyncMock()
+        state = _base_state(workspace_id, AZURE_ALERT_PAYLOAD)
+        state["resource_id"] = "acme-prod-vm"
+        state["alert_name"] = "High CPU"
+
+        result = await wf._dedup_check_node(state)
+
+        assert result == {}
+        wf.hitl.bump_occurrence.assert_not_called()
+
+    async def test_repeat_delivery_finds_existing_and_bumps(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        existing_id = str(uuid4())
+        wf.hitl.find_open_incident = AsyncMock(return_value={"id": existing_id, "occurrence_count": 3})
+        wf.hitl.bump_occurrence = AsyncMock()
+        state = _base_state(workspace_id, AZURE_ALERT_PAYLOAD)
+        state["resource_id"] = "acme-prod-vm"
+        state["alert_name"] = "High CPU"
+
+        result = await wf._dedup_check_node(state)
+
+        assert result["incident_id"] == existing_id
+        wf.hitl.bump_occurrence.assert_awaited_once_with(existing_id)
+
+    async def test_skips_lookup_when_upstream_error_set(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf.hitl.find_open_incident = AsyncMock()
+        state = _base_state(workspace_id, AZURE_ALERT_PAYLOAD)
+        state["error"] = "ingest failed upstream"
+
+        result = await wf._dedup_check_node(state)
+
+        assert result == {}
+        wf.hitl.find_open_incident.assert_not_called()
+
+    def test_route_after_dedup(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        assert wf._route_after_dedup({"incident_id": None}) == "new"
+        assert wf._route_after_dedup({"incident_id": ""}) == "new"
+        assert wf._route_after_dedup({"incident_id": "abc-123"}) == "existing"
+
+    async def test_five_deliveries_of_same_alert_produce_one_incident_with_occurrence_5(
+        self, mock_db, workspace_id, mock_router,
+    ):
+        """End-to-end proof of the dedup mechanism: simulates 5 webhook
+        deliveries of the identical alert by driving _dedup_check_node
+        (and, on the first delivery only, create_incident -- exactly what
+        the real graph does when dedup_check routes to "new") against a
+        stateful fake incidents store. First delivery creates (occurrence_
+        count defaults to 1 per migration 029); the next 4 find the open
+        incident and bump it. Final assertion: exactly 1 row, occurrence_
+        count == 5."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+
+        store: dict[str, int] = {}  # incident_id -> occurrence_count
+
+        async def fake_find_open_incident(workspace_id, resource_id, alert_name):
+            if store:
+                incident_id = next(iter(store))
+                return {"id": incident_id, "occurrence_count": store[incident_id]}
+            return None
+
+        async def fake_bump_occurrence(incident_id):
+            store[incident_id] += 1
+
+        async def fake_create_incident(**kwargs):
+            new_id = str(uuid4())
+            store[new_id] = 1  # DEFAULT 1 per migration 029
+            return new_id
+
+        wf.hitl.find_open_incident = fake_find_open_incident
+        wf.hitl.bump_occurrence = fake_bump_occurrence
+        wf.hitl.create_incident = fake_create_incident
+
+        state = _base_state(workspace_id, AZURE_ALERT_PAYLOAD)
+        state["resource_id"] = "acme-prod-vm"
+        state["alert_name"] = "High CPU"
+
+        for _ in range(5):
+            result = await wf._dedup_check_node(state)
+            if not result.get("incident_id"):
+                new_id = await wf.hitl.create_incident(
+                    workspace_id=workspace_id, agent_id=wf.agent_id, raw_log="x",
+                    parsed_error="x", remediation_options=[],
+                    resource_id="acme-prod-vm", alert_name="High CPU",
+                )
+                state["incident_id"] = new_id
+
+        assert len(store) == 1
+        final_id = next(iter(store))
+        assert store[final_id] == 5
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # ResourceHealthWorkflow._diagnose_node()
 # ──────────────────────────────────────────────────────────────────────────────
 
