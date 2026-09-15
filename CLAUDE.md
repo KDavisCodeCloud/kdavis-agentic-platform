@@ -3145,7 +3145,7 @@ Starter/Growth/Enterprise tiers ($299/$699/$2,499 per mo). Real Stripe
 checkout, real paywall (no free self-serve access), real DNS on all
 hostnames.
 
-Agent roster (10 built, matches `agents/agent_01_*` … `agent_10_*`, not
+Agent roster (11 built, matches `agents/agent_01_*` … `agent_11_*`, not
 the placeholder roster named earlier in this file):
 1. CI/CD Triage (`agent_01_cicd_triage`)
 2. Kubernetes Alert Fatigue & Remediation (`agent_02_k8s_alert`)
@@ -3157,6 +3157,7 @@ the placeholder roster named earlier in this file):
 8. Drift Detection & Auto-Correction (`agent_08_drift_detection`, Growth+)
 9. Context-Aware Onboarding & On-Call Buddy (`agent_09_onboarding_buddy`, Growth+)
 10. Dependency & Vulnerability Patching (`agent_10_dependency_patch`, Growth+)
+11. Cloud Resource Health Monitoring (`agent_11_resource_health`, Growth+)
 
 Two paid satellite products extend the same customer base:
 `kdavis-finops-agent` and `kdavis-compliance-agent` (continuous cost/
