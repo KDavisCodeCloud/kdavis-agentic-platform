@@ -465,7 +465,7 @@ to multi-line (168-213 char single lines afterward) for readability.
 Full backend suite: 1286 passing (was 1280), same 5 pre-existing unrelated
 failures.
 
-### 11. Phase 6 -- Enterprise MCP OAuth 2.1 provisioning built; TLS still externally blocked
+### 11. Phase 6 -- Enterprise MCP OAuth 2.1 provisioning built; TLS RESOLVED 2026-09-15 (was externally blocked)
 
 **PARTIALLY RESOLVED (Phase 6, same session, 2026-09-14).** Two halves,
 one closed, one genuinely can't be from inside a coding session:
@@ -491,16 +491,38 @@ Kelvin can call it directly until/unless a dashboard button is wanted;
 exist as an actual route in this frontend as of this session, so there
 was no natural existing page to bolt a button onto anyway).
 
-**Still open, not fixable from here**: `mcp.theclouddecoded.com`'s TLS
-certificate is still `CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP` --
-checked live at the start of this session and again just now, unchanged
-across the whole session's duration. DNS has been `PROPAGATED` the entire
-time. This is now well past Railway's own stated "normally under an hour,
-up to 72" window. Needs a Railway support ticket from Kelvin's own
-account -- not something a coding session can file. Until it clears, the
-final live SSE MCP tool-call verification (queued since the 2026-09-12
-audit) and any real end-to-end test of this session's new OAuth invite
-flow both stay blocked.
+**RESOLVED 2026-09-15**: root cause found and fixed. `mcp.theclouddecoded.com`'s
+TLS certificate was stuck at `CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP`
+indefinitely -- not "still provisioning," genuinely wedged: `railway domain
+certificate retry` refused to run ("only available after certificate
+issuance fails," and this domain had never reached a `FAILED` state to
+retry from). Deleting and re-adding the custom domain in Railway
+(`railway domain delete` / `railway domain mcp.theclouddecoded.com --port
+8001`) surfaced the actual cause -- the domain had been created before
+Railway required a `_railway-verify.mcp` TXT ownership record, so it had
+literally no path to ever complete validation with only the old CNAME in
+place. The re-created domain also came with a new CNAME target
+(`z7trcyh4.up.railway.app`, replacing the stale `y11fpv8e.up.railway.app`).
+Updated both records directly via the Namecheap API (Kelvin supplied an
+API key + account username; confirmed this session's IP was already
+whitelisted) -- fetched the full existing host-record set first
+(`namecheap.domains.dns.getHosts`, only 3 records: `@`/`www` A records
+plus the stale `mcp` CNAME, `EmailType=FWD`), then resubmitted the
+complete set via `setHosts` with the 2 unrelated records preserved
+byte-for-byte, the CNAME updated, and the new TXT record added --
+`setHosts` replaces the entire zone, so touching only the intended
+records required capturing the full state first, not a partial/additive
+call. `EmailType=FWD` passed through explicitly so domain email
+forwarding wasn't silently reset. Propagation confirmed directly (Google
+and Cloudflare resolvers both correct within ~2 minutes; the live served
+certificate's CN switched from Railway's generic `*.up.railway.app`
+wildcard to a real Let's Encrypt cert for `mcp.theclouddecoded.com`
+within ~4 minutes of the DNS write). Railway's `domain-status` now reports
+`CERTIFICATE_STATUS_TYPE_VALID` / `verified: true`; `curl
+https://mcp.theclouddecoded.com/health` returns a clean `200`. The final
+live SSE MCP tool-call verification (queued since the 2026-09-12 audit)
+and an end-to-end test of the OAuth invite flow built above are both
+unblocked now, not yet separately exercised in this pass.
 
 10 new tests in `tests/test_internal_workspaces.py` (invite + app_metadata
 linking, read-only-scope request, unknown-scope 400, missing-workspace 404,
