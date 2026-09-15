@@ -8,12 +8,41 @@ Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
-MKT-LI1 — LinkedIn Personal Brand Agent v2.3.
+MKT-LI1 — LinkedIn Personal Brand Agent v2.4.
 
 Builds Kelvin as the authority — his personal brand is the warm
 distribution channel for every product launch. Distinct from product
 marketing (MKT-V1). Full spec: knowledge/Marketing/Marketing-Engine-Agent-Specs.md.
 System prompt: knowledge/Marketing/MKT-LI1-System-Prompt-v2.md.
+
+v2.4 (2026-09-15, marketing stage-gate update): generate_product_content()
+is a new stage-aware entry point wrapping generate_product_launch_post
+(v2.3, unchanged, still directly callable for a known-active product) —
+it looks up the product's selling_stage from mse_icp_configs (a table
+that lives in kdavis-microsaas-engine's own migrations, not this repo's;
+both repos share the same Supabase project, so this is a cross-repo
+TABLE READ through this repo's own Supabase client, not a code
+dependency on that repo) and routes accordingly: 'active' -> the
+existing full-CTA launch post, unchanged; 'warming' -> a new
+mention-only post (MENTION_ONLY_SYSTEM_PROMPT below) that references the
+product in context with no CTA and no URL, still Tier 3 per this file's
+own existing "any product mention is Tier 3" rule; 'building' -> returns
+None, no LLM call, nothing queued, nothing generated at all. Fails
+closed to 'building' on a missing config row or any lookup error —
+the cost of one skipped post is far lower than generating sell copy for
+a product that isn't supposed to be visible yet.
+
+This does NOT touch Pillar 5 (Enterprise Consulting & AI Platform
+Architecture, 10% of CONTENT_MIX_RATIO) — Pillar 5 was checked directly
+before writing any of this: it is topical thought-leadership grounding
+for Kelvin's own authority-building (see PILLAR_TOPIC_SEEDS["pillar_5"]
+and its own "never invent a specific incident, company, or metric"
+rule), not content tied to any specific mse_products row, and its own
+system prompt explicitly forbids naming a specific product or CTA at
+all. There is nothing product-selling_stage-shaped in it to gate.
+generate_product_content() only ever governs the product-CTA/mention
+surface (generate_product_launch_post's territory), which is
+unaffected by and unrelated to Pillar 5.
 
 v2.3 (2026-08-14): two new manually-triggered post types,
 generate_builder_post(session_notes) and generate_product_launch_post(
@@ -119,6 +148,7 @@ from zoneinfo import ZoneInfo
 
 from agents.marketing._shared import (
     MARKETING_PRODUCT_ID,
+    _get_supabase_client,
     apportion,
     emit_event,
     get_anthropic_client,
@@ -497,6 +527,48 @@ NEVER sound like:
 3. WHAT IT DOES — one to three sentences max, outcome-focused. Never a feature list.
 4. THE DOOR — a direct call to action that includes the URL given below verbatim. No apology for the
    pitch, no soft plug, no "check it out if you're curious" hedging.
+
+Respond with ONLY a JSON object matching this exact shape:
+{
+  "post_copy": str,
+  "hook_variants": [str, str, str],
+  "notes": str
+}"""
+
+MENTION_ONLY_SYSTEM_PROMPT = """You are MKT-LI1, drafting a "Product Mention Post" for Kelvin Davis, founder
+of THD Agentic Systems LLC and the Decoded Empire portfolio, referencing a product that is still in its
+warming stage — real, being built, not yet actively selling. You do not publish.
+
+## VOICE DIRECTIVE
+
+Write like a senior cloud/platform engineer who builds production systems in the trenches. Zero patience
+for buzzwords, hype, or corporate PR speak. Never write like a marketer writing for engineers. Write like
+a builder talking to another builder — direct, specific, no filler.
+
+NEVER sound like:
+- "Coming soon!" / "Stay tuned!"
+- "Proud to share that..." / "Excited to announce..."
+- Anything that reads as a soft-launch announcement rather than context inside a bigger story
+
+## THE ONE HARD RULE — read this before writing anything
+
+This product is NOT for sale yet. The post may reference it — what it's for, why it's being built, what
+problem it's aimed at — strictly as context inside a larger point Kelvin is making. It must NEVER:
+- Include a URL, link, or "check it out" of any kind for this product
+- Invite anyone to sign up, join a waitlist, try it, or reach out about it
+- Make a specific outcome/results claim as if customers are already using it
+- Read as an announcement or a soft launch — the product is scenery in this post, not the subject
+
+## STRUCTURE
+
+Same four-beat architecture as Kelvin's other posts:
+
+1. HOOK — Pattern-interrupt opening. Never start with "I" or a feature announcement.
+2. TECHNICAL DEPTH — Proof of expertise, grounded in real architecture or a real build decision.
+3. MACRO/PERSONAL CONNECTION — Zooms out to the broader reality. This product may be named here, in
+   passing, as part of the story ("building X alongside this right now") — never as the point of the post.
+4. CLOSE — No CTA for this product, ever. Either end with nothing further, or the generic engagement
+   pattern ("Comment [KEYWORD] if you want the full breakdown") for the post's actual (non-product) topic.
 
 Respond with ONLY a JSON object matching this exact shape:
 {
@@ -1017,4 +1089,158 @@ def generate_product_launch_post(
     except Exception as exc:
         write_audit_log(AGENT_ID, "product_launch_post_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
         emit_event(AGENT_ID, "product_launch_post_failed", {"error": str(exc)})
+        raise
+
+
+def _get_product_selling_stage(product_id: str, supabase_client: Optional[Any] = None) -> str:
+    """
+    Marketing stage-gate update (session 2026-09-15). mse_icp_configs
+    lives in kdavis-microsaas-engine's own migrations, not this repo's —
+    both repos share the same Supabase project, so this is a cross-repo
+    table READ through this repo's own Supabase client (_shared.py's
+    _get_supabase_client, same SUPABASE_URL/SUPABASE_KEY every internal
+    dashboard in this platform already uses), not a dependency on that
+    repo's code.
+
+    Fails closed to 'building' — skip generating content — on a missing
+    config row (mse_icp_configs.selling_stage itself defaults to
+    'building' in that table's own migration, so this mirrors the same
+    fail-closed default rather than silently disagreeing with it) or on
+    any lookup error (network, RLS, the table not existing in a given
+    environment). Generating CTA copy for a product that isn't supposed
+    to be visible yet is a worse outcome than skipping one post — a
+    human can always fire generate_product_content again once the
+    product's real stage is confirmed.
+    """
+    client = supabase_client if supabase_client is not None else _get_supabase_client(None)
+    try:
+        result = (
+            client.table("mse_icp_configs")
+            .select("selling_stage")
+            .eq("product_id", product_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        log.warning(
+            "MKT-LI1: selling_stage lookup failed for product_id=%s, failing closed to 'building': %s",
+            product_id, exc,
+        )
+        return "building"
+
+    data = getattr(result, "data", None)
+    if not data:
+        return "building"
+    return data.get("selling_stage") or "building"
+
+
+def generate_product_content(
+    product_id: str,
+    product_name: str,
+    problem: str,
+    audience: str,
+    outcome: str,
+    url: str,
+    anthropic_client: Optional[Any] = None,
+    supabase_client: Optional[Any] = None,
+) -> Optional[dict]:
+    """
+    Stage-aware entry point for product content (marketing stage-gate
+    update, session 2026-09-15) — checks mse_icp_configs.selling_stage
+    for product_id and routes accordingly:
+
+      'active'   -> delegates straight to generate_product_launch_post
+                    (unchanged, still directly callable on its own for a
+                    known-active product) — full CTA, URL, Tier 3.
+      'warming'  -> drafts a mention-only post (MENTION_ONLY_SYSTEM_PROMPT)
+                    that references the product in context, with no CTA
+                    and no URL — code-enforced (see the url-stripping
+                    guard below), not just prompt instruction. Still
+                    Tier 3: this file's own HITL TIERS rule already says
+                    "any product mention" is Tier 3, and a mention
+                    without a CTA doesn't carve out an exception to that.
+      'building' -> returns None. No LLM call, nothing queued, nothing
+                    generated — matches this file's established
+                    "never fabricate" principle (_build_slots/
+                    _select_image_for_post never invent source material
+                    either) applied to a product that shouldn't be
+                    visible in generated content at all yet.
+
+    Does not touch Pillar 5 (Enterprise Consulting & AI Platform
+    Architecture) or any other pillar of the evergreen batch pool — see
+    this module's own docstring for why Pillar 5 has nothing
+    product-selling_stage-shaped to gate in the first place.
+    """
+    stage = _get_product_selling_stage(product_id, supabase_client=supabase_client)
+
+    if stage == "building":
+        write_audit_log(
+            AGENT_ID, "product_content_skipped", resource=product_id,
+            outcome=f"skipped: selling_stage={stage}",
+        )
+        emit_event(AGENT_ID, "product_content_skipped", {"product_id": product_id, "selling_stage": stage})
+        return None
+
+    if stage == "active":
+        return generate_product_launch_post(
+            product_name=product_name, problem=problem, audience=audience, outcome=outcome, url=url,
+            anthropic_client=anthropic_client, supabase_client=supabase_client,
+        )
+
+    # 'warming' (and any future/unrecognized stage value) -- mention-only,
+    # no CTA, no URL. Deliberately fails closed toward the more
+    # conservative treatment rather than defaulting an unknown stage to
+    # 'active'.
+    client = get_anthropic_client(anthropic_client)
+    safe = sanitize(
+        json.dumps({"product_name": product_name, "problem": problem, "audience": audience, "outcome": outcome}),
+        context="mkt-li1:product_mention_post",
+    )
+    user_prompt = f"Product context (already sanitized):\n{safe}\n\nWrite one Product Mention Post."
+
+    response = client.messages.create(
+        model=MODEL, max_tokens=1500, system=MENTION_ONLY_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    raw_text = response.content[0].text if hasattr(response, "content") else str(response)
+    cleaned_text = _JSON_FENCE_RE.sub("", raw_text.strip()).strip()
+    try:
+        parsed = json.loads(cleaned_text, strict=False)
+    except (json.JSONDecodeError, TypeError):
+        log.warning("MKT-LI1: non-JSON model response for generate_product_content (warming), using raw text fallback")
+        parsed = {"post_copy": raw_text, "hook_variants": [], "notes": ""}
+
+    post_copy = parsed.get("post_copy", "")
+    compliance = run_compliance_guard(post_copy, platform="linkedin", product_id=MARKETING_PRODUCT_ID)
+    if compliance["revised_content"]:
+        post_copy = compliance["revised_content"]
+
+    # Defense in depth: the prompt instructs no URL/CTA, but a warming-
+    # stage post must never carry this product's own URL regardless of
+    # what the model actually did — code-enforced, not just requested.
+    if url and url in post_copy:
+        post_copy = post_copy.replace(url, "").rstrip()
+
+    post = {
+        "post_copy": post_copy,
+        "hook_variants": parsed.get("hook_variants", []) or [],
+        "format": "text_post",
+        "topic": f"Product Mention: {product_name}",
+        "notes": parsed.get("notes", ""),
+        "selling_stage": stage,
+    }
+    if compliance["flags"]:
+        post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+
+    try:
+        content_item = {**post, "agent_id": AGENT_ID}
+        queued = queue_for_review(content_item, tier=3, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
+        post["id"] = queued.get("id")
+        post["hitl_tier"] = 3
+        write_audit_log(AGENT_ID, "product_mention_post_generated", resource=str(post.get("id") or "unknown"), outcome="success")
+        emit_event(AGENT_ID, "product_mention_post_generated", {"post_id": post.get("id"), "product_name": product_name})
+        return post
+    except Exception as exc:
+        write_audit_log(AGENT_ID, "product_mention_post_generated", resource="linkedin_content_queue", outcome=f"failure: {exc}")
+        emit_event(AGENT_ID, "product_mention_post_failed", {"error": str(exc)})
         raise

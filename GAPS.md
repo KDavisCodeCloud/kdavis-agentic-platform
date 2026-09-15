@@ -1261,3 +1261,47 @@ Supabase Management API SSO registration, and a members-management UI),
 every phase's code is built, tested, and deployed -- what's left is
 operator follow-through with credentials/access this session's tools
 don't have, not further engineering.
+
+### 26. MKT-LI1 product content gated by kdavis-microsaas-engine's selling_stage (cross-repo read) (2026-09-15)
+
+Marketing stage-gate follow-up (companion to the `selling_stage` column
+added to `kdavis-microsaas-engine`'s `mse_icp_configs`, commit `1c2b716`
+in that repo). `agents/marketing/mkt_li1_linkedin_brand.py` gains
+`generate_product_content()` — a stage-aware entry point wrapping the
+existing (unchanged) `generate_product_launch_post()`. `'active'` routes
+straight to the existing full-CTA launch post; `'warming'` drafts a new
+mention-only post (`MENTION_ONLY_SYSTEM_PROMPT`) that references the
+product in context with no CTA and no URL (code-enforced by stripping
+the URL from the model's output if it appears anyway, not just prompt
+instruction); `'building'` returns `None` — no LLM call, nothing
+queued, nothing generated.
+
+**This is a genuine cross-repo runtime dependency, not just a shared
+convention.** `mse_icp_configs` lives entirely in `kdavis-microsaas-
+engine`'s own migrations — this repo has no copy of that schema and
+doesn't migrate it. The two repos happen to share one Supabase project,
+so `_get_product_selling_stage()` is a live table read through this
+repo's own Supabase client at generation time. If that table, or the
+shared-project assumption, ever changes, this silently (by design —
+see below) starts treating every product as `'building'` rather than
+failing loudly. Fails closed on any lookup error or missing config row,
+same conservative default as the MSE repo's own column default —
+the cost of one skipped post is far lower than generating sell copy for
+a product not meant to be visible yet, but it does mean a genuine
+outage in the cross-repo read (not just "product hasn't been
+configured yet") looks identical to "this product is in building
+stage" from this function's own return value alone. The `log.warning`
+on the lookup-error path is the only signal that distinguishes the two;
+worth wiring an actual alert on that log line if this cross-repo
+dependency becomes load-bearing for real outreach cadence.
+
+Does not touch Pillar 5 (Enterprise Consulting & AI Platform
+Architecture) or any other evergreen-batch pillar — confirmed directly
+by reading `PILLAR_TOPIC_SEEDS`/`VOICE_SYSTEM_PROMPT` before writing
+anything: Pillar 5 is topical thought-leadership grounding for Kelvin's
+own authority content, not tied to any specific `mse_products` row, and
+its own prompt already forbids naming a specific product or CTA. There
+was nothing product-`selling_stage`-shaped in it to gate.
+
+15 new tests (`tests/test_mkt_li1_selling_stage_gate.py`). Full suite:
+1591 passing (was 1576), same 4 pre-existing unrelated failures.
