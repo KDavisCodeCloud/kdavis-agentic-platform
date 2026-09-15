@@ -18,12 +18,16 @@ import chain repo-wide). Not worth a repo-wide supabase upgrade for one
 script's SDK choice — the REST endpoint needs nothing beyond `requests`
 (already a dependency) and stdlib `base64`.
 
-Model: gemini-2.5-flash-image ("Nano Banana") — current stable image-gen
-model as of 2026-07, chosen specifically for its documented reliable text
-rendering, which matters here since every diagram is dense with labels.
-If diagram text legibility isn't good enough in practice, gemini-3-pro-
-image-preview ("Nano Banana Pro") is the documented upgrade path — swap
-MODEL below, no other code change needed.
+Model: gemini-3-pro-image-preview ("Nano Banana Pro") — upgraded 2026-09-15
+from gemini-2.5-flash-image ("Nano Banana"). The 2026-09-15 image
+relevance audit (scripts/fix_image_relevance_backlog.py) found
+gemini-2.5-flash-image reliably got the right subject but consistently
+garbled dense technical labels ("Orchrestation", "RepicaSets",
+"Abstrcation Interface", "Arthropic") across nearly every regenerated
+diagram — legible at a glance, wrong on close reading, which is worse
+for a technical audience than no label at all. This was the documented
+upgrade path already noted here; swapping MODEL was the whole fix, no
+other code change needed.
 
 One call, one image, one topic — the input is always a per-post
 image_description already ending in "Single standalone diagram..." /
@@ -81,7 +85,7 @@ REPO_ROOT = ASSETS_ROOT.parent
 # explicit-path reasoning as image_indexer.py's load_dotenv call.
 load_dotenv(REPO_ROOT / ".env")
 
-MODEL = "gemini-2.5-flash-image"
+MODEL = "gemini-3-pro-image-preview"
 _GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 CREATOR_NAME = "Kelvin Davis"
@@ -93,15 +97,36 @@ def _slugify(text: str) -> str:
     return slug or "untitled"
 
 
-def _target_paths(pillar: str, post_topic: str, today: date) -> tuple[Path, Path]:
+def _target_paths(pillar: str, post_topic: str, today: date, suffix: Optional[str] = None) -> tuple[Path, Path]:
+    """suffix (added for scene_image_gen.py's relevance-regeneration path):
+    lets a caller avoid colliding with a same-day file already generated
+    for this exact topic slug — e.g. a second attempt after the relevance
+    gate rejects the first image. None preserves the original filename
+    shape used everywhere else."""
     pillar_slug = _slugify(pillar)
     topic_slug = _slugify(post_topic)
     filename = f"{topic_slug}_{today.strftime('%Y%m%d')}"
+    if suffix:
+        filename = f"{filename}_{suffix}"
     image_dir = MY_ORIGINALS_ROOT / pillar_slug
     return image_dir / f"{filename}.png", image_dir / f"{filename}.json"
 
 
 def _generate_image(api_key: str, image_description: str) -> bytes:
+    """Always returns genuine PNG bytes, regardless of what the model
+    actually returned inline. Needed since the 2026-09-15 gemini-3-pro-
+    image-preview upgrade: unlike gemini-2.5-flash-image, it returns
+    JPEG-encoded bytes under an inlineData part this code always treated
+    as PNG -- harmless for a plain file write, but a hard failure once
+    scene_image_gen.py started sending those bytes to Claude's vision
+    API tagged media_type="image/png" (Claude verifies the actual bytes
+    against the declared type and rejects the mismatch outright, caught
+    when the relevance-gate re-run of the backlog fix failed 12/12 with
+    a 400 on every single image). Re-encoding through Pillow here, once,
+    at the source, means every caller downstream -- file save, index,
+    the relevance gate, LinkedIn publish -- can keep assuming .png/
+    image/png unconditionally instead of each needing to track and pass
+    along whatever mime type this particular model happened to return."""
     response = requests.post(
         _GEMINI_URL,
         params={"key": api_key},
@@ -120,7 +145,15 @@ def _generate_image(api_key: str, image_description: str) -> bytes:
             inline_data = part.get("inlineData")
             if inline_data and inline_data.get("data"):
                 import base64
-                return base64.b64decode(inline_data["data"])
+                import io
+
+                from PIL import Image
+
+                raw_bytes = base64.b64decode(inline_data["data"])
+                image = Image.open(io.BytesIO(raw_bytes))
+                png_buffer = io.BytesIO()
+                image.convert("RGB").save(png_buffer, format="PNG")
+                return png_buffer.getvalue()
 
     raise RuntimeError(f"Gemini response contained no image data: {json.dumps(data)[:500]}")
 

@@ -9,11 +9,25 @@ this covers the file-write/skip/failure-isolation logic, not real image
 generation or a real DB write.
 """
 import base64
+import io
 import json
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+from PIL import Image
+
 import assets_library.gemini_image_gen as gig
+
+def _real_png_bytes(color=(255, 0, 0)) -> bytes:
+    """_generate_image now round-trips every response through Pillow
+    (2026-09-15, to normalize gemini-3-pro-image-preview's JPEG output
+    back to PNG), so a fake opaque byte string like b"fakepngbytes" can
+    no longer stand in for "the model returned image bytes" -- Pillow
+    would raise UnidentifiedImageError trying to open it. This returns
+    genuinely decodable (tiny, 1x1) image data instead."""
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1), color).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def test_slugify_lowercases_and_replaces_non_alnum():
@@ -38,7 +52,8 @@ def _brief(**overrides):
     return base
 
 
-def _fake_gemini_response(png_bytes=b"fakepngbytes"):
+def _fake_gemini_response(png_bytes=None):
+    png_bytes = png_bytes if png_bytes is not None else _real_png_bytes()
     return {
         "candidates": [{
             "content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": base64.b64encode(png_bytes).decode()}}]}
@@ -63,7 +78,7 @@ def test_generate_batch_writes_image_and_sidecar_with_kelvin_davis_credit(tmp_pa
 
     image_path = tmp_path / "cloud-and-ai-execution" / f"k8s-cert-path_{date.today().strftime('%Y%m%d')}.png"
     sidecar_path = image_path.with_suffix(".json")
-    assert image_path.read_bytes() == b"fakepngbytes"
+    assert Image.open(image_path).format == "PNG"
 
     sidecar = json.loads(sidecar_path.read_text())
     assert sidecar["original_creator"] == "Kelvin Davis"

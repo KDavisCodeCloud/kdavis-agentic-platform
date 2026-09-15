@@ -826,5 +826,281 @@
       "solo founder system design",
       "LLM integration best practices"
     ]
+  },
+  {
+    "id": "img_037",
+    "filename": "my_originals/cloud-and-ai-execution/hitl-gates-as-architectural-foundation-not-afterthought-why-agentic-systems-fail-trust-before-they-fail-technically_20260915.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "HITL",
+      "agentic-pipeline",
+      "LLM-orchestration",
+      "human-in-the-loop"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Human-in-the-loop AI design",
+      "Agentic pipeline architecture",
+      "LLM orchestration loops",
+      "AI safety and oversight",
+      "Responsible AI deployment"
+    ]
+  },
+  {
+    "id": "img_038",
+    "filename": "my_originals/cloud-and-ai-execution/how-graceful-failure-handling-masked-a-broken-agent-for-months_20260915.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "agent reliability",
+      "error handling",
+      "silent failures",
+      "try-except fallback"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "why AI agents silently fail",
+      "hidden bugs in multi-agent systems",
+      "error handling best practices for AI pipelines",
+      "observability in agentic workflows",
+      "how fallback blocks mask broken agents"
+    ]
+  },
+  {
+    "id": "img_039",
+    "filename": "my_originals/cloud-and-ai-execution/kubernetes-default-reach-problem-teams-treating-orchestration-as-a-deploy-pipeline-fix_20260915.png",
+    "category": "Cloud / DevOps",
+    "topic_tags": [
+      "CI/CD",
+      "Kubernetes",
+      "complexity",
+      "pipeline"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Why over-engineering your CI/CD pipeline kills productivity",
+      "Kubernetes complexity vs simple deployment pipelines",
+      "The hidden cost of orchestration complexity",
+      "When to use Kubernetes and when not to",
+      "Simplifying DevOps: actual solutions vs inherited complexity"
+    ]
+  },
+  {
+    "id": "img_040",
+    "filename": "my_originals/cloud-and-ai-execution/llm-agnostic-architecture-as-a-production-requirement-not-a-design-preference_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "LLM abstraction",
+      "vendor lock-in",
+      "API design",
+      "model-agnostic architecture"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "avoiding LLM vendor lock-in",
+      "building model-agnostic AI systems",
+      "LLM orchestration layer design",
+      "multi-model routing strategies",
+      "resilient AI infrastructure patterns"
+    ]
+  },
+  {
+    "id": "img_041",
+    "filename": "my_originals/cloud-and-ai-execution/llm-agnostic-architecture-as-the-answer-to-vendor-lock-in-gaps-in-enterprise-ai-stacks_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "vendor-lock-in",
+      "LLM-architecture",
+      "AI-governance",
+      "multi-provider"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "avoiding vendor lock-in in AI systems",
+      "building resilient LLM architectures",
+      "AI governance and compliance",
+      "multi-LLM provider strategies",
+      "enterprise AI system design"
+    ]
+  },
+  {
+    "id": "img_042",
+    "filename": "my_originals/cloud-and-ai-execution/llm-agnostic-architecture-vs-vendor-lock-in-why-enterprises-are-buying-the-wrong-thing_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "AI Routing",
+      "Provider-Agnostic",
+      "Abstraction Layer",
+      "LLM Infrastructure"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Multi-provider AI architecture",
+      "LLM routing strategies",
+      "Building provider-agnostic AI systems",
+      "Azure OpenAI vs AWS Bedrock vs Ollama",
+      "AI abstraction layer design patterns"
+    ]
+  },
+  {
+    "id": "img_043",
+    "filename": "my_originals/cloud-and-ai-execution/multi-tenant-isolation-is-a-security-boundary-not-a-schema-decision_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "multi-tenancy",
+      "data isolation",
+      "security",
+      "audit compliance"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "multi-tenant architecture pitfalls",
+      "data isolation strategies",
+      "row-level security vs schema separation",
+      "audit-proof system design",
+      "SaaS security best practices"
+    ]
+  },
+  {
+    "id": "img_044",
+    "filename": "my_originals/cloud-and-ai-execution/scope-discipline-as-a-solo-builder-why-shipping-constraints-are-actually-engineering-constraints_20260915.png",
+    "category": "Career / Growth",
+    "topic_tags": [
+      "cloud engineering",
+      "learning path",
+      "focus",
+      "certification prep"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "avoiding tutorial hell in cloud engineering",
+      "how to focus your learning path in tech",
+      "stop chasing every certification and go deep",
+      "building cloud skills with intentional practice",
+      "the right way to study for cloud certifications"
+    ]
+  },
+  {
+    "id": "img_045",
+    "filename": "my_originals/cloud-and-ai-execution/why-governance-and-hitl-must-be-in-the-blueprint-on-day-one-not-retrofitted-after-the-demo-impresses-someone_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "vendor-demo-vs-reality",
+      "production-architecture",
+      "AI-agents",
+      "cloud-architecture"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Why vendor demos lie about production complexity",
+      "What AI agents actually look like in production",
+      "Least-privilege service principal design",
+      "Multi-tenant cloud architecture patterns",
+      "The gap between demos and real-world engineering"
+    ]
+  },
+  {
+    "id": "img_046",
+    "filename": "my_originals/cloud-and-ai-execution/why-llm-agnostic-architecture-isn-t-a-nice-to-have-it-s-the-only-production-safe-design-decision_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "model-agnostic architecture",
+      "abstraction layer",
+      "LLM integration",
+      "human-in-the-loop"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "how to build model-agnostic AI applications",
+      "avoiding brittle LLM architecture",
+      "swapping AI models without code changes",
+      "response validation in AI pipelines",
+      "human-in-the-loop review systems"
+    ]
+  },
+  {
+    "id": "img_047",
+    "filename": "my_originals/cloud-and-ai-execution/why-llm-agnostic-design-with-hitl-governance-isn-t-optional-for-production-ai-systems-it-s-the-only-architecture-that-survives-contact-with-the-enterprise_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "LLM Architecture",
+      "AI Governance",
+      "Multi-Tenant Systems",
+      "Enterprise AI"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Why demo AI architectures fail in production",
+      "Building governance-first LLM systems",
+      "Human-in-the-loop state machines for AI",
+      "Multi-tenant AI infrastructure design",
+      "Moving from prototype to production-grade AI"
+    ]
+  },
+  {
+    "id": "img_048",
+    "filename": "my_originals/philosophy-faith-and-gardening/layered-systems-thinking-as-a-natural-philosophy-how-distributed-system-design-mirrors-how-living-things-are-built_20260915.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "AI stack",
+      "agent architecture",
+      "infrastructure",
+      "system layers"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Why you should build AI systems from the infrastructure up",
+      "The danger of starting with UI before fixing your data layer",
+      "How to think about AI agent stack design",
+      "Building robust AI products: lessons from nature",
+      "Infrastructure as the foundation of reliable AI agents"
+    ]
   }
 ]

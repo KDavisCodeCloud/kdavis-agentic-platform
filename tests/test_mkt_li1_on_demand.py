@@ -31,18 +31,11 @@ def _response_for_pillar(pillar_num: int, stance: str = "BUILD_IN_PUBLIC"):
     return response
 
 
-_NO_MATCH_ASSET = {
-    "image_id": None, "image_path": None, "credit_line": None, "is_original": None,
-    "selected_because": "no match found", "generation_available": False,
-}
-
-
 def _patched(fake_client, queue_side_effect=None):
     return (
         patch.object(li1, "get_anthropic_client", return_value=fake_client),
         patch.object(li1, "run_compliance_guard", return_value={"revised_content": None, "flags": []}),
         patch.object(li1, "queue_for_review", side_effect=queue_side_effect or (lambda item, **kw: {"id": "queued"})),
-        patch.object(li1, "select_asset", return_value=_NO_MATCH_ASSET),
         patch.object(li1, "write_audit_log"),
         patch.object(li1, "emit_event"),
     )
@@ -57,7 +50,7 @@ def test_balanced_mix_apportions_across_all_four_pillars():
         _response_for_pillar(4),
     ]
     patches = _patched(fake_client)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         posts = li1.generate_on_demand_posts(10, pillar_focus=None)
 
     assert len(posts) == 10
@@ -74,7 +67,7 @@ def test_single_pillar_override_routes_every_post_into_that_pillar():
     fake_client = MagicMock()
     fake_client.messages.create.side_effect = [_response_for_pillar(2) for _ in range(5)]
     patches = _patched(fake_client)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         posts = li1.generate_on_demand_posts(5, pillar_focus="pillar_2")
 
     assert len(posts) == 5
@@ -98,7 +91,7 @@ def test_pillar_4_always_tier_3_even_if_model_says_otherwise():
 
     mock_queue = MagicMock(side_effect=lambda item, **kw: {"id": "queued"})
     patches = _patched(fake_client, queue_side_effect=mock_queue.side_effect)
-    with patches[0], patches[1], patch.object(li1, "queue_for_review", mock_queue), patches[3], patches[4], patches[5]:
+    with patches[0], patches[1], patch.object(li1, "queue_for_review", mock_queue), patches[3], patches[4]:
         posts = li1.generate_on_demand_posts(1, pillar_focus="pillar_4")
 
     assert posts[0]["hitl_tier"] == 3
@@ -113,7 +106,6 @@ def test_mkt10_flag_escalates_to_tier_3():
     with patch.object(li1, "get_anthropic_client", return_value=fake_client), \
          patch.object(li1, "run_compliance_guard", return_value={"revised_content": None, "flags": ["flagged term"]}), \
          patch.object(li1, "queue_for_review", mock_queue), \
-         patch.object(li1, "select_asset", return_value=_NO_MATCH_ASSET), \
          patch.object(li1, "write_audit_log"), patch.object(li1, "emit_event"):
         posts = li1.generate_on_demand_posts(1, pillar_focus="pillar_1")
 
@@ -147,7 +139,7 @@ def test_never_touches_monthly_batch_pool_builders(monkeypatch):
     monkeypatch.setattr(li1, "_compute_schedule", _boom)
 
     patches = _patched(fake_client)
-    with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         posts = li1.generate_on_demand_posts(3, pillar_focus="pillar_1")
 
     assert len(posts) == 3

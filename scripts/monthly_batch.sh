@@ -1,13 +1,21 @@
 #!/bin/bash
 # monthly_batch.sh
-# Runs one full monthly LinkedIn content cycle: MKT-LI1 drafts ~12 posts
-# into linkedin_content_queue, then every post that got an image_description
-# gets a real Gemini-generated diagram, re-attached to its own queue row.
+# Runs the drafting half of one monthly LinkedIn content cycle: MKT-LI1
+# drafts ~12 posts into linkedin_content_queue as pure text, no image.
+#
+# Image generation is NOT part of this script (removed 2026-09-15, see
+# agents/marketing/mkt_li1_linkedin_brand.py's v2.5 changelog entry and
+# api/routes/internal_marketing.py's _generate_and_gate_image_for_approved_row):
+# it now fires automatically, per-post, the moment a human approves that
+# post's text in the dashboard (single-row PATCH or the "approve entire
+# batch" bulk action) — reading the scene out of the APPROVED post copy,
+# never a draft that could still be rejected or rewritten. Nothing to
+# run here for it anymore.
 #
 # Nothing here publishes or approves anything — HITL review of the batch
-# (and its "approve entire batch" bulk action) happens in the dashboard.
-# Once approved, scripts/dispatch_scheduled_posts.py (run on a cron) fires
-# each post on its own scheduled_for date across the month.
+# happens in the dashboard. Once approved (image generation already ran
+# as part of that approval), scripts/dispatch_scheduled_posts.py (run on
+# a cron) fires each post on its own scheduled_for date across the month.
 #
 # Usage: bash scripts/monthly_batch.sh --input path/to/request.json [--batch-month YYYY-MM]
 #
@@ -50,7 +58,6 @@ if [ ! -f "$INPUT_PATH" ]; then
 fi
 
 BATCH_PATH="/tmp/mkt_li1_batch_$(date +%Y%m%d_%H%M%S).json"
-BRIEFS_PATH="/tmp/image_briefs.json"
 
 echo "=== STEP 1: Generate monthly batch (MKT-LI1) ==="
 REQUEST_BODY="$($PYTHON -c "
@@ -71,12 +78,7 @@ curl -sS -X POST "$API_BASE_URL/api/v1/marketing/linkedin-brand" \
 POST_COUNT="$($PYTHON -c "import json; print(json.load(open('$BATCH_PATH')).get('post_count', 0))")"
 echo "MKT-LI1 drafted $POST_COUNT posts -> $BATCH_PATH"
 
-echo "=== STEP 1.5: Generate images (Gemini) ==="
-echo "Extracting image descriptions from batch..."
-"$PYTHON" "$REPO_ROOT/assets_library/extract_image_briefs.py" "$BATCH_PATH" > "$BRIEFS_PATH"
-"$PYTHON" "$REPO_ROOT/assets_library/gemini_image_gen.py" "$BRIEFS_PATH"
-echo "✅ Images generated and indexed."
-
 echo "=== DONE ==="
 echo "Batch written to $BATCH_PATH — review and approve in the dashboard."
+echo "Approving a post (single or batch) generates and gates its image automatically."
 echo "Once approved, scripts/dispatch_scheduled_posts.py publishes each post on its scheduled_for date."

@@ -40,15 +40,9 @@ def test_last_stance_is_threaded_into_the_next_drafts_user_prompt():
         _response_with_stance("AI_AGENTIC"),
         _response_with_stance("PRODUCT"),
     ]
-    no_match = {
-        "image_id": None, "image_path": None, "credit_line": None, "is_original": None,
-        "selected_because": "no match found", "generation_available": False,
-    }
-
     with patch("agents.marketing.mkt_li1_linkedin_brand.get_anthropic_client", return_value=fake_client), \
          patch("agents.marketing.mkt_li1_linkedin_brand.run_compliance_guard", return_value={"revised_content": None, "flags": []}), \
          patch("agents.marketing.mkt_li1_linkedin_brand.queue_for_review", side_effect=lambda item, **kw: {"id": "queued-1", **item}), \
-         patch("agents.marketing.mkt_li1_linkedin_brand.select_asset", return_value=no_match), \
          patch("agents.marketing.mkt_li1_linkedin_brand.write_audit_log"), \
          patch("agents.marketing.mkt_li1_linkedin_brand.emit_event"):
         posts = li1.run_li1_brand_agent(

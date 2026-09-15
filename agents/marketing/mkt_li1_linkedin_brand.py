@@ -8,12 +8,35 @@ Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
-MKT-LI1 — LinkedIn Personal Brand Agent v2.4.
+MKT-LI1 — LinkedIn Personal Brand Agent v2.5.
 
 Builds Kelvin as the authority — his personal brand is the warm
 distribution channel for every product launch. Distinct from product
 marketing (MKT-V1). Full spec: knowledge/Marketing/Marketing-Engine-Agent-Specs.md.
 System prompt: knowledge/Marketing/MKT-LI1-System-Prompt-v2.md.
+
+v2.5 (2026-09-15, image pipeline sequencing fix): this agent no longer
+drafts image_description or attaches any image at draft/queue time.
+Root cause of the change: the old flow asked the model to compose a
+rigid single-diagram Gemini prompt in the SAME LLM call as post_copy,
+then matched/generated an image via _select_image_for_post before any
+human ever reviewed the post — an image-relevance audit that day found
+10 of 22 unpublished posts carrying an image generated for a completely
+different post (assets_library/asset_selector.py's topic-word matching
+kept converging on the same earliest-generated file within a batch) and
+2 more with real quality problems. Every "image_brief"/"image_description"
+field a draft here produces is now always null; image_brief stays null
+on the queued row until a human approves the post text. The real
+two-step (scene-extraction -> Gemini) + relevance-gated generation now
+lives in assets_library/scene_image_gen.py and fires from
+api/routes/internal_marketing.py's approval endpoints (PATCH
+/linkedin-queue/{id} and POST /linkedin-queue/batch-approve), reading
+the post_copy a human just approved — never from a draft that could
+still be rejected or rewritten. See that module and that route file for
+the full mechanism; nothing about pillars, stances, voice, scheduling,
+or the JSON schema's shape changed here, only what the model is asked
+to fill into image_brief/image_description (always null now) and the
+removal of the pre-approval asset_selector call.
 
 v2.4 (2026-09-15, marketing stage-gate update): generate_product_content()
 is a new stage-aware entry point wrapping generate_product_launch_post
@@ -107,36 +130,21 @@ then fires on its own scheduled_for timestamp across the month via
 scripts/dispatch_scheduled_posts.py (cron), not an immediate bulk-publish —
 see db/migrations/013_linkedin_batch_scheduling.sql.
 
-Image asset vault (added 2026-07-22): for text_post format only (carousel
-posts use carousel_pdf_brief instead, untouched by this), selects an
-existing curated image from assets_library/ via asset_selector.select_asset()
-using this post's topic, and OVERWRITES image_brief with that selection's
-payload (image_id/image_path/credit_line/is_original/selected_because) —
-the old Canva concept/style/brand_colors shape is not used while the
-Canva Autofill integration is parked (per Kelvin's 2026-07-22 directive:
-Canva is for original-idea generation only, not in use yet). The selected
-image is attached HERE, before HITL queuing, specifically so the human
-reviewer sees and can reject the image choice along with the copy — never
-re-selected later at publish time, which would let a different image go
-live than the one actually reviewed. post_copy is also run through
-post_formatter.format_post() here, using this same selection's
-credit_line/is_original, so the queued row is the exact text that will be
-posted — publish-time uses it verbatim, no reformatting.
-
-Gemini image generation (added 2026-07-23): each drafted post now also
-carries image_description — a fully-composed, single-diagram Gemini
-prompt (see VOICE_SYSTEM_PROMPT's OUTPUT FORMAT section) for posts whose
-topic calls for an original technical diagram rather than a vault photo.
-MKT-LI1 itself never calls Gemini — at draft time, select_asset() is
-still tried first against the existing vault (a my_originals/ match from
-earlier in this same batch run always wins), and image_description just
-rides along on the queued row unused if a match was found. When no match
-exists yet, generation_available=true on image_brief signals that
-assets_library/gemini_image_gen.py can still produce one — it runs after
-this agent, in monthly_batch.sh's Step 1.5, and re-attaches the generated
-image directly to this exact queue row by id (never by fuzzy topic
-re-matching — a monthly technical diagram is bespoke to its own post, not
-a shared reusable asset like the vault's other photos).
+Image handling (rewritten 2026-09-15 — see the v2.5 changelog entry
+above for why): MKT-LI1 no longer selects or generates any image at
+draft/queue time. image_brief and image_description are always written
+null on the queued row, for every format. post_copy still runs through
+post_formatter.format_post() here, but always with credit_line=None/
+is_original=False — there is no image yet to credit. The real image
+(scene-extracted from the post text a human has since approved,
+Gemini-generated, relevance-and-legibility-gated) is attached later, by
+api/routes/internal_marketing.py's approval endpoints calling
+assets_library/scene_image_gen.py — never by this agent, and never
+before a human has approved the copy. The old vault-matching path
+(assets_library/asset_selector.py) is no longer called from this file;
+it was the direct cause of the 2026-09-15 image-relevance incident (10
+of 22 unpublished posts sharing another post's image via loose
+topic-word matching) and nothing here re-introduces it.
 """
 
 import json
@@ -157,7 +165,6 @@ from agents.marketing._shared import (
 )
 from agents.marketing.mkt_09_hitl_queue_manager import queue_for_review
 from agents.marketing.mkt_10_compliance_guard import run_compliance_guard
-from assets_library.asset_selector import select_asset
 from assets_library.post_formatter import format_post
 
 log = logging.getLogger(__name__)
@@ -400,29 +407,12 @@ steps, comparison). Otherwise use "text_post". Populate exactly one pair; other 
 
 ## OUTPUT FORMAT
 
-image_description (text_post only, null for document_carousel): a fully-composed prompt
-for a Gemini image-generation call that becomes this post's custom technical diagram.
-One Gemini API call renders exactly one image from this string verbatim — it must
-describe ONE standalone diagram only, never a grid, collage, or multi-panel composite
-(that is what Gemini defaults to when a prompt implies more than one concept at once).
+image_brief and image_description: always null, for every post, regardless of format. Image
+generation does not happen here — it happens after a human approves this post's text (see this
+file's own module docstring, v2.5 changelog entry, for why). Do not compose a diagram prompt,
+a concept/style brief, or anything else in these two fields.
 
-image_description must describe the diagram spatially and specifically:
-- Name every node, box, and label
-- Describe the layout (left to right, top to bottom, grid, flow)
-- Specify arrow directions and what connects to what
-- Include real tool/service names and logos where relevant to the post topic
-
-Always start image_description with:
-"Single standalone diagram. One concept only. No panels, no grids, no collages.
-Full bleed 1080x1080px white background."
-
-Always end image_description with:
-"Navy #0A0F1E primary elements, blue #5a96ff highlights, amber #F5A623 callouts and
-important labels. Clean sans-serif font. Real cloud provider logos where relevant.
-Small text \"Kelvin Davis\" bottom right corner. Professional LinkedIn infographic
-style similar to ByteByteGo. White background. No dark backgrounds."
-
-Never use any name other than "Kelvin Davis" anywhere in image_description or post_copy.
+Never use any name other than "Kelvin Davis" anywhere in post_copy.
 
 Respond with ONLY a JSON object matching this exact shape:
 {
@@ -702,11 +692,11 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
     )
     response = client.messages.create(
         model=MODEL,
-        # 1500 was too small once image_description's full spatial-diagram
-        # prompt requirement was added 2026-07-23 -- confirmed by a real
-        # call getting cut off mid-generation (found running the first
-        # live batch). 4000 covers post_copy + hook_variants +
-        # image_description with headroom.
+        # 4000 covers post_copy + hook_variants with headroom -- kept at
+        # this size after the 2026-09-15 removal of image_description
+        # generation (which is what originally pushed this past 1500)
+        # rather than lowering it back, since post_copy alone for a
+        # "long" post plus hook_variants can still run close to it.
         max_tokens=4000,
         system=VOICE_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
@@ -733,24 +723,13 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
             "post_copy": raw_text,
             "hook_variants": [],
             "format": "text_post",
-            "image_brief": {"concept": source_text, "style": "Decoded brand", "brand_colors": ["#5a96ff", "#f5a623"]},
+            "image_brief": None,
             "image_description": None,
             "carousel_slides": None,
             "carousel_pdf_brief": None,
             "notes": "",
         }
     return parsed
-
-
-def _select_image_for_post(topic: str, image_description: Optional[str] = None) -> Optional[dict]:
-    """Returns asset_selector's payload, or None if no curated image matches
-    this post's topic AND no Gemini generation is possible for it either (a
-    text_post is still valid with neither — MKT-LI1 never fabricates a
-    match, same principle as never fabricating a milestone in _build_slots
-    above). image_description is passed through only so select_asset can
-    set generation_available on its output; it plays no role in matching."""
-    result = select_asset(topic, image_description=image_description)
-    return result if result["image_id"] or result["generation_available"] else None
 
 
 def run_li1_brand_agent(
@@ -809,13 +788,10 @@ def run_li1_brand_agent(
                 post["post_copy"] = compliance["revised_content"]
 
             if post["format"] == "text_post":
-                asset = _select_image_for_post(post["topic"], image_description=post["image_description"])
-                post["image_brief"] = asset
-                formatted_copy, format_warnings = format_post(
-                    post["post_copy"],
-                    credit_line=asset["credit_line"] if asset else None,
-                    is_original=asset["is_original"] if asset else False,
-                )
+                # No image yet -- see this file's v2.5 changelog entry. credit_line/is_original
+                # are always None/False here since there is nothing to credit until
+                # api/routes/internal_marketing.py generates one post-approval.
+                formatted_copy, format_warnings = format_post(post["post_copy"], credit_line=None, is_original=False)
                 post["post_copy"] = formatted_copy
                 if format_warnings:
                     post["notes"] = (post["notes"] + " | " if post["notes"] else "") + "post_formatter: " + "; ".join(format_warnings)
@@ -923,13 +899,10 @@ def generate_on_demand_posts(
                 post["post_copy"] = compliance["revised_content"]
 
             if post["format"] == "text_post":
-                asset = _select_image_for_post(post["topic"], image_description=post["image_description"])
-                post["image_brief"] = asset
-                formatted_copy, format_warnings = format_post(
-                    post["post_copy"],
-                    credit_line=asset["credit_line"] if asset else None,
-                    is_original=asset["is_original"] if asset else False,
-                )
+                # No image yet -- see this file's v2.5 changelog entry. credit_line/is_original
+                # are always None/False here since there is nothing to credit until
+                # api/routes/internal_marketing.py generates one post-approval.
+                formatted_copy, format_warnings = format_post(post["post_copy"], credit_line=None, is_original=False)
                 post["post_copy"] = formatted_copy
                 if format_warnings:
                     post["notes"] = (post["notes"] + " | " if post["notes"] else "") + "post_formatter: " + "; ".join(format_warnings)
@@ -1161,10 +1134,10 @@ def generate_product_content(
                     without a CTA doesn't carve out an exception to that.
       'building' -> returns None. No LLM call, nothing queued, nothing
                     generated — matches this file's established
-                    "never fabricate" principle (_build_slots/
-                    _select_image_for_post never invent source material
-                    either) applied to a product that shouldn't be
-                    visible in generated content at all yet.
+                    "never fabricate" principle (_build_slots never
+                    invents source material either) applied to a
+                    product that shouldn't be visible in generated
+                    content at all yet.
 
     Does not touch Pillar 5 (Enterprise Consulting & AI Platform
     Architecture) or any other pillar of the evergreen batch pool — see

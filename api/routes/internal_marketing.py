@@ -71,6 +71,7 @@ navigates) the moment a real "Connect LinkedIn" button exists on the
 dashboard, and remove ADMIN_BOOTSTRAP_KEY at that point.
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -584,6 +585,109 @@ async def publish_linkedin_post(
 
 
 # ── Batch review, scheduling, and bulk approval (dashboard) ────────────────
+#
+# Image generation moved here — fires once, synchronously, the moment a
+# row's status flips to 'approved' — per Kelvin's 2026-09-15 directive
+# fixing two problems in the old flow (agents/marketing/
+# mkt_li1_linkedin_brand.py used to draft image_description in the same
+# LLM call as post_copy, then select/generate an image immediately,
+# before any human ever saw the post):
+#
+#   1. Sequencing: an image now only ever gets generated from POST TEXT A
+#      HUMAN HAS ALREADY APPROVED, via assets_library/scene_image_gen.py's
+#      two-step scene-extraction pipeline — never from a draft that could
+#      still be rejected or rewritten.
+#   2. Relevance: that same module gates the result (subject match +
+#      text legibility) before it's ever attached, regenerating once on a
+#      failure and, if still failing, reverting the row back to
+#      'pending_review' with hitl_notes explaining why rather than
+#      leaving 'approved' status pointing at a bad or missing image that
+#      scripts/dispatch_scheduled_posts.py could otherwise publish as-is.
+#
+# Runs inside the same request that flips status to 'approved' (not a
+# background job) specifically so there is no window where a row is
+# 'approved' with no image decision made yet — dispatch_scheduled_posts.py
+# only ever sees a row that is 'approved' AND already has (or explicitly
+# doesn't need) an image.
+
+
+async def _generate_and_gate_image_for_approved_row(conn, queue_id: str) -> None:
+    row = await conn.fetchrow(
+        "SELECT post_copy, pillar_name, topic, format, image_brief, notes FROM linkedin_content_queue WHERE id = $1",
+        queue_id,
+    )
+    if row is None:
+        return  # row vanished between the approval UPDATE and here -- nothing to attach to
+
+    # document_carousel posts use carousel_pdf_brief, not a single generated
+    # image (unchanged from the old flow) -- nothing to generate here.
+    if row["format"] != "text_post":
+        return
+
+    existing_brief = row["image_brief"]
+    if isinstance(existing_brief, str):
+        existing_brief = json.loads(existing_brief)
+    if existing_brief and existing_brief.get("image_path"):
+        return  # already has a real image (e.g. re-approving after a prior successful run) -- don't spend another Gemini call
+
+    from assets_library.gemini_image_gen import ASSETS_ROOT
+    from assets_library.scene_image_gen import generate_relevant_image
+
+    try:
+        result = await asyncio.to_thread(
+            generate_relevant_image,
+            post_text=row["post_copy"],
+            pillar=row["pillar_name"],
+            post_topic=row["topic"],
+        )
+    except Exception as exc:  # noqa: BLE001 -- an infra failure must revert to pending_review, never leave 'approved' with no image decision made
+        log.error("[InternalMarketing] Image generation failed for queue row %s: %s", queue_id, exc)
+        note = f"IMAGE GENERATION FAILED: {exc}"
+        existing_notes = row["notes"] or ""
+        await conn.execute(
+            """
+            UPDATE linkedin_content_queue
+            SET status = 'pending_review', hitl_notes = $1, notes = $2
+            WHERE id = $3 AND status = 'approved'
+            """,
+            note, (existing_notes + " | " if existing_notes else "") + note, queue_id,
+        )
+        return
+
+    image_brief = {
+        "image_id": None,
+        "image_path": f"assets_library/{result['image_path'].relative_to(ASSETS_ROOT)}",
+        "credit_line": None,
+        "is_original": True,
+        "selected_because": f"scene-gated generation, {result['scene_type'].lower()}, post-approval",
+        "generation_available": True,
+    }
+
+    if result["flagged_for_review"]:
+        note = f"IMAGE RELEVANCE GATE FAILED after regeneration: {result['reason']}"
+        existing_notes = row["notes"] or ""
+        await conn.execute(
+            """
+            UPDATE linkedin_content_queue
+            SET status = 'pending_review', hitl_notes = $1, notes = $2,
+                image_brief = $3, image_description = $4
+            WHERE id = $5 AND status = 'approved'
+            """,
+            note, (existing_notes + " | " if existing_notes else "") + note,
+            json.dumps(image_brief), result["scene_description"], queue_id,
+        )
+        log.warning("[InternalMarketing] Queue row %s reverted to pending_review — %s", queue_id, note)
+    else:
+        await conn.execute(
+            """
+            UPDATE linkedin_content_queue
+            SET image_brief = $1, image_description = $2
+            WHERE id = $3 AND status = 'approved'
+            """,
+            json.dumps(image_brief), result["scene_description"], queue_id,
+        )
+        log.info("[InternalMarketing] Queue row %s: image generated and attached (%s)", queue_id, result["scene_type"])
+
 
 class QueueRowUpdate(BaseModel):
     status: str | None = None
@@ -665,6 +769,8 @@ async def update_linkedin_queue_row(
     if not fields:
         raise HTTPException(status_code=400, detail="Provide at least one of status/hitl_notes/scheduled_for")
 
+    approving = body.status == "approved"
+
     db = request.app.state.db_pool
     params.append(queue_id)
     async with db.acquire() as conn:
@@ -677,8 +783,15 @@ async def update_linkedin_queue_row(
             """,
             *params,
         )
-    if row is None:
-        raise HTTPException(status_code=409, detail="Row not found, or already published (immutable)")
+        if row is None:
+            raise HTTPException(status_code=409, detail="Row not found, or already published (immutable)")
+
+        if approving and row["status"] == "approved":
+            await _generate_and_gate_image_for_approved_row(conn, queue_id)
+            row = await conn.fetchrow(
+                "SELECT id, status, hitl_notes, scheduled_for, image_brief FROM linkedin_content_queue WHERE id = $1",
+                queue_id,
+            )
 
     log.info("[InternalMarketing] Queue row %s updated: %s", queue_id, dict(row))
     return dict(row)
@@ -697,6 +810,23 @@ async def batch_approve_linkedin_queue(
     'approved' so scripts/dispatch_scheduled_posts.py's cron can fire
     each row on its own scheduled_for date. Rejected/already-approved
     rows in the batch are left untouched.
+
+    Runs image generation (see _generate_and_gate_image_for_approved_row)
+    for every row this call approves, one at a time, before returning --
+    a batch approval of N posts means N sequential Gemini + Claude calls
+    in this one request, same "never publish an approved row with no
+    image decision made" guarantee as the single-row PATCH endpoint. A
+    row the gate flags is reverted to pending_review inside that helper
+    and is reported separately below, not counted as approved.
+
+    Known tradeoff, accepted for this owner-only, ~10-12-post-a-month
+    tool: one pooled DB connection stays checked out for the whole loop
+    (a monthly batch can take minutes of real external API time), which
+    would be a real concern under concurrent traffic. If batch sizes or
+    dashboard concurrency ever grow enough for this to matter, the fix
+    is releasing/reacquiring the connection per row (or moving this to a
+    background job the dashboard polls) rather than holding it — not
+    something to build ahead of an actual need here.
     """
     db = request.app.state.db_pool
     async with db.acquire() as conn:
@@ -709,9 +839,28 @@ async def batch_approve_linkedin_queue(
             """,
             body.batch_month,
         )
-    approved_ids = [r["id"] for r in rows]
-    log.info("[InternalMarketing] Batch-approved %s posts for %s", len(approved_ids), body.batch_month)
-    return {"batch_month": body.batch_month, "approved_count": len(approved_ids), "approved_ids": approved_ids}
+        candidate_ids = [r["id"] for r in rows]
+
+        for queue_id in candidate_ids:
+            await _generate_and_gate_image_for_approved_row(conn, queue_id)
+
+        final_rows = await conn.fetch(
+            "SELECT id, status FROM linkedin_content_queue WHERE id = ANY($1::uuid[])",
+            candidate_ids,
+        )
+
+    approved_ids = [r["id"] for r in final_rows if r["status"] == "approved"]
+    reverted_ids = [r["id"] for r in final_rows if r["status"] != "approved"]
+    log.info(
+        "[InternalMarketing] Batch-approved %s posts for %s (%s reverted to pending_review by the image gate)",
+        len(approved_ids), body.batch_month, len(reverted_ids),
+    )
+    return {
+        "batch_month": body.batch_month,
+        "approved_count": len(approved_ids),
+        "approved_ids": approved_ids,
+        "reverted_to_review_ids": reverted_ids,
+    }
 
 
 # ── Asset thumbnails (dashboard image preview) ─────────────────────────────
