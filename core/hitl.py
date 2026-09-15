@@ -478,7 +478,15 @@ class HITLGate:
         action: str,
         tokens_used: int,
     ) -> None:
-        """Append to the operator audit log — Rule 9 compliance."""
+        """
+        Append to the operator markdown audit log — Rule 9 compliance —
+        AND fire a real audit_events DB row (GAPS.md #28, best-effort,
+        detached via asyncio.create_task so this stays a synchronous
+        method and every one of this method's existing call sites needs
+        no change). The markdown file remains a secondary, operator-only
+        debugging output; audit_events is now the actual customer-facing,
+        per-tenant-queryable audit trail the security page describes.
+        """
         from pathlib import Path
         log_path = Path("knowledge/operator/llm-audit.md")
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,3 +502,12 @@ class HITLGate:
                 f.write("|-----------|-------|-----------|--------|--------|--------|\n")
         with open(log_path, "a") as f:
             f.write(entry)
+
+        from core.audit import schedule_audit_event
+        schedule_audit_event(
+            workspace_id=workspace_id,
+            action=action,
+            incident_id=incident_id,
+            agent_id=agent_id,
+            tokens_used=tokens_used,
+        )

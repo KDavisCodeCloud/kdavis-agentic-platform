@@ -1347,3 +1347,60 @@ Tier 3's Microsoft Teams outbound channels can register as a new
 `core/notifications.py` when they're built, reusing the exact same
 `notify_incident_channels()` fan-out and `workspace_notification_channels`
 table without a new migration.
+
+### 28. `audit_events` table has zero application-level writers -- security page's "full audit trail" claim is not backed by the DB (2026-09-15)
+
+**Priority: HIGH.** Found while building the "Handle manually" HITL
+resolution path (commit `d7f8855`): before that commit,
+**nothing in this codebase ever wrote a row to `audit_events`** --
+confirmed by reading every call site across the whole repo, not
+assumed. `core/hitl.py`'s `_write_audit_entry()` -- called from
+`create_incident`, `create_failed_incident`, `bump_occurrence`,
+`approve_incident`, `mark_executed`, `mark_failed` -- despite its name
+and its "Rule 9 compliance" docstring comment, appends a line to a
+**local markdown file**, `knowledge/operator/llm-audit.md`, not the
+database. Same for every `agents/agent_0N_*/workflow.py`'s
+`self._write_audit(...)` (via `agents/base_agent.py`'s `_write_audit`)
+and every marketing agent's `write_audit_log()` (`agents/marketing/
+_shared.py`) -- all markdown-file writers, none touch `audit_events`.
+
+This means every claim on `frontend/src/app/security/page.tsx` and
+`docs/customer/security-questionnaire-response.md` about a "full audit
+trail" / per-tenant audit logging has, until now, described a table
+that exists (migration 001, RLS-covered since migration 031) but is
+functionally empty for every real customer action. A customer asking
+"show me every action taken on my incidents this month" via direct
+Supabase/API access would get nothing back from `audit_events` --the
+only place that information actually lived was a single shared
+markdown file on the Railway filesystem, not even per-workspace, not
+customer-accessible, and not guaranteed to survive a redeploy.
+
+**Fixed, same session.** New `core/audit.py` (`write_audit_event()` +
+`schedule_audit_event()`) writes a real `audit_events` row for every
+call, alongside the existing markdown writer (kept, per Kelvin's
+explicit instruction, as a secondary operator-debugging output — not
+removed). Fired via `asyncio.create_task()` from inside
+`core/hitl.py`'s `_write_audit_entry()` and `agents/base_agent.py`'s
+`_write_audit()` — both stay plain synchronous methods, so every one of
+their dozens of existing call sites across `core/hitl.py` and all 11
+agent `workflow.py` files needed zero changes. `action` is the existing
+descriptive string each call site already passed (`"created"`,
+`"ingest"`, `"execute:opt_1"`, etc. — not renamed to match this entry's
+earlier illustrative examples, since nothing depends on those exact
+strings and renaming would be an unrelated, riskier refactor);
+`workspace_id`/`incident_id`/`agent_id`/`status`/`tokens_used` map onto
+the columns already provided at each call site. Several of
+`core/hitl.py`'s own call sites (`bump_occurrence`/`approve_incident`/
+`mark_executed`/`mark_failed`) pass the literal string `"unknown"` for
+workspace_id — a pre-existing gap in those methods' own signatures, not
+reworked here — so `write_audit_event()` resolves the real workspace_id
+via a `SELECT workspace_id FROM incidents WHERE id = $1` fallback
+instead of silently dropping those writes (this matters most for
+`mark_executed`, the completion event for every successful remediation
+across every agent). 14 new tests in `tests/test_core_audit.py` cover
+the happy path, the "unknown" fallback, and that every failure mode
+(no `DATABASE_URL`, connection failure, insert failure, no running
+event loop) is swallowed and never raises back into a caller.
+Security page and security-questionnaire-response.md updated in the
+same push to reflect that audit logging is now genuinely backed by the
+DB table with full per-tenant queryability.

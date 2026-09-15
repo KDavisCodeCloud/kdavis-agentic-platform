@@ -279,7 +279,13 @@ class BaseAgent(ABC):
         incident_id: Optional[str] = None,
     ) -> None:
         """
-        Append an audit entry to knowledge/operator/llm-audit.md.
+        Append an audit entry to knowledge/operator/llm-audit.md, AND fire
+        a real audit_events DB row (GAPS.md #28, best-effort, detached via
+        asyncio.create_task so this method stays synchronous and every one
+        of its call sites across all 11 agents' workflow.py files needs no
+        change). The markdown file is kept as a secondary, operator-only
+        debugging output; audit_events is now the actual customer-facing,
+        per-tenant-queryable audit trail the security page describes.
         Governance Rule 9: every agent action writes to audit log.
         Format: [TIMESTAMP] [AGENT] [WORKSPACE_ID] [ACTION] [STATUS] [TOKENS_USED]
         """
@@ -299,6 +305,16 @@ class BaseAgent(ABC):
                 f.write("|-----------|-------|-----------|--------|--------|--------|\n")
         with open(log_path, "a") as f:
             f.write(entry)
+
+        from core.audit import schedule_audit_event
+        schedule_audit_event(
+            workspace_id=self.workspace_id,
+            action=action,
+            status=status,
+            incident_id=incident_id,
+            agent_id=self.agent_id,
+            tokens_used=tokens_used,
+        )
 
     # ──────────────────────────────────────────────
     # BYOK decryption

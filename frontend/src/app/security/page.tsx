@@ -30,7 +30,7 @@ const PILLARS = [
   },
   {
     title: 'Full audit trail, every action, win or lose',
-    body: 'Every run — approved, rejected, or held — is logged with actor, action, resource, outcome, and timestamp. Nothing is deleted from the audit trail. If a fix was proposed, you can see exactly what it proposed and what happened to that proposal.',
+    body: 'Every run — created, approved, rejected, held, or resolved manually — is written to your own per-tenant audit record: actor, action, resource, outcome, and timestamp. Nothing is deleted from it, and it’s scoped to your workspace the same way every other table is — queryable by you, not just visible in a dashboard summary. If a fix was proposed, you can see exactly what it proposed and what happened to that proposal.',
   },
   {
     title: 'Bring your own cloud credentials, scoped to what’s needed',

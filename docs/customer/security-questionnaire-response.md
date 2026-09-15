@@ -106,9 +106,12 @@ configurable setting — it is how every one of the eleven agents is built.
 Detection and diagnosis are automated; execution requires an explicit
 human approval, every time.
 
-**What is logged?** Every agent run — approved, held, or rejected — is
-written to an immutable audit log with actor, action, resource, outcome,
-and timestamp.
+**What is logged?** Every agent run — created, approved, held, rejected,
+or resolved manually — is written to an immutable, per-tenant
+`audit_events` database record (not just a dashboard summary) with
+actor, action, resource, outcome, and timestamp, scoped to your
+workspace with the same row-level isolation as every other table.
+Queryable by you, not only by Cloud Decoded.
 
 **Is there a spend/runaway-execution safeguard?** Yes — every agent
 execution has a hard token/spend cap and a call-count circuit breaker.
