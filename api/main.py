@@ -23,6 +23,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
@@ -33,6 +34,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncpg
+import httpx
 from core.db import register_jsonb_codec
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -335,6 +337,21 @@ app.include_router(github_app_admin.router, prefix="/api/v1")
 # Health + diagnostics
 # ──────────────────────────────────────────────
 
+async def _check_db(db_pool) -> tuple[str, str]:
+    """
+    Shared DB-connectivity check -- used by both /health/db (the
+    readiness probe) and /api/status (Phase 5's public status endpoint)
+    so there's exactly one place this query lives, not two copies that
+    could drift.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+        return "ok", "connected"
+    except Exception as exc:
+        return "error", str(exc)
+
+
 @app.get("/health")
 async def health(request: Request) -> dict:
     """Liveness probe — returns 200 if API is up."""
@@ -344,16 +361,63 @@ async def health(request: Request) -> dict:
 @app.get("/health/db")
 async def health_db(request: Request) -> dict:
     """Readiness probe — checks DB connectivity."""
+    status_, detail = await _check_db(request.app.state.db_pool)
+    if status_ != "ok":
+        log.error("[Health] DB check failed: %s", detail)
+        return JSONResponse(status_code=503, content={"status": "error", "db": detail})
+    return {"status": "ok", "db": detail}
+
+
+@app.get("/api/status")
+async def api_status(request: Request) -> dict:
+    """
+    Real status endpoint backing the public /status page (Phase 5,
+    closing the site-accuracy-audit's "placeholder status page" gap --
+    replaces the previous static "ALL SYSTEMS OPERATIONAL" claim with
+    three independently-checked services).
+
+    - backend: trivially "ok" -- this response happening at all is the
+      proof; there is no meaningful way for this process to report
+      itself as down from inside its own request handler.
+    - database: the same connectivity check /health/db already does
+      (_check_db above), not duplicated.
+    - frontend: NOT a client-side self-check. A page fetching its own
+      "am I up" status from the browser can only ever report "ok" --
+      if the frontend deploy were actually down, no browser would be
+      running this page's JS to make the check in the first place, so
+      that check would be vacuously true and never show red. Instead
+      this backend independently HEADs https://theclouddecoded.com/
+      with a short timeout: a real external signal that stays
+      meaningful even when nobody is viewing the status page, and one
+      that can genuinely go red if Vercel, DNS, or the frontend deploy
+      itself is actually down.
+    """
+    db_status, db_detail = await _check_db(request.app.state.db_pool)
+
+    frontend_status, frontend_detail = "ok", "reachable"
     try:
-        async with request.app.state.db_pool.acquire() as conn:
-            await conn.fetchval("SELECT 1")
-        return {"status": "ok", "db": "connected"}
-    except Exception as exc:
-        log.error("[Health] DB check failed: %s", exc)
-        return JSONResponse(
-            status_code=503,
-            content={"status": "error", "db": str(exc)},
-        )
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+            resp = await client.head("https://theclouddecoded.com/")
+        if resp.status_code >= 500:
+            frontend_status, frontend_detail = "error", f"HTTP {resp.status_code}"
+        elif resp.status_code >= 400:
+            frontend_status, frontend_detail = "degraded", f"HTTP {resp.status_code}"
+    except httpx.RequestError as exc:
+        frontend_status, frontend_detail = "error", str(exc)
+
+    services = {
+        "backend":  {"status": "ok",             "detail": "responding"},
+        "database": {"status": db_status,        "detail": db_detail},
+        "frontend": {"status": frontend_status,  "detail": frontend_detail},
+    }
+    statuses = {s["status"] for s in services.values()}
+    overall = "ok" if statuses == {"ok"} else ("error" if "error" in statuses else "degraded")
+
+    return {
+        "status": overall,
+        "services": services,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/")

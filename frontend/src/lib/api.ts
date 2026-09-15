@@ -737,3 +737,31 @@ export async function healthCheck(): Promise<boolean> {
     return false
   }
 }
+
+export interface SystemStatusService {
+  status: 'ok' | 'degraded' | 'error'
+  detail: string
+}
+
+export interface SystemStatus {
+  status: 'ok' | 'degraded' | 'error'
+  services: {
+    backend: SystemStatusService
+    database: SystemStatusService
+    frontend: SystemStatusService
+  }
+  timestamp: string
+}
+
+// Real status backing /status (Phase 5) -- returns null on any fetch
+// failure so the page can render its own "status unavailable" state
+// rather than throwing.
+export async function getSystemStatus(): Promise<SystemStatus | null> {
+  try {
+    const res = await fetch(`${API_URL}/api/status`, { cache: 'no-store' })
+    if (!res.ok) return null
+    return (await res.json()) as SystemStatus
+  } catch {
+    return null
+  }
+}

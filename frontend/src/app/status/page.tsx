@@ -1,9 +1,14 @@
 import type { Metadata } from 'next'
-import { MarketingHead, MarketingNav, MarketingFooter, PAGE_BG, BODY_FONT, HEAD_FONT, MONO_FONT } from '@/components/marketing/SiteChrome'
+import { MarketingHead, MarketingNav, MarketingFooter, PAGE_BG, BODY_FONT, HEAD_FONT } from '@/components/marketing/SiteChrome'
+import StatusIndicators from './StatusIndicators'
 
-// Placeholder status page -- linked from the footer per the landing-page
-// revamp. Real incident history / uptime feed is a follow-up; this page
-// exists so the footer link resolves to something real rather than a 404.
+// Real status page (Phase 5) -- StatusIndicators fetches the live
+// /api/status endpoint (backend/database/frontend, each independently
+// checked -- see api/main.py's api_status()) client-side and renders
+// real green/amber indicators. No third-party status-page dependency.
+// A full incident history / uptime-over-time feed is still a follow-up
+// (out of scope for this pass) -- this page shows current state, not
+// history.
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://theclouddecoded.com'),
@@ -20,27 +25,19 @@ export default function StatusPage() {
         <MarketingNav />
 
         <section style={{ padding: '80px 40px 100px', maxWidth: 720, margin: '0 auto', textAlign: 'center' }}>
-          <div
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8, fontFamily: MONO_FONT, fontSize: 12,
-              letterSpacing: '.06em', color: '#3fd17a', border: '1px solid rgba(63,209,122,.35)',
-              background: 'rgba(63,209,122,.08)', padding: '8px 16px', borderRadius: 99, marginBottom: 28,
-            }}
-          >
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#3fd17a', boxShadow: '0 0 8px #3fd17a' }} />
-            ALL SYSTEMS OPERATIONAL
-          </div>
           <h1
             style={{
               fontFamily: HEAD_FONT, fontWeight: 600, fontSize: 36, lineHeight: 1.15,
-              letterSpacing: '-.02em', color: '#fff', margin: '0 0 16px',
+              letterSpacing: '-.02em', color: '#fff', margin: '0 0 24px',
             }}
           >
             Cloud Decoded system status
           </h1>
-          <p style={{ fontSize: 15.5, lineHeight: 1.65, color: 'rgba(232,236,242,.62)', margin: 0 }}>
-            A full incident history and uptime feed for this page is on the way. For an active issue affecting
-            your workspace, contact <a href="mailto:hello@theclouddecoded.com" style={{ color: '#9fc2ff' }}>hello@theclouddecoded.com</a>.
+          <StatusIndicators />
+          <p style={{ fontSize: 15.5, lineHeight: 1.65, color: 'rgba(232,236,242,.62)', margin: '24px 0 0' }}>
+            Live status for the API, database, and website, checked directly — not a third-party status page.
+            For an active issue affecting your workspace, contact{' '}
+            <a href="mailto:hello@theclouddecoded.com" style={{ color: '#9fc2ff' }}>hello@theclouddecoded.com</a>.
           </p>
         </section>
 
