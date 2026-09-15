@@ -42,8 +42,13 @@ class WorkspaceComplianceGuard:
 
     Also enforces product tier limits:
     - starter:    max 3 agents, 2 repos, 1 cloud provider
-    - growth:     max 10 agents, 15 repos, 2 cloud providers
+    - growth:     max 11 agents, 15 repos, 2 cloud providers
     - enterprise: unlimited (subject to custom SLA)
+
+    TIER_LIMITS below is the single source of truth for agent/repo/cloud-
+    provider caps across the platform -- api/routes/agents.py's
+    GET /agents endpoint reads it directly rather than keeping its own
+    copy (see GAPS.md #16 for the drift that caused).
     """
 
     TIER_LIMITS = {

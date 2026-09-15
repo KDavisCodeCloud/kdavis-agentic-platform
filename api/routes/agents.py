@@ -268,20 +268,16 @@ async def list_agents(
 ) -> dict:
     """List agents available to this workspace based on product tier."""
     tier = workspace.get("product_tier", "starter")
-    # Mirrors core/compliance.py's WorkspaceComplianceGuard.TIER_LIMITS --
-    # this endpoint has its own copy rather than importing it because it
-    # needs a display count, not a permission check, but the numbers must
-    # stay in sync or an agent can be "permitted" yet never listed as
-    # available (or vice versa). Growth bumped 10 -> 11, enterprise 10 -> 11
-    # (effectively "all") for the same reason WorkspaceComplianceGuard's
-    # growth cap was bumped: Agent 11 must not become Enterprise-only by
-    # numbering accident.
-    tier_limits = {
-        "starter":    3,
-        "growth":     11,
-        "enterprise": 11,
-    }
-    max_agents = tier_limits.get(tier, 3)
+    # Single source of truth: core/compliance.py's WorkspaceComplianceGuard.
+    # TIER_LIMITS -- a second, hand-maintained copy here previously drifted
+    # from it (enterprise hardcoded to a fixed agent count instead of
+    # compliance.py's -1/unlimited semantics), which is exactly the class of
+    # bug that made Agent 11 briefly Enterprise-only by numbering accident.
+    # See GAPS.md #16.
+    limits = WorkspaceComplianceGuard.TIER_LIMITS.get(
+        tier, WorkspaceComplianceGuard.TIER_LIMITS["starter"]
+    )
+    max_agents = limits["max_agents"]
 
     all_agents = [
         {"id": "agent_01_cicd_triage",       "name": "CI/CD Pipeline Failure Triage",             "status": "available"},
@@ -297,9 +293,16 @@ async def list_agents(
         {"id": "agent_11_resource_health",   "name": "Cloud Resource Health Monitoring",           "status": "available"},
     ]
 
+    # -1 means unlimited (enterprise) -- a plain list slice with -1 would
+    # silently drop the last agent instead, so this is handled explicitly.
+    if max_agents == -1:
+        available_agents, locked_agents = all_agents, []
+    else:
+        available_agents, locked_agents = all_agents[:max_agents], all_agents[max_agents:]
+
     return {
         "tier": tier,
-        "available_agents": all_agents[:max_agents],
-        "locked_agents": all_agents[max_agents:],
+        "available_agents": available_agents,
+        "locked_agents": locked_agents,
         "upgrade_url": "https://theclouddecoded.com/#pricing",
     }
