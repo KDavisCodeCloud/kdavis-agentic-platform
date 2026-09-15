@@ -74,10 +74,9 @@ Content-Type: application/json
 
 Agent 08's ingest/diagnose pipeline is fully generic — any two JSON/YAML
 blobs work through the same desired-vs-actual diff. These are
-representative `resource_type` examples across the four infrastructure
-domains in scope (IAM/RBAC/Policy, Networking, Storage, Compute).
-Database-as-a-service resources (RDS, Azure SQL, Cosmos DB, DynamoDB) are
-explicitly out of scope, addressed separately.
+representative `resource_type` examples across the five infrastructure
+domains in scope (IAM/RBAC/Policy, Networking, Storage, Compute,
+Database-as-a-Service).
 
 | Domain | AWS `resource_type` example | Azure `resource_type` example |
 |---|---|---|
@@ -85,6 +84,7 @@ explicitly out of scope, addressed separately.
 | Networking | `aws_security_group` (see the worked example above; also route table drift, VPC peering state) | `azure_network_security_group` (NSG rule drift — flag as CRITICAL by default, this is the highest-severity drift category) |
 | Storage | `aws_s3_bucket` (versioning/encryption/lifecycle/object-lock drift) | `azure_storage_account` (access policy changed outside IaC, replication rules) |
 | Compute | `aws_instance` (instance type, auto-scaling min/max/desired, AMI version, tag compliance drift) | `azure_app_service` (see App Service content/config drift below — the one domain with a dedicated live-state fetcher instead of relying on the caller to supply `actual_state`) |
+| Database-as-a-Service | `aws_db_instance` / `aws_dynamodb_table` (engine/instance-class drift, parameter group drift, backup-retention drift, DynamoDB billing-mode or GSI/LSI drift) | `azure_sql_database` / `azure_cosmosdb_account` (service-tier/DTU-vCore drift, firewall-rule drift, Cosmos DB throughput/RU drift) |
 
 **GCP:** payload shape and `resource_type` conventions (e.g.
 `google_compute_instance`, `google_storage_bucket`) are accepted the same

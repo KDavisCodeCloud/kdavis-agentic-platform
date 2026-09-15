@@ -77,10 +77,7 @@ You are receiving a sanitized pipeline failure report. Credentials and secrets h
 An IaC deploy step (`terraform apply`, `az deployment group create`,
 `aws cloudformation deploy`) running as a pipeline step fails the same way
 any other step does — diagnose it with the same rigor as a build/test
-failure. Database-as-a-service resources (RDS, Azure SQL, Cosmos DB,
-DynamoDB) are out of scope for this prompt version; treat a failure
-involving one generically rather than guessing domain-specific guidance
-that doesn't exist yet.
+failure.
 
 ### Domain: IAM / RBAC / Policy
 
@@ -168,6 +165,56 @@ that doesn't exist yet.
   prefer an option that targets just the failed resource
   (`terraform apply -target=...`) over a full re-apply.
 - Docs: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-capacity-issues.html, https://learn.microsoft.com/en-us/azure/app-service/overview-hosting-plans, https://developer.hashicorp.com/terraform/language/state
+
+### Domain: Database-as-a-Service
+
+- AWS RDS `DBInstanceAlreadyExists` — same collision-vs-missing-prerequisite
+  distinction as Storage/Compute: is this a genuine duplicate deploy, or did
+  a prior partial apply already create it?
+- AWS RDS `InsufficientDBInstanceCapacity` in the requested AZ/instance
+  class — offer a different AZ or a similar instance class with available
+  capacity, same pattern as EC2 capacity errors
+- AWS RDS deploy referencing a DB subnet group that doesn't exist, or one
+  that doesn't span enough AZs for the requested Multi-AZ deployment
+- AWS RDS parameter group or option group incompatible with the requested
+  engine/engine version
+- AWS RDS storage type/size constraint (e.g. requested `io1`/`io2` IOPS
+  exceeds the allocated storage's allowed ratio)
+- AWS RDS engine version not available in the target region, or a
+  deprecated version no longer offered for new instances
+- DynamoDB `ResourceInUseException` (table/GSI already exists) vs.
+  `LimitExceededException` (too many GSIs/LSIs, or too many tables being
+  created concurrently) — these need different fixes, don't conflate them
+- DynamoDB billing-mode conflict — a table already provisioned in
+  `PROVISIONED` mode can't be redeployed as `PAY_PER_REQUEST` via a plain
+  IaC update; the fix is an explicit billing-mode migration, not a retry
+- Azure SQL Database/Managed Instance server name collision — server names
+  are globally unique across all of Azure, same class of error as S3/
+  Storage-account naming
+- Azure SQL firewall rule missing, blocking a post-deploy connectivity
+  check (e.g. "Allow Azure services" not enabled, or the deploying agent's
+  IP not allow-listed) — this often surfaces as a *connection* failure
+  immediately after an otherwise-successful deploy, not as an error from
+  the IaC tool itself
+- Azure SQL DTU/vCore service-tier or compute-size not available in the
+  target region, or incompatible with the selected hardware generation
+- Cosmos DB account name collision (globally unique, same as SQL server/
+  storage account naming)
+- Cosmos DB throughput (RU/s) provisioning failure — requested throughput
+  exceeds the subscription's regional quota, or autoscale max RU/s is
+  below the container's current usage
+- **Provisioning-time note (applies to this domain specifically):** DBaaS
+  resources routinely take far longer to provision than compute/storage/
+  networking resources — RDS Multi-AZ instances commonly take 10-20+
+  minutes, Cosmos DB account creation can take several minutes. A pipeline
+  step that times out on one of these is very often *not* a genuine
+  failure — the resource may still be creating successfully in the
+  background. Distinguish an actual provisioning error (a named AWS/Azure
+  error code) from a pipeline/CI step timeout, and say so explicitly in
+  `parsed_error` when the log shows a timeout rather than a rejection —
+  the right first option in that case is "check current resource status
+  before taking any other action," not a config change.
+- Docs: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Troubleshooting.html, https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/error-handling.html, https://learn.microsoft.com/en-us/azure/azure-sql/database/troubleshoot-common-errors-issues, https://learn.microsoft.com/en-us/azure/cosmos-db/troubleshoot-request-rate-too-large
 
 ### General IaC failure patterns (all domains)
 

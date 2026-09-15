@@ -4,10 +4,8 @@ Mock infrastructure-as-code deploy-failure logs for Agent 01's broadened,
 domain-organized diagnosis prompt -- added as part of the "IaC deploy-
 failure diagnosis + live resource monitoring" build, Phase A.
 
-One fixture per domain (IAM/RBAC/Policy, Networking, Storage, Compute) per
-cloud (AWS, Azure) -- 8 total. Database-as-a-service resources are
-explicitly out of scope for this build (addressed separately), so no
-fixture here touches RDS/Azure SQL/Cosmos DB/DynamoDB.
+One fixture per domain (IAM/RBAC/Policy, Networking, Storage, Compute,
+Database-as-a-Service) per cloud (AWS, Azure) -- 10 total.
 
 These are realistic CI/CD job log excerpts as they'd appear when an IaC
 deploy step runs as a pipeline step and fails -- the same shape Agent 01
@@ -172,6 +170,51 @@ Deployment failed. Correlation ID: 1f2e3d4c-5b6a-7c8d-9e0f-1a2b3c4d5e6f.
 ##[error]Bash exited with code '1'.
 """
 
+# ── Domain: Database-as-a-Service ────────────────────────────────────────────
+
+MOCK_DBAAS_AWS_FAILURE_LOG = """\
+Terraform will perform the following actions:
+
+  # aws_db_instance.primary will be created
+
+aws_db_instance.primary: Creating...
+aws_db_instance.primary: Still creating... [10m0s elapsed]
+aws_db_instance.primary: Still creating... [20m0s elapsed]
+
+Error: waiting for RDS DB Instance (acme-prod-db) create: timeout while
+waiting for state to become 'available' (last state: 'creating', timeout:
+20m0s)
+
+  with aws_db_instance.primary,
+  on database.tf line 4, in resource "aws_db_instance" "primary":
+   4: resource "aws_db_instance" "primary" {
+
+##[error]Terraform apply timed out. No AWS error code was returned -- the
+instance may still be provisioning in the background.
+"""
+
+MOCK_DBAAS_AZURE_FAILURE_LOG = """\
+##[section]Starting: Deploy ARM Template
+az deployment group create --resource-group acme-prod-rg --template-file sqlserver.bicep
+
+Deployment failed. Correlation ID: 4a5b6c7d-8e9f-0a1b-2c3d-4e5f6a7b8c9d.
+{
+  "status": "Failed",
+  "error": {
+    "code": "DeploymentFailed",
+    "details": [{
+      "code": "FirewallRuleNotFound",
+      "message": "Post-deployment connectivity check failed: client with
+      IP address '20.31.44.17' is not allowed to access server
+      'acme-prod-sql.database.windows.net'. No firewall rule permits this
+      IP, and 'Allow Azure services and resources to access this server'
+      is not enabled."
+    }]
+  }
+}
+##[error]Bash exited with code '1'.
+"""
+
 # ── Grouped for iteration in tests ───────────────────────────────────────────
 
 IAC_DOMAIN_FIXTURES = {
@@ -183,4 +226,6 @@ IAC_DOMAIN_FIXTURES = {
     "storage_azure": MOCK_STORAGE_AZURE_FAILURE_LOG,
     "compute_aws": MOCK_COMPUTE_AWS_FAILURE_LOG,
     "compute_azure": MOCK_COMPUTE_AZURE_FAILURE_LOG,
+    "dbaas_aws": MOCK_DBAAS_AWS_FAILURE_LOG,
+    "dbaas_azure": MOCK_DBAAS_AZURE_FAILURE_LOG,
 }

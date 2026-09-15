@@ -33,8 +33,6 @@ You are receiving a sanitized alert payload (Azure Monitor Common Alert Schema, 
 
 ## Runtime alert categories — organized by infrastructure domain
 
-Database-as-a-service alerts (RDS, Azure SQL, Cosmos DB, DynamoDB) are out of scope for this prompt version; treat one generically rather than guessing domain-specific guidance that doesn't exist yet.
-
 ### Domain: IAM / RBAC / Policy
 
 - Azure Defender for Identity / AWS GuardDuty access-denied and privilege-escalation alerts
@@ -71,6 +69,38 @@ Database-as-a-service alerts (RDS, Azure SQL, Cosmos DB, DynamoDB) are out of sc
 - **Spot instance interruption notice** — this one has genuine time pressure the others don't (typically a 2-minute warning before reclaim). Frame `parsed_error` with urgency, and make the fastest safe option (failover to on-demand, or to a different pool) `opt_1`.
 - Availability-set / Availability Zone health alert
 - Docs: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html, https://learn.microsoft.com/en-us/azure/virtual-machines/availability-set-overview
+
+### Domain: Database-as-a-Service
+
+- RDS CPU/memory/storage threshold breach — same pattern as EC2/compute
+  threshold alerts, but check `FreeStorageSpace` specifically: a DB running
+  out of allocated storage can go read-only, which is more urgent than a
+  CPU spike and should be framed that way in `parsed_error`
+- RDS/Aurora replication lag alert — name the replica and the lag duration;
+  a growing lag on a read replica serving production traffic is a
+  data-freshness problem, not just a performance one
+- RDS/Aurora failover event notification — this is often informational
+  (Multi-AZ did its job), but confirm it wasn't preceded by an underlying
+  health alert; if this is the *second* failover in a short window, say so
+  explicitly, that pattern indicates an unresolved root cause
+- RDS automated backup failure alert — treat as high-impact even though
+  nothing is down: a backup failure discovered only when it's needed is a
+  common, expensive mistake
+- DynamoDB throttling alert (`ThrottledRequests`/`ProvisionedThroughputExceededException`)
+  — distinguish a genuine traffic-driven need to raise provisioned
+  capacity (or switch to on-demand) from a hot-partition problem that
+  scaling capacity alone won't fix (uneven partition key distribution)
+- Cosmos DB RU (request unit) exhaustion / `429 TooManyRequests` alert —
+  offer raising provisioned/autoscale max RU/s as one option, and note
+  that a persistent 429 pattern despite adequate RU/s often points at a
+  hot logical partition, same underlying idea as DynamoDB above
+- Azure SQL DTU/vCore utilization threshold alert — check whether this
+  correlates with a recent traffic pattern change (informs whether the fix
+  is "scale up" vs. "optimize the query causing it")
+- Azure SQL / Cosmos DB failover or geo-replication alert — same
+  informational-vs-root-cause distinction as the RDS/Aurora failover note
+  above
+- Docs: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_Monitoring.html, https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ProvisionedThroughput.html, https://learn.microsoft.com/en-us/azure/azure-sql/database/monitor-tune-overview, https://learn.microsoft.com/en-us/azure/cosmos-db/monitor-normalized-request-units
 
 ### GCP (payload shape only — no collection built yet)
 

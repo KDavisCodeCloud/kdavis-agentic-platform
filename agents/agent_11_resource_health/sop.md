@@ -72,10 +72,9 @@ EventBridge → Lambda). Route GuardDuty through SNS for now.
 
 ## Domain Coverage
 
-Same four domains as Agent 01/08 (IAM/RBAC/Policy, Networking, Storage,
-Compute). Database-as-a-service alerts are out of scope, addressed
-separately. See `prompts/diagnose.md` for the full category list per
-domain per cloud — this table is the quick reference:
+Same five domains as Agent 01/08 (IAM/RBAC/Policy, Networking, Storage,
+Compute, Database-as-a-Service). See `prompts/diagnose.md` for the full
+category list per domain per cloud — this table is the quick reference:
 
 | Domain | Example Azure alert | Example AWS alert |
 |---|---|---|
@@ -83,6 +82,7 @@ domain per cloud — this table is the quick reference:
 | Networking | NSG flow-log anomaly, Network Watcher reachability failure | VPC Reachability Analyzer failure, Shield DDoS alert |
 | Storage | Storage account unauthorized access, replication failure | S3 unusual data transfer, replication failure |
 | Compute | VM/managed-disk performance alert, availability-set health | EC2 CPU/memory threshold, spot interruption notice |
+| Database-as-a-Service | Azure SQL DTU/vCore threshold, Cosmos DB RU exhaustion (429) | RDS storage/replication-lag alert, DynamoDB throttling |
 
 **GCP:** payload shape and category guidance documented in
 `prompts/diagnose.md` — a GCP alert posted through this same webhook
