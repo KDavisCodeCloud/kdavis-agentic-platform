@@ -697,7 +697,7 @@ class ResourceHealthWorkflow(BaseAgent):
         result = await self._graph.ainvoke(initial_state, config=config)
 
         interrupt_data = None
-        for task in (self._graph.get_state(config).tasks or []):
+        for task in ((await self._graph.aget_state(config)).tasks or []):
             if hasattr(task, "interrupts") and task.interrupts:
                 interrupt_data = task.interrupts[0].value
                 break
