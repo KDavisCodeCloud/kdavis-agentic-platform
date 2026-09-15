@@ -100,10 +100,13 @@ class TestNotifyResolution:
             await ticketing.notify_resolution("ws-1", {"incident_id": "i-1"})
         conn.close.assert_awaited_once()
 
-    async def test_dispatches_to_jira_and_writes_success_audit_event(self):
+    async def test_dispatches_to_jira_and_schedules_success_audit_event(self):
+        """Ticketing build (2026-09-15), post-rebase: success/failure logging
+        goes through core/audit.py's schedule_audit_event() -- the real,
+        proven audit_events writer (GAPS.md #28) -- not a second, parallel
+        ad-hoc INSERT."""
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(return_value={"channel_type": "jira", "config_encrypted": "enc-jira"})
-        conn.execute = AsyncMock(return_value=None)
         conn.close = AsyncMock()
 
         with (
@@ -111,23 +114,24 @@ class TestNotifyResolution:
             patch("core.ticketing.asyncpg.connect", new=AsyncMock(return_value=conn)),
             patch("core.ticketing.decrypt", return_value=json.dumps({"instance_url": "https://x", "api_token": "t", "project_key": "OPS"})),
             patch("core.ticketing.create_jira_ticket", new=AsyncMock(return_value={"external_id": "OPS-1", "ticket_url": "https://x/browse/OPS-1"})) as mock_jira,
+            patch("core.ticketing.schedule_audit_event") as mock_audit,
         ):
             await ticketing.notify_resolution("ws-1", {"incident_id": "i-1", "agent_id": "agent_01_cicd_triage"})
 
         mock_jira.assert_awaited_once()
-        conn.execute.assert_awaited_once()
-        sql, *params = conn.execute.await_args.args
-        assert "INSERT INTO audit_events" in sql
-        assert params[3] == "ticket_created"
-        assert params[4] == "success"
-        metadata = json.loads(params[5])
-        assert metadata["provider"] == "jira"
-        assert metadata["external_id"] == "OPS-1"
+        mock_audit.assert_called_once()
+        kwargs = mock_audit.call_args.kwargs
+        assert kwargs["workspace_id"] == "ws-1"
+        assert kwargs["action"] == "ticket_created"
+        assert kwargs["status"] == "success"
+        assert kwargs["incident_id"] == "i-1"
+        assert kwargs["agent_id"] == "agent_01_cicd_triage"
+        assert kwargs["metadata"]["provider"] == "jira"
+        assert kwargs["metadata"]["external_id"] == "OPS-1"
 
-    async def test_ticket_creation_failure_writes_failure_audit_event_and_does_not_raise(self):
+    async def test_ticket_creation_failure_schedules_failure_audit_event_and_does_not_raise(self):
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(return_value={"channel_type": "jira", "config_encrypted": "enc-jira"})
-        conn.execute = AsyncMock(return_value=None)
         conn.close = AsyncMock()
 
         with (
@@ -135,17 +139,17 @@ class TestNotifyResolution:
             patch("core.ticketing.asyncpg.connect", new=AsyncMock(return_value=conn)),
             patch("core.ticketing.decrypt", return_value=json.dumps({"instance_url": "https://x", "api_token": "t", "project_key": "OPS"})),
             patch("core.ticketing.create_jira_ticket", new=AsyncMock(side_effect=Exception("jira down"))),
+            patch("core.ticketing.schedule_audit_event") as mock_audit,
         ):
             # Must complete without raising.
             await ticketing.notify_resolution("ws-1", {"incident_id": "i-1", "agent_id": "agent_01_cicd_triage"})
 
-        conn.execute.assert_awaited_once()
-        sql, *params = conn.execute.await_args.args
-        assert params[3] == "ticket_creation_failed"
-        assert params[4] == "failed"
-        metadata = json.loads(params[5])
-        assert metadata["provider"] == "jira"
-        assert "jira down" in metadata["error"]
+        mock_audit.assert_called_once()
+        kwargs = mock_audit.call_args.kwargs
+        assert kwargs["action"] == "ticket_creation_failed"
+        assert kwargs["status"] == "failed"
+        assert kwargs["metadata"]["provider"] == "jira"
+        assert "jira down" in kwargs["metadata"]["error"]
 
     async def test_db_connect_failure_never_raises(self):
         with (

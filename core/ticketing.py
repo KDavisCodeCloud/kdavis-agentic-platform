@@ -31,6 +31,12 @@ notification channel (the same row core/notifications.py's
 send_pagerduty_notification already writes a trigger event to) to send a
 *resolve* event with a matching dedup_key, so it is dispatched independently
 of whatever ticketing channel (if any) is configured.
+
+Success/failure logging to audit_events uses core/audit.py's
+schedule_audit_event() (GAPS.md #28's real DB writer, landed alongside
+this build) rather than a second, parallel ad-hoc INSERT -- one writer
+for the whole codebase, same call-site shape core/hitl.py's
+_write_audit_entry() uses.
 """
 
 import asyncio
@@ -42,6 +48,7 @@ from typing import Optional
 import asyncpg
 import httpx
 
+from core.audit import schedule_audit_event
 from security.encryption import decrypt
 
 log = logging.getLogger(__name__)
@@ -199,21 +206,6 @@ async def _dispatch_ticket(channel_type: str, config: dict, incident_summary: di
     raise ValueError(f"No ticketing sender registered for channel_type={channel_type!r}")
 
 
-async def _write_audit_event(conn, workspace_id, incident_id, agent_id, action: str, metadata: dict) -> None:
-    await conn.execute(
-        """
-        INSERT INTO audit_events (workspace_id, agent_id, incident_id, action, status, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        agent_id,
-        incident_id,
-        action,
-        "success" if action == "ticket_created" else "failed",
-        json.dumps(metadata),
-    )
-
-
 async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_by: Optional[str] = None) -> None:
     """
     Best-effort, fire-and-forget dispatch on incident resolution. Never
@@ -274,9 +266,13 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
         try:
             config = json.loads(decrypt(row["config_encrypted"]))
             result = await _dispatch_ticket(channel_type, config, incident_summary, resolved_by)
-            await _write_audit_event(
-                conn, workspace_id, incident_id, agent_id, "ticket_created",
-                {"provider": channel_type, **(result or {})},
+            schedule_audit_event(
+                workspace_id=workspace_id,
+                action="ticket_created",
+                status="success",
+                incident_id=incident_id,
+                agent_id=agent_id,
+                metadata={"provider": channel_type, **(result or {})},
             )
         except Exception as exc:
             log.warning(
@@ -285,9 +281,13 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
                 extra={"workspace_id": workspace_id, "channel_type": channel_type},
             )
             try:
-                await _write_audit_event(
-                    conn, workspace_id, incident_id, agent_id, "ticket_creation_failed",
-                    {"provider": channel_type, "error": str(exc)[:500]},
+                schedule_audit_event(
+                    workspace_id=workspace_id,
+                    action="ticket_creation_failed",
+                    status="failed",
+                    incident_id=incident_id,
+                    agent_id=agent_id,
+                    metadata={"provider": channel_type, "error": str(exc)[:500]},
                 )
             except Exception:
                 pass
