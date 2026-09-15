@@ -26,6 +26,7 @@ notification channels can coexist, but this is a different category
 
 PATCH  /workspace/ticketing/jira            -- set/update Jira config
 PATCH  /workspace/ticketing/linear          -- set/update Linear config
+PATCH  /workspace/ticketing/github-issues   -- set/update GitHub Issues config
 GET    /workspace/ticketing                 -- current ticketing channel status
                                                 (never returns decrypted secrets)
 """
@@ -57,6 +58,15 @@ class ConnectJiraRequest(BaseModel):
 class ConnectLinearRequest(BaseModel):
     api_key: str = Field(..., min_length=1)
     team_id: str = Field(..., min_length=1)
+    enabled: bool = True
+
+
+class ConnectGithubIssuesRequest(BaseModel):
+    # "owner/repo" -- no credentials here at all. create_github_issue_ticket
+    # reuses the workspace's existing GitHub App installation token via
+    # core/workspace_credentials.py's build_agent_credentials(), the same
+    # credential resolution every other agent already uses.
+    repo: str = Field(..., min_length=1, pattern=r"^[^/\s]+/[^/\s]+$")
     enabled: bool = True
 
 
@@ -158,6 +168,25 @@ async def connect_linear(
     )
     log.info("[WorkspaceTicketing] Linear channel configured workspace=%s", workspace_id)
     return TicketingChannelStatusResponse(channel_type="linear", enabled=body.enabled)
+
+
+@router.patch("/github-issues", response_model=TicketingChannelStatusResponse)
+async def connect_github_issues(
+    body: ConnectGithubIssuesRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace),
+) -> TicketingChannelStatusResponse:
+    workspace_id = workspace["id"]
+    await _assert_no_conflicting_ticketing_channel(request, workspace_id, "github_issues")
+    await _upsert_ticketing_channel(
+        request,
+        workspace_id,
+        "github_issues",
+        {"repo": body.repo},
+        body.enabled,
+    )
+    log.info("[WorkspaceTicketing] GitHub Issues channel configured workspace=%s", workspace_id)
+    return TicketingChannelStatusResponse(channel_type="github_issues", enabled=body.enabled)
 
 
 @router.get("", response_model=TicketingStatusResponse)

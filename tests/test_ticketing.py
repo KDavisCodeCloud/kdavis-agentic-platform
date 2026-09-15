@@ -190,6 +190,126 @@ class TestDispatchTicketRoutesLinear:
         assert mock_audit.call_args.kwargs["metadata"]["provider"] == "linear"
 
 
+class TestCreateGithubIssueTicket:
+    def _client_with_responses(self, create_body: dict, create_status: int = 201, close_status: int = 200):
+        create_resp = MagicMock()
+        create_resp.status_code = create_status
+        create_resp.json = MagicMock(return_value=create_body)
+        create_resp.raise_for_status = MagicMock()
+        if create_status >= 400:
+            create_resp.raise_for_status.side_effect = Exception(f"HTTP {create_status}")
+
+        close_resp = MagicMock()
+        close_resp.status_code = close_status
+        close_resp.raise_for_status = MagicMock()
+        if close_status >= 400:
+            close_resp.raise_for_status.side_effect = Exception(f"HTTP {close_status}")
+
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=create_resp)
+        client.patch = AsyncMock(return_value=close_resp)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client, create_resp, close_resp
+
+    async def test_creates_then_closes_issue_using_github_app_token(self):
+        client, _, _ = self._client_with_responses(
+            {"number": 42, "html_url": "https://github.com/acme/infra/issues/42"}
+        )
+        config = {"repo": "acme/infra"}
+        incident_summary = {"incident_id": "abc", "parsed_error": "Disk full", "cloud_provider": "aws"}
+
+        with (
+            patch("core.ticketing.httpx.AsyncClient", return_value=client),
+            patch("core.ticketing.build_agent_credentials", new=AsyncMock(return_value={"github_token": "ghs_token123"})),
+        ):
+            result = await ticketing.create_github_issue_ticket(
+                conn=AsyncMock(), workspace_id="ws-1", config=config, incident_summary=incident_summary, resolved_by=None,
+            )
+
+        create_url = client.post.await_args.args[0]
+        assert create_url == "https://api.github.com/repos/acme/infra/issues"
+        create_headers = client.post.await_args.kwargs["headers"]
+        assert create_headers["Authorization"] == "Bearer ghs_token123"
+        create_payload = client.post.await_args.kwargs["json"]
+        assert create_payload["labels"] == ["cloud-decoded-incident"]
+        assert "Disk full" in create_payload["body"]
+
+        close_url = client.patch.await_args.args[0]
+        assert close_url == "https://api.github.com/repos/acme/infra/issues/42"
+        assert client.patch.await_args.kwargs["json"] == {"state": "closed"}
+
+        assert result == {"external_id": "42", "ticket_url": "https://github.com/acme/infra/issues/42"}
+
+    async def test_invalid_repo_format_raises(self):
+        with pytest.raises(ValueError, match="owner/repo"):
+            await ticketing.create_github_issue_ticket(
+                conn=AsyncMock(), workspace_id="ws-1", config={"repo": "not-a-repo"},
+                incident_summary={"incident_id": "x"}, resolved_by=None,
+            )
+
+    async def test_no_github_credentials_raises(self):
+        with patch("core.ticketing.build_agent_credentials", new=AsyncMock(return_value={"github_token": None})):
+            with pytest.raises(RuntimeError, match="GitHub"):
+                await ticketing.create_github_issue_ticket(
+                    conn=AsyncMock(), workspace_id="ws-1", config={"repo": "acme/infra"},
+                    incident_summary={"incident_id": "x"}, resolved_by=None,
+                )
+
+    async def test_manual_resolution_note_and_gap_disclosure_in_body(self):
+        client, _, _ = self._client_with_responses({"number": 1, "html_url": "https://github.com/acme/infra/issues/1"})
+        with (
+            patch("core.ticketing.httpx.AsyncClient", return_value=client),
+            patch("core.ticketing.build_agent_credentials", new=AsyncMock(return_value={"github_token": "t"})),
+        ):
+            await ticketing.create_github_issue_ticket(
+                conn=AsyncMock(), workspace_id="ws-1", config={"repo": "acme/infra"},
+                incident_summary={"incident_id": "x", "resolution_note": "Rotated manually"}, resolved_by="member-1",
+            )
+
+        payload = client.post.await_args.kwargs["json"]
+        assert "resolved manually" in payload["title"].lower()
+        assert "Rotated manually" in payload["body"]
+        assert "opened and closed automatically" in payload["body"]
+
+    async def test_create_failure_raises_before_close_is_attempted(self):
+        client, _, _ = self._client_with_responses({}, create_status=500)
+        with (
+            patch("core.ticketing.httpx.AsyncClient", return_value=client),
+            patch("core.ticketing.build_agent_credentials", new=AsyncMock(return_value={"github_token": "t"})),
+        ):
+            with pytest.raises(Exception):
+                await ticketing.create_github_issue_ticket(
+                    conn=AsyncMock(), workspace_id="ws-1", config={"repo": "acme/infra"},
+                    incident_summary={"incident_id": "x"}, resolved_by=None,
+                )
+        client.patch.assert_not_awaited()
+
+
+class TestDispatchTicketRoutesGithubIssues:
+    async def test_notify_resolution_dispatches_github_issues_channel(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[None, {"channel_type": "github_issues", "config_encrypted": "enc-gh"}])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.ticketing.os.environ.get", return_value="postgresql://x"),
+            patch("core.ticketing.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.ticketing.decrypt", return_value=json.dumps({"repo": "acme/infra"})),
+            patch("core.ticketing.create_github_issue_ticket", new=AsyncMock(return_value={"external_id": "42", "ticket_url": "https://github.com/acme/infra/issues/42"})) as mock_gh,
+            patch("core.ticketing.schedule_audit_event") as mock_audit,
+        ):
+            await ticketing.notify_resolution("ws-1", {"incident_id": "i-1", "agent_id": "agent_04_migration"})
+
+        mock_gh.assert_awaited_once()
+        # conn and workspace_id are threaded through to the sender positionally.
+        call_args = mock_gh.await_args
+        assert call_args.args[0] is conn
+        assert call_args.args[1] == "ws-1"
+        mock_audit.assert_called_once()
+        assert mock_audit.call_args.kwargs["metadata"]["provider"] == "github_issues"
+
+
 class TestDispatchPagerdutyResolve:
     """Phase 3: PagerDuty resolution sync -- reuses the workspace's
     existing PagerDuty *notification* channel (a separate category from

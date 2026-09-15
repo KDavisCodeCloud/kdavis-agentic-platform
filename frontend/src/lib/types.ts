@@ -243,6 +243,10 @@ export interface LinearConnectInput {
   team_id: string
 }
 
+export interface GithubIssuesConnectInput {
+  repo: string
+}
+
 export interface AwsRoleSetup {
   external_id: string
   trust_policy: Record<string, unknown>

@@ -5,7 +5,7 @@ import type {
   AuditSubmissionSummary, AuditSubmissionDetail,
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
   DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
-  ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput, LinearConnectInput,
+  ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput, LinearConnectInput, GithubIssuesConnectInput,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -13,7 +13,7 @@ import {
   getMockFinopsDashboard, mockActionFinopsItem, getMockComplianceReport,
   getMockConnectionsStatus, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
   mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s, mockSaveLlmKey,
-  getMockTicketingStatus, mockConnectJira, mockConnectLinear,
+  getMockTicketingStatus, mockConnectJira, mockConnectLinear, mockConnectGithubIssues,
 } from './mock-data'
 
 const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -769,6 +769,17 @@ export async function connectLinear(
 ): Promise<{ channel_type: string; enabled: boolean }> {
   if (MOCK_MODE) return mockConnectLinear(body)
   return request<{ channel_type: string; enabled: boolean }>('/workspace/ticketing/linear', token, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function connectGithubIssues(
+  token: string,
+  body: GithubIssuesConnectInput,
+): Promise<{ channel_type: string; enabled: boolean }> {
+  if (MOCK_MODE) return mockConnectGithubIssues(body)
+  return request<{ channel_type: string; enabled: boolean }>('/workspace/ticketing/github-issues', token, {
     method: 'PATCH',
     body: JSON.stringify(body),
   })

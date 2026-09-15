@@ -11,6 +11,7 @@ import type {
   FinOpsDashboardData,
   FinOpsHitlItem,
   Incident,
+  GithubIssuesConnectInput,
   JiraConnectInput,
   LinearConnectInput,
   ManualResolutionResponse,
@@ -678,4 +679,9 @@ export function mockConnectJira(_body: JiraConnectInput): { channel_type: string
 export function mockConnectLinear(_body: LinearConnectInput): { channel_type: string; enabled: boolean } {
   _ticketingStatus = { channel: { channel_type: 'linear', enabled: true } }
   return { channel_type: 'linear', enabled: true }
+}
+
+export function mockConnectGithubIssues(_body: GithubIssuesConnectInput): { channel_type: string; enabled: boolean } {
+  _ticketingStatus = { channel: { channel_type: 'github_issues', enabled: true } }
+  return { channel_type: 'github_issues', enabled: true }
 }

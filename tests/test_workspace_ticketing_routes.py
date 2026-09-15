@@ -135,6 +135,43 @@ class TestConnectLinear:
         conn.execute.assert_not_awaited()
 
 
+class TestConnectGithubIssues:
+    async def test_upserts_config_repo_only_no_secret_to_encrypt(self):
+        request, conn = _make_request()
+        workspace_id = uuid4()
+
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            result = await wt_routes.connect_github_issues(
+                wt_routes.ConnectGithubIssuesRequest(repo="acme/infra"),
+                request,
+                workspace={"id": workspace_id},
+            )
+
+        assert result.channel_type == "github_issues"
+        assert result.enabled is True
+        conn.execute.assert_awaited_once()
+        sql, *params = conn.execute.await_args.args
+        assert "workspace_notification_channels" in sql
+        assert "github_issues" in params
+
+    async def test_rejects_when_jira_already_configured(self):
+        request, conn = _make_request(fetch_return=[{"channel_type": "jira"}])
+        workspace_id = uuid4()
+
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            with pytest.raises(HTTPException) as exc:
+                await wt_routes.connect_github_issues(
+                    wt_routes.ConnectGithubIssuesRequest(repo="acme/infra"),
+                    request,
+                    workspace={"id": workspace_id},
+                )
+        assert exc.value.status_code == 409
+
+    async def test_invalid_repo_format_rejected_by_pydantic(self):
+        with pytest.raises(Exception):
+            wt_routes.ConnectGithubIssuesRequest(repo="not-a-valid-repo")
+
+
 class TestGetTicketingStatus:
     async def test_no_channel_configured_returns_none(self):
         request, conn = _make_request()

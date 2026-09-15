@@ -50,12 +50,14 @@ import httpx
 
 from core.audit import schedule_audit_event
 from core.notifications import send_pagerduty_resolve_event
+from core.workspace_credentials import build_agent_credentials
 from security.encryption import decrypt
 
 log = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT_SECONDS = 20.0
 _FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+_GITHUB_API_URL = "https://api.github.com"
 
 # The four ticketing providers. A workspace may have zero or one of these
 # configured at a time -- see api/routes/workspace_ticketing.py's
@@ -306,13 +308,99 @@ async def create_linear_ticket(config: dict, incident_summary: dict, resolved_by
     return {"external_id": issue.get("identifier") or issue.get("id", ""), "ticket_url": issue.get("url", "")}
 
 
+# ── GitHub Issues (Phase 4) ──────────────────────────────────────────────
+
+def _github_headers(token: str) -> dict:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+async def create_github_issue_ticket(
+    conn, workspace_id: str, config: dict, incident_summary: dict, resolved_by: Optional[str]
+) -> dict:
+    """
+    Creates a GitHub issue via the workspace's existing GitHub App
+    installation token -- reuses core/workspace_credentials.py's
+    build_agent_credentials() (the same credential resolution every
+    other agent already uses), no new credential storage for this
+    provider. Config carries only `repo` ("owner/repo").
+
+    GAP, stated plainly rather than invented away: no incident-creation-
+    time GitHub issue exists anywhere in this codebase for this hook to
+    close (confirmed -- core/notifications.py's create-time dispatch
+    only ever sends Slack/PagerDuty). "Close the issue on resolution"
+    therefore means create-then-immediately-close: GitHub's Issues API
+    has no way to create an issue already in the closed state, so this
+    POSTs to open it, then PATCHes state=closed right after, with the
+    body making clear it documents an incident that already resolved --
+    not one still needing triage.
+
+    Raises on failure -- callers (notify_resolution) catch and log.
+    """
+    repo_full = config["repo"]
+    if "/" not in repo_full:
+        raise ValueError(f"GitHub Issues config 'repo' must be 'owner/repo', got {repo_full!r}")
+    owner, repo = repo_full.split("/", 1)
+
+    creds = await build_agent_credentials(conn, workspace_id)
+    token = creds.get("github_token")
+    if not token:
+        raise RuntimeError(
+            "No GitHub credentials configured for this workspace -- install the GitHub App first"
+        )
+
+    if incident_summary.get("resolution_note"):
+        title = f"Cloud Decoded incident resolved manually: {_summary_line(incident_summary)}"
+    else:
+        title = f"Cloud Decoded incident resolved: {_summary_line(incident_summary)}"
+
+    body = (
+        _build_narrative(incident_summary)
+        + "\n\n_This issue was opened and closed automatically by Cloud Decoded -- "
+        "it documents an incident that already resolved, not one that needs triage._"
+    )
+
+    headers = _github_headers(token)
+
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        create_resp = await client.post(
+            f"{_GITHUB_API_URL}/repos/{owner}/{repo}/issues",
+            headers=headers,
+            json={"title": title[:255], "body": body, "labels": ["cloud-decoded-incident"]},
+        )
+        create_resp.raise_for_status()
+        issue = create_resp.json()
+        issue_number = issue["number"]
+
+        close_resp = await client.patch(
+            f"{_GITHUB_API_URL}/repos/{owner}/{repo}/issues/{issue_number}",
+            headers=headers,
+            json={"state": "closed"},
+        )
+        close_resp.raise_for_status()
+
+    return {"external_id": str(issue_number), "ticket_url": issue.get("html_url", "")}
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────
 
-async def _dispatch_ticket(channel_type: str, config: dict, incident_summary: dict, resolved_by: Optional[str]) -> dict:
+async def _dispatch_ticket(
+    channel_type: str,
+    config: dict,
+    incident_summary: dict,
+    resolved_by: Optional[str],
+    conn=None,
+    workspace_id: Optional[str] = None,
+) -> dict:
     if channel_type == "jira":
         return await create_jira_ticket(config, incident_summary, resolved_by)
     if channel_type == "linear":
         return await create_linear_ticket(config, incident_summary, resolved_by)
+    if channel_type == "github_issues":
+        return await create_github_issue_ticket(conn, workspace_id, config, incident_summary, resolved_by)
     raise ValueError(f"No ticketing sender registered for channel_type={channel_type!r}")
 
 
@@ -428,7 +516,9 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
         agent_id = incident_summary.get("agent_id")
         try:
             config = json.loads(decrypt(row["config_encrypted"]))
-            result = await _dispatch_ticket(channel_type, config, incident_summary, resolved_by)
+            result = await _dispatch_ticket(
+                channel_type, config, incident_summary, resolved_by, conn=conn, workspace_id=workspace_id,
+            )
             schedule_audit_event(
                 workspace_id=workspace_id,
                 action="ticket_created",

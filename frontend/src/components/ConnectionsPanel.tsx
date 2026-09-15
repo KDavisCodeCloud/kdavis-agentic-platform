@@ -12,7 +12,7 @@ import { CodeBlock } from '@/components/ui/code-block'
 import { cn } from '@/lib/utils'
 import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
-  connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear,
+  connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear, connectGithubIssues,
 } from '@/lib/api'
 import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus } from '@/lib/types'
 
@@ -21,6 +21,12 @@ import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus } from '@/lib/typ
 // distinct from the AgentConnectFlow.tsx form used by the FinOps/Compliance
 // *agent* tabs, which proxies to the separately-deployed satellite products
 // instead. Backend: api/routes/workspace_credentials.py (migration 022).
+
+const TICKETING_PROVIDER_LABELS: Record<'jira' | 'linear' | 'github_issues', string> = {
+  jira: 'Jira',
+  linear: 'Linear',
+  github_issues: 'GitHub Issues',
+}
 
 interface ConnectionsPanelProps {
   token: string
@@ -81,7 +87,7 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   // switches which config form is shown, matching whichever channel (if
   // any) is already connected.
   const [ticketingStatus, setTicketingStatus] = useState<TicketingStatus | null>(null)
-  const [ticketingProvider, setTicketingProvider] = useState<'jira' | 'linear'>('jira')
+  const [ticketingProvider, setTicketingProvider] = useState<'jira' | 'linear' | 'github_issues'>('jira')
   const [jiraInstanceUrl, setJiraInstanceUrl] = useState('')
   const [jiraApiToken, setJiraApiToken] = useState('')
   const [jiraProjectKey, setJiraProjectKey] = useState('')
@@ -90,6 +96,8 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [linearApiKey, setLinearApiKey] = useState('')
   const [linearTeamId, setLinearTeamId] = useState('')
   const [linearBusy, setLinearBusy] = useState(false)
+  const [githubIssuesRepo, setGithubIssuesRepo] = useState('')
+  const [githubIssuesBusy, setGithubIssuesBusy] = useState(false)
 
   // GitHub -- item 4 App migration: no PAT form, just an install-URL redirect
   const [githubBusy, setGithubBusy] = useState(false)
@@ -135,7 +143,11 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       ])
       setStatus(connections)
       setTicketingStatus(ticketing)
-      if (ticketing.channel?.channel_type === 'jira' || ticketing.channel?.channel_type === 'linear') {
+      if (
+        ticketing.channel?.channel_type === 'jira' ||
+        ticketing.channel?.channel_type === 'linear' ||
+        ticketing.channel?.channel_type === 'github_issues'
+      ) {
         setTicketingProvider(ticketing.channel.channel_type)
       }
     } catch (e: unknown) {
@@ -275,6 +287,19 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       setError(e instanceof Error ? e.message : 'Could not save that Linear connection')
     } finally {
       setLinearBusy(false)
+    }
+  }
+
+  async function handleConnectGithubIssues() {
+    setGithubIssuesBusy(true)
+    setError(null)
+    try {
+      await connectGithubIssues(token, { repo: githubIssuesRepo.trim() })
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not save that GitHub Issues connection')
+    } finally {
+      setGithubIssuesBusy(false)
     }
   }
 
@@ -523,30 +548,30 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
         <SectionCard
           icon={Ticket}
           title="Ticketing"
-          description="Automatically open a ticket when an incident resolves -- Jira and Linear today, more providers landing soon. A workspace can connect one ticketing system at a time."
+          description="Automatically open a ticket when an incident resolves -- Jira, Linear, and GitHub Issues today, more providers landing soon. A workspace can connect one ticketing system at a time."
           connected={!!ticketingStatus?.channel}
         >
           {ticketingStatus?.channel && ticketingStatus.channel.channel_type !== ticketingProvider && (
             <p className="mb-3 text-xs text-zinc-500">
               Currently connected to <span className="font-mono text-zinc-300">{ticketingStatus.channel.channel_type}</span>.
-              Connecting {ticketingProvider === 'jira' ? 'Jira' : 'Linear'} below will replace it.
+              Connecting {TICKETING_PROVIDER_LABELS[ticketingProvider]} below will replace it.
             </p>
           )}
 
           <div className="mb-3 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
-            {(['jira', 'linear'] as const).map(provider => (
+            {(['jira', 'linear', 'github_issues'] as const).map(provider => (
               <button
                 key={provider}
                 type="button"
                 onClick={() => setTicketingProvider(provider)}
                 className={cn(
-                  'flex-1 rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors',
+                  'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                   ticketingProvider === provider
                     ? 'bg-zinc-800 text-zinc-100'
                     : 'text-zinc-500 hover:text-zinc-300',
                 )}
               >
-                {provider}
+                {TICKETING_PROVIDER_LABELS[provider]}
               </button>
             ))}
           </div>
@@ -593,7 +618,7 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                 {ticketingStatus?.channel?.channel_type === 'jira' ? 'Update Jira connection' : 'Connect Jira'}
               </Button>
             </div>
-          ) : (
+          ) : ticketingProvider === 'linear' ? (
             <div className="space-y-2">
               <input
                 type="password"
@@ -617,6 +642,31 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                 onClick={handleConnectLinear}
               >
                 {ticketingStatus?.channel?.channel_type === 'linear' ? 'Update Linear connection' : 'Connect Linear'}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-zinc-500">
+                Uses the GitHub App connection above -- install it first if you haven&apos;t. Only the repo is
+                needed here.
+              </p>
+              <input
+                type="text"
+                value={githubIssuesRepo}
+                onChange={e => setGithubIssuesRepo(e.target.value)}
+                placeholder="owner/repo (e.g. acme/infra)"
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                disabled={githubIssuesBusy || !githubIssuesRepo.trim()}
+                loading={githubIssuesBusy}
+                onClick={handleConnectGithubIssues}
+              >
+                {ticketingStatus?.channel?.channel_type === 'github_issues'
+                  ? 'Update GitHub Issues connection'
+                  : 'Connect GitHub Issues'}
               </Button>
             </div>
           )}
