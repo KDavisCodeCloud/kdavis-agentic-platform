@@ -34,7 +34,7 @@ same model as Agent 02's AKS alerting.
 Register as a webhook action on an Azure Monitor Action Group:
 
 ```
-URL: https://your-api.cloud-decoded.com/webhooks/resource-health-alert?token=<ws_token>
+URL: https://your-api.cloud-decoded.com/api/v1/webhooks/resource-health-alert?token=<ws_token>
 ```
 
 Any Azure Monitor alert rule (Defender for Cloud/Identity findings, Azure
@@ -54,7 +54,7 @@ to:
 aws sns subscribe \
   --topic-arn arn:aws:sns:us-east-1:123456789012:cloud-decoded-alerts \
   --protocol https \
-  --notification-endpoint "https://your-api.cloud-decoded.com/webhooks/resource-health-alert?token=<ws_token>"
+  --notification-endpoint "https://your-api.cloud-decoded.com/api/v1/webhooks/resource-health-alert?token=<ws_token>"
 ```
 
 AWS sends a `SubscriptionConfirmation` message once, immediately after

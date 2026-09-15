@@ -9,7 +9,7 @@ and posts the approved review action (REQUEST_CHANGES, COMMENT, or APPROVE) to G
 ### Trigger Source
 | Source | Webhook Endpoint | Event |
 |--------|-----------------|-------|
-| GitHub PR opened/updated | `POST /webhooks/github?token=<ws_token>` | `pull_request` (opened/synchronize/reopened) |
+| GitHub PR opened/updated | `POST /api/v1/webhooks/github?token=<ws_token>` | `pull_request` (opened/synchronize/reopened) |
 
 Agent 01 and Agent 03 share the same webhook URL — routing is based on X-GitHub-Event header.
 

@@ -10,8 +10,8 @@ an HPA, or rolling back to the previous deployment revision.
 ### Trigger Sources
 | Source | Webhook Endpoint | Format |
 |--------|-----------------|--------|
-| Prometheus AlertManager | `POST /webhooks/aks-alert?token=<ws_token>` | AlertManager v4 |
-| Azure Monitor (Action Group) | `POST /webhooks/aks-alert?token=<ws_token>` | Common Alert Schema |
+| Prometheus AlertManager | `POST /api/v1/webhooks/aks-alert?token=<ws_token>` | AlertManager v4 |
+| Azure Monitor (Action Group) | `POST /api/v1/webhooks/aks-alert?token=<ws_token>` | Common Alert Schema |
 
 ### Workflow
 ```

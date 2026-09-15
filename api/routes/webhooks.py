@@ -16,8 +16,17 @@ Both endpoints:
 3. Return 202 Accepted immediately — agent runs async in background
 
 Workspace identification: webhook URL includes workspace token
-  POST /webhooks/github?token=<workspace_token>
-  POST /webhooks/azure-devops?token=<workspace_token>
+
+NOTE: this router is mounted with prefix="/api/v1" in api/main.py --
+every path below must be read as /api/v1/webhooks/... in production.
+Confirmed live 2026-09-15 after a real Azure Action Group test hit the
+un-prefixed path and got a 404: /webhooks/... 404s, /api/v1/webhooks/...
+reaches auth (403 on a bad token). OnboardingWizard.tsx already builds
+the correct /api/v1-prefixed URL for GitHub/Azure DevOps -- this was a
+docstring-only bug, not a customer-facing one, but it bit a manual setup
+so every URL below is now written with the real prefix.
+  POST /api/v1/webhooks/github?token=<workspace_token>
+  POST /api/v1/webhooks/azure-devops?token=<workspace_token>
 """
 
 import hashlib
@@ -118,7 +127,7 @@ async def github_webhook(
     Triggers Agent 01 (CI/CD Triage) on failure.
 
     Register in GitHub repository settings:
-      URL: https://your-api.cloud-decoded.com/webhooks/github?token=<workspace_token>
+      URL: https://your-api.cloud-decoded.com/api/v1/webhooks/github?token=<workspace_token>
       Content type: application/json
       Events: Workflow runs
       Secret: <github_webhook_secret from workspace settings>
@@ -210,7 +219,7 @@ async def azure_devops_webhook(
     Triggers Agent 01 (CI/CD Triage) on failure.
 
     Register as a service hook in Azure DevOps:
-      URL: https://your-api.cloud-decoded.com/webhooks/azure-devops?token=<workspace_token>
+      URL: https://your-api.cloud-decoded.com/api/v1/webhooks/azure-devops?token=<workspace_token>
       Trigger: Build completed (with filter: Status = Failed)
     """
     payload_bytes = await request.body()
@@ -360,10 +369,10 @@ async def aks_alert_webhook(
       receivers:
         - name: cloud-decoded
           webhook_configs:
-            - url: https://your-api.cloud-decoded.com/webhooks/aks-alert?token=<ws_token>
+            - url: https://your-api.cloud-decoded.com/api/v1/webhooks/aks-alert?token=<ws_token>
 
     Or as an Azure Monitor Action Group webhook:
-      URL: https://your-api.cloud-decoded.com/webhooks/aks-alert?token=<ws_token>
+      URL: https://your-api.cloud-decoded.com/api/v1/webhooks/aks-alert?token=<ws_token>
     """
     payload_bytes = await request.body()
 
@@ -449,7 +458,7 @@ async def resource_health_alert_webhook(
     Register as an Azure Monitor Action Group webhook action, subscribe
     this URL to an AWS SNS topic, or use it as a Prometheus Alertmanager /
     Grafana webhook receiver:
-      URL: https://your-api.cloud-decoded.com/webhooks/resource-health-alert?token=<ws_token>
+      URL: https://your-api.cloud-decoded.com/api/v1/webhooks/resource-health-alert?token=<ws_token>
     """
     from core.aws_sns import confirm_subscription, verify_signature
 
