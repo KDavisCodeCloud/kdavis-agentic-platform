@@ -31,6 +31,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from api.middleware.rate_limiter import limiter, _webhook_tier_limit
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 from core.error_tracking import capture_exception
+from core.ingestion_log import log_alert_received, mark_alert_processed
 from core.token_budget import BudgetExceededError
 from security.encryption import decrypt
 
@@ -159,7 +160,9 @@ async def github_webhook(
             payload.get("workflow_run", {}).get("id"),
         )
 
-        background_tasks.add_task(_run_cicd_triage, request.app, workspace, payload, "github")
+        async with db.acquire() as conn:
+            log_id = await log_alert_received(conn, workspace["id"], payload)
+        background_tasks.add_task(_run_cicd_triage, request.app, workspace, payload, "github", ingestion_log_id=log_id)
         return {"status": "accepted", "message": "CI/CD triage initiated"}
 
     # ── pull_request opened/updated → Agent 03 (PR Review) ──
@@ -173,7 +176,9 @@ async def github_webhook(
             workspace["id"], pr_number, action,
         )
 
-        background_tasks.add_task(_run_pr_review, request.app, workspace, payload, "github")
+        async with db.acquire() as conn:
+            log_id = await log_alert_received(conn, workspace["id"], payload)
+        background_tasks.add_task(_run_pr_review, request.app, workspace, payload, "github", ingestion_log_id=log_id)
         return {"status": "accepted", "message": "PR review initiated"}
 
     return {"status": "ignored", "reason": "unhandled event"}
@@ -237,12 +242,16 @@ async def azure_devops_webhook(
         payload.get("resource", {}).get("id"),
     )
 
+    async with db.acquire() as conn:
+        log_id = await log_alert_received(conn, workspace["id"], payload)
+
     background_tasks.add_task(
         _run_cicd_triage,
         request.app,
         workspace,
         payload,
         "azure_devops",
+        ingestion_log_id=log_id,
     )
 
     return {"status": "accepted", "message": "Triage initiated"}
@@ -379,6 +388,9 @@ async def aks_alert_webhook(
         "prometheus" if is_prometheus else "azure_monitor",
     )
 
+    async with db.acquire() as conn:
+        log_id = await log_alert_received(conn, workspace["id"], payload)
+
     background_tasks.add_task(
         _run_k8s_alert_triage,
         request.app,
@@ -387,6 +399,7 @@ async def aks_alert_webhook(
         # Prometheus AlertManager can be watching any cluster (EKS included) --
         # only the Azure Monitor Common Alert Schema format is actually AKS-specific.
         "azure" if is_azure_monitor else "aws",
+        ingestion_log_id=log_id,
     )
 
     return {"status": "accepted", "message": "K8s alert triage initiated"}
@@ -439,7 +452,11 @@ async def resource_health_alert_webhook(
             return {"status": "ignored", "reason": f"monitorCondition='{condition}' — only 'Fired' triggers triage"}
 
         log.info("[Webhooks] Resource health alert received — workspace=%s format=azure_monitor", workspace["id"])
-        background_tasks.add_task(_run_resource_health_alert, request.app, workspace, payload, "azure")
+        async with db.acquire() as conn:
+            log_id = await log_alert_received(conn, workspace["id"], payload)
+        background_tasks.add_task(
+            _run_resource_health_alert, request.app, workspace, payload, "azure", ingestion_log_id=log_id,
+        )
         return {"status": "accepted", "message": "Resource health triage initiated"}
 
     if is_sns:
@@ -464,8 +481,11 @@ async def resource_health_alert_webhook(
             return {"status": "ignored", "reason": f"NewStateValue='{alarm.get('NewStateValue')}' — only 'ALARM' triggers triage"}
 
         log.info("[Webhooks] Resource health alert received — workspace=%s format=aws_cloudwatch", workspace["id"])
+        async with db.acquire() as conn:
+            log_id = await log_alert_received(conn, workspace["id"], {"cloudwatch_alarm": alarm})
         background_tasks.add_task(
             _run_resource_health_alert, request.app, workspace, {"cloudwatch_alarm": alarm}, "aws",
+            ingestion_log_id=log_id,
         )
         return {"status": "accepted", "message": "Resource health triage initiated"}
 
@@ -477,7 +497,9 @@ async def resource_health_alert_webhook(
 # Background task — runs the agent
 # ──────────────────────────────────────────────
 
-async def _run_cicd_triage(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
+async def _run_cicd_triage(
+    app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
+) -> None:
     """
     Background task: runs Agent 01 for the given webhook payload.
     Compliance and budget checks happen inside the agent workflow.
@@ -525,8 +547,20 @@ async def _run_cicd_triage(app, workspace: dict, payload: dict, cloud_provider: 
         log.exception("[Webhooks] Agent 01 failed for workspace %s: %s", workspace_id, exc)
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_01_cicd_triage")
 
+    finally:
+        # Runs whether the run above succeeded, hit a handled error, or
+        # raised -- "processed" means the system took delivery to
+        # completion, not "succeeded". Only a genuine process death
+        # mid-execution skips this, which is exactly the recoverable
+        # case core.ingestion_log.find_unprocessed_older_than() surfaces.
+        if ingestion_log_id:
+            async with app.state.db_pool.acquire() as conn:
+                await mark_alert_processed(conn, ingestion_log_id)
 
-async def _run_k8s_alert_triage(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
+
+async def _run_k8s_alert_triage(
+    app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
+) -> None:
     """
     Background task: runs Agent 02 for the given K8s alert payload.
     """
@@ -571,8 +605,15 @@ async def _run_k8s_alert_triage(app, workspace: dict, payload: dict, cloud_provi
         log.exception("[Webhooks] Agent 02 failed for workspace %s: %s", workspace_id, exc)
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_02_k8s_alert")
 
+    finally:
+        if ingestion_log_id:
+            async with app.state.db_pool.acquire() as conn:
+                await mark_alert_processed(conn, ingestion_log_id)
 
-async def _run_resource_health_alert(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
+
+async def _run_resource_health_alert(
+    app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
+) -> None:
     """
     Background task: runs Agent 11 for the given resource-health alert.
     """
@@ -616,8 +657,15 @@ async def _run_resource_health_alert(app, workspace: dict, payload: dict, cloud_
         log.exception("[Webhooks] Agent 11 failed for workspace %s: %s", workspace_id, exc)
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_11_resource_health")
 
+    finally:
+        if ingestion_log_id:
+            async with app.state.db_pool.acquire() as conn:
+                await mark_alert_processed(conn, ingestion_log_id)
 
-async def _run_pr_review(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
+
+async def _run_pr_review(
+    app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
+) -> None:
     """
     Background task: runs Agent 03 for the given GitHub pull_request payload.
     """
@@ -658,6 +706,11 @@ async def _run_pr_review(app, workspace: dict, payload: dict, cloud_provider: st
     except Exception as exc:
         log.exception("[Webhooks] Agent 03 failed for workspace %s: %s", workspace_id, exc)
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_03_pr_review")
+
+    finally:
+        if ingestion_log_id:
+            async with app.state.db_pool.acquire() as conn:
+                await mark_alert_processed(conn, ingestion_log_id)
 
 
 async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
