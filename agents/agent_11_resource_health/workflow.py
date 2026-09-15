@@ -70,6 +70,18 @@ class ResourceHealthState(TypedDict):
     metric_current_value: Optional[float]
     metric_threshold: Optional[float]
 
+    # Set True only when _dedup_check_node finds a real existing open
+    # incident to collapse against. _route_after_dedup reads this, NOT
+    # incident_id's truthiness -- incident_id is now pre-seeded to the
+    # real LangGraph thread_id from the very start of run() (see run()'s
+    # own comment on why), so it is always truthy and can no longer be
+    # used as a "was a dedup match found" signal. Real bug found live,
+    # 2026-09-15: routing on incident_id truthiness after that pre-seeding
+    # fix landed made _route_after_dedup return "existing" unconditionally,
+    # so every alert -- including genuinely new ones -- got silently
+    # routed to dedup_complete and NO real incident was ever created.
+    is_dedup_match: bool
+
     # After diagnose
     incident_id: Optional[str]
     parsed_error: Optional[str]
@@ -444,8 +456,11 @@ class ResourceHealthWorkflow(BaseAgent):
         BEFORE diagnose specifically so a repeat delivery genuinely never
         makes a new LLM call, not just never creates a second row.
 
-        Sets incident_id in state when a match is found -- _route_after_
-        dedup reads that to route to dedup_complete instead of diagnose.
+        Sets is_dedup_match=True (and overwrites incident_id with the
+        REAL existing incident's id, replacing run()'s thread_id seed)
+        only when a match is found -- _route_after_dedup reads
+        is_dedup_match, not incident_id's truthiness, to route to
+        dedup_complete instead of diagnose.
         """
         if state.get("error"):
             return {}
@@ -464,10 +479,10 @@ class ResourceHealthWorkflow(BaseAgent):
             "[Agent11] Deduplicated against existing incident %s (occurrence #%d) — resource=%s alert=%s",
             existing_id, existing.get("occurrence_count", 0) + 1, state.get("resource_id"), state.get("alert_name"),
         )
-        return {"incident_id": existing_id}
+        return {"incident_id": existing_id, "is_dedup_match": True}
 
     def _route_after_dedup(self, state: ResourceHealthState) -> str:
-        return "existing" if state.get("incident_id") else "new"
+        return "existing" if state.get("is_dedup_match") else "new"
 
     async def _dedup_complete_node(self, state: ResourceHealthState) -> dict:
         """Terminal node for a deduplicated alert -- incident_id is already
@@ -701,6 +716,7 @@ class ResourceHealthWorkflow(BaseAgent):
             "metric_name": None,
             "metric_current_value": None,
             "metric_threshold": None,
+            "is_dedup_match": False,
             "incident_id": thread_id,
             "parsed_error": None,
             "remediation_options": None,

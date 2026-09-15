@@ -461,6 +461,7 @@ class TestDedupCheckNode:
         result = await wf._dedup_check_node(state)
 
         assert result["incident_id"] == existing_id
+        assert result["is_dedup_match"] is True
         wf.hitl.bump_occurrence.assert_awaited_once_with(existing_id)
 
     async def test_skips_lookup_when_upstream_error_set(self, mock_db, workspace_id, mock_router):
@@ -476,9 +477,23 @@ class TestDedupCheckNode:
 
     def test_route_after_dedup(self, mock_db, workspace_id, mock_router):
         wf = _make_workflow(mock_db, workspace_id, mock_router)
-        assert wf._route_after_dedup({"incident_id": None}) == "new"
-        assert wf._route_after_dedup({"incident_id": ""}) == "new"
-        assert wf._route_after_dedup({"incident_id": "abc-123"}) == "existing"
+        assert wf._route_after_dedup({"is_dedup_match": False}) == "new"
+        assert wf._route_after_dedup({}) == "new"
+        assert wf._route_after_dedup({"is_dedup_match": True}) == "existing"
+
+    def test_route_after_dedup_ignores_incident_id_truthiness(self, mock_db, workspace_id, mock_router):
+        # Regression test for a real bug found live, 2026-09-15:
+        # incident_id is now pre-seeded to the real LangGraph thread_id
+        # from the very start of run() (a separate fix, so it's always
+        # truthy from the first node onward) -- routing on incident_id's
+        # truthiness here made _route_after_dedup return "existing"
+        # unconditionally, so a genuinely new alert with no real dedup
+        # match ever created was silently routed to dedup_complete and no
+        # incident was ever created. is_dedup_match is the only signal
+        # this must route on.
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        pre_seeded_state = {"incident_id": "11111111-1111-1111-1111-111111111111", "is_dedup_match": False}
+        assert wf._route_after_dedup(pre_seeded_state) == "new"
 
     async def test_five_deliveries_of_same_alert_produce_one_incident_with_occurrence_5(
         self, mock_db, workspace_id, mock_router,
