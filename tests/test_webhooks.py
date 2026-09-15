@@ -510,6 +510,61 @@ class TestResourceHealthAlertWebhook:
         assert result["status"] == "ignored"
         assert len(bg.tasks) == 0
 
+    async def test_prometheus_firing_alert_accepted_and_tagged_aws(self):
+        body = {"alerts": [{"status": "firing", "labels": {"alertname": "HighCPU"}}]}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
+
+        assert result["status"] == "accepted"
+        assert len(bg.tasks) == 1
+        assert bg.tasks[0].args[-1] == "aws"
+
+    async def test_prometheus_no_firing_alerts_ignored(self):
+        body = {"alerts": [{"status": "resolved", "labels": {"alertname": "HighCPU"}}]}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
+
+        assert result["status"] == "ignored"
+        assert len(bg.tasks) == 0
+
+    async def test_grafana_firing_alert_accepted_and_tagged_aws(self):
+        # orgId is the one field that distinguishes a Grafana unified
+        # alerting webhook payload from a native Prometheus Alertmanager
+        # payload -- both send an "alerts" array with the same shape.
+        body = {
+            "receiver": "cloud-decoded",
+            "status": "firing",
+            "orgId": 1,
+            "alerts": [{"status": "firing", "labels": {"alertname": "HighMemory"}}],
+        }
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
+
+        assert result["status"] == "accepted"
+        assert len(bg.tasks) == 1
+        assert bg.tasks[0].args[-1] == "aws"
+
+    async def test_grafana_no_firing_alerts_ignored(self):
+        body = {
+            "receiver": "cloud-decoded",
+            "status": "resolved",
+            "orgId": 1,
+            "alerts": [{"status": "resolved", "labels": {"alertname": "HighMemory"}}],
+        }
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
+
+        assert result["status"] == "ignored"
+        assert len(bg.tasks) == 0
+
     async def test_sns_subscription_confirmation_valid_signature_confirms(self):
         body = {"Type": "SubscriptionConfirmation", "SubscribeURL": "https://sns.us-east-1.amazonaws.com/?x", "SigningCertURL": "https://sns.us-east-1.amazonaws.com/cert.pem", "Signature": "abc"}
         request = _make_request(_workspace_row(), body)

@@ -1305,3 +1305,45 @@ was nothing product-`selling_stage`-shaped in it to gate.
 
 15 new tests (`tests/test_mkt_li1_selling_stage_gate.py`). Full suite:
 1591 passing (was 1576), same 4 pre-existing unrelated failures.
+
+### 27. Webhook integrations Tier 1 shipped (Prometheus/Grafana inbound, Slack/PagerDuty outbound); Tier 2/3 deferred to a future build cycle (2026-09-14)
+
+Kelvin's own three-tier framing, built/deferred exactly as scoped (GCP
+explicitly excluded from this pass):
+
+**Tier 1 -- built this pass:** Prometheus Alertmanager and Grafana
+unified-alerting webhook formats added to Agent 11's
+`/webhooks/resource-health-alert` endpoint (`api/routes/webhooks.py`) --
+Grafana's real webhook contact-point schema was verified against its
+current docs rather than assumed, and turns out to deliberately mirror
+Alertmanager's own payload shape; the only reliable top-level
+discriminator is Grafana's `orgId` field, which Alertmanager's own
+webhook_config payload never sends (also verified against Prometheus's
+own docs). Slack and PagerDuty outbound notifications now fire
+best-effort on every incident creation across all 11 agents, wired once
+at `core/hitl.py`'s `create_incident()`/`create_failed_incident()` choke
+point rather than per-agent. New `workspace_notification_channels` table
+(migration 037) plus a self-serve `api/routes/workspace_notifications.py`
+(`PATCH /workspace/notifications/slack`, `.../pagerduty`,
+`GET /workspace/notifications`) let a workspace configure its own
+channels, same `get_workspace` customer-facing auth pattern as
+`workspace_credentials.py`, never echoing a decrypted secret back.
+
+**Tier 2 -- next build cycle (not built, no implementation detail
+invented):** Datadog inbound webhook, OpsGenie outbound notification,
+Atlantis webhook → Agent 01, ArgoCD/Flux webhook → Agent 01/08.
+
+**Tier 3 -- enterprise tier features (not built, no implementation
+detail invented):** ServiceNow change record on execution, Jira/Linear
+ticket on execution, Microsoft Teams outbound, Terraform Cloud /
+Spacelift webhooks, Snyk / Wiz inbound alerts, GuardDuty / Defender for
+Cloud inbound.
+
+`workspace_notification_channels.channel_type` is deliberately a
+free-text column rather than a fixed two-value enum/CHECK constraint --
+see the migration's own comment -- specifically so Tier 2's OpsGenie and
+Tier 3's Microsoft Teams outbound channels can register as a new
+`channel_type` value plus a new sender function in
+`core/notifications.py` when they're built, reusing the exact same
+`notify_incident_channels()` fan-out and `workspace_notification_channels`
+table without a new migration.

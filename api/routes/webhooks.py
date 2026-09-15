@@ -40,6 +40,19 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
+def _firing_alertmanager_alerts(payload: dict) -> list:
+    """
+    Entries from an Alertmanager-shaped payload's "alerts" array with
+    status == "firing" — the same webhook shape Prometheus Alertmanager
+    and Grafana's unified alerting webhook notifier both send (Grafana
+    deliberately mirrors Alertmanager's webhook_config schema for
+    compatibility; verified against both projects' own docs, 2026-09-14).
+    Shared by aks_alert_webhook and resource_health_alert_webhook so this
+    filter isn't copy-pasted a third time.
+    """
+    return [a for a in payload.get("alerts", []) if a.get("status") == "firing"]
+
+
 # ──────────────────────────────────────────────
 # Signature validation helpers
 # ──────────────────────────────────────────────
@@ -370,7 +383,7 @@ async def aks_alert_webhook(
     is_azure_monitor = "data" in payload and "essentials" in payload.get("data", {})
 
     if is_prometheus:
-        active_alerts = [a for a in payload.get("alerts", []) if a.get("status") == "firing"]
+        active_alerts = _firing_alertmanager_alerts(payload)
         if not active_alerts:
             return {"status": "ignored", "reason": "no firing alerts in payload"}
 
@@ -416,7 +429,7 @@ async def resource_health_alert_webhook(
     """
     Receive general cloud-resource health/security alerts for Agent 11
     (any resource, not just AKS pods -- see aks_alert_webhook above for
-    the Kubernetes-specific equivalent). Supports two payload formats:
+    the Kubernetes-specific equivalent). Supports four payload formats:
       - Azure Monitor Common Alert Schema (register as an Action Group
         webhook action, same URL shape as aks_alert_webhook)
       - AWS SNS (subscribe this URL to an SNS topic fed by CloudWatch
@@ -424,9 +437,18 @@ async def resource_health_alert_webhook(
         types are handled; core.aws_sns verifies every Notification's
         signature before it's trusted, and confirms a
         SubscriptionConfirmation's SubscribeURL once
+      - Prometheus Alertmanager (v4 webhook format) -- same detection as
+        aks_alert_webhook
+      - Grafana unified alerting (webhook contact point) -- payload shape
+        deliberately mirrors Alertmanager's ("alerts" array, same
+        per-alert "status" field), distinguished only by a Grafana-only
+        top-level "orgId" field (verified against both projects' current
+        docs, 2026-09-14; Prometheus's own webhook_config payload has no
+        orgId)
 
-    Register as an Azure Monitor Action Group webhook action, or subscribe
-    this URL to an AWS SNS topic:
+    Register as an Azure Monitor Action Group webhook action, subscribe
+    this URL to an AWS SNS topic, or use it as a Prometheus Alertmanager /
+    Grafana webhook receiver:
       URL: https://your-api.cloud-decoded.com/webhooks/resource-health-alert?token=<ws_token>
     """
     from core.aws_sns import confirm_subscription, verify_signature
@@ -446,6 +468,32 @@ async def resource_health_alert_webhook(
 
     is_azure_monitor = "data" in payload and "essentials" in payload.get("data", {})
     is_sns = payload.get("Type") in ("SubscriptionConfirmation", "Notification", "UnsubscribeConfirmation")
+    # Grafana's unified alerting webhook notifier deliberately mirrors
+    # Alertmanager's payload shape (both send a top-level "alerts" array
+    # with the same per-alert "status" field) -- "orgId" is the one
+    # Grafana-only top-level field that reliably tells them apart, so it
+    # must be checked first.
+    is_grafana = "alerts" in payload and "orgId" in payload
+    is_prometheus = "alerts" in payload and not is_grafana
+
+    if is_grafana or is_prometheus:
+        active_alerts = _firing_alertmanager_alerts(payload)
+        if not active_alerts:
+            return {"status": "ignored", "reason": "no firing alerts in payload"}
+
+        alert_format = "grafana" if is_grafana else "prometheus"
+        log.info("[Webhooks] Resource health alert received — workspace=%s format=%s", workspace["id"], alert_format)
+        async with db.acquire() as conn:
+            log_id = await log_alert_received(conn, workspace["id"], payload)
+        background_tasks.add_task(
+            # Prometheus/Grafana can be watching any cloud's resources --
+            # unlike the Azure Monitor/SNS branches, this payload shape
+            # carries no cloud-provider signal of its own, so "aws" is an
+            # arbitrary default, same call aks_alert_webhook already makes
+            # for its own Prometheus branch above.
+            _run_resource_health_alert, request.app, workspace, payload, "aws", ingestion_log_id=log_id,
+        )
+        return {"status": "accepted", "message": "Resource health triage initiated"}
 
     if is_azure_monitor:
         condition = payload["data"]["essentials"].get("monitorCondition", "")

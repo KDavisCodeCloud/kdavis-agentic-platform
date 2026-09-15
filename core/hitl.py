@@ -14,6 +14,7 @@ Governance: Rule 11 — No autonomous remediation. Every fix MUST go through
 human approval. Agents pause here; only POST /incident/{id}/approve resumes them.
 """
 
+import asyncio
 import json
 import logging
 import hashlib
@@ -180,6 +181,10 @@ class HITLGate:
         log.info(
             f"[HITL] Incident {created_id} created — awaiting operator approval",
             extra={"workspace_id": workspace_id, "agent_id": agent_id, "incident_id": created_id},
+        )
+        self._fire_notification(
+            workspace_id, agent_id, created_id, STATUS_PENDING, parsed_error,
+            alert_name=alert_name, resource_name=resource_name,
         )
         return created_id
 
@@ -382,7 +387,44 @@ class HITLGate:
                 "execution_status": STATUS_FAILED,
             },
         )
+        self._fire_notification(workspace_id, agent_id, created_id, STATUS_FAILED, error_message)
         return created_id
+
+    def _fire_notification(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        incident_id: str,
+        execution_status: str,
+        summary: str,
+        alert_name: Optional[str] = None,
+        resource_name: Optional[str] = None,
+    ) -> None:
+        """
+        Best-effort, fire-and-forget Slack/PagerDuty dispatch — mirrors
+        api/routes/internal_workspaces.py's _send_enterprise_alert
+        best-effort pattern. A failure to even schedule the task (e.g. no
+        running event loop) is caught here so it can never block incident
+        creation; the task itself never raises back into this call either
+        (see core/notifications.py's notify_incident_channels docstring).
+        """
+        try:
+            from core.notifications import notify_incident_channels
+
+            incident_summary = {
+                "incident_id": incident_id,
+                "agent_id": agent_id,
+                "execution_status": execution_status,
+                "summary": summary,
+                "alert_name": alert_name,
+                "resource_name": resource_name,
+            }
+            asyncio.create_task(notify_incident_channels(workspace_id, incident_summary))
+        except Exception as exc:
+            log.warning(
+                f"[HITL] Failed to schedule notification dispatch for incident {incident_id}: {exc}",
+                extra={"workspace_id": workspace_id, "incident_id": incident_id},
+            )
 
     def _write_audit_entry(
         self,
