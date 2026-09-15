@@ -31,8 +31,8 @@ A HITL agentic DevOps automation platform targeting mid-market platform engineer
 - Landing page complete (9 sections, SEO/AEO, FAQPage JSON-LD schema) ✅
 - Design system locked: bg `#070910`, blue `#5a96ff`/`#2f6fe6`, amber `#f5a623`, green `#3fd17a` ✅
 - Fonts locked: Space Grotesk, IBM Plex Sans, JetBrains Mono ✅
-- All 10 agents built ✅ — real roster is `agent_01_cicd_triage` through
-  `agent_10_dependency_patch` (see `CLAUDE.md`'s CURRENT STATUS footer for
+- All 11 agents built ✅ — real roster is `agent_01_cicd_triage` through
+  `agent_11_resource_health` (see `CLAUDE.md`'s CURRENT STATUS footer for
   the corrected list with real names — the "Agent Roster" section below
   in this file is the old placeholder list, kept below only as a
   changelog of what this doc used to claim, not current fact)
@@ -173,11 +173,14 @@ Batch review: Similar pending actions grouped by `pattern_hash` (same agent + ac
 
 ---
 
-## Agent Roster — CORRECTED 2026-09-12
+## Agent Roster — CORRECTED 2026-09-12, UPDATED 2026-09-15
 
-The 10 names below (from this file's original 2026-07-04 draft) do not
-match what was actually built. The real roster, confirmed directly
-against `agents/agent_01_*` … `agent_10_*` in this repo:
+The 10 names originally below (from this file's 2026-07-04 draft) did not
+match what was actually built as of the 2026-09-12 correction. A new
+Agent 11 (Cloud Resource Health Monitoring) shipped 2026-09-15, along
+with a fifth diagnosis domain (Database-as-a-Service) across Agents 01,
+08, and 11. The real roster, confirmed directly against
+`agents/agent_01_*` … `agents/agent_11_*` in this repo:
 
 1. CI/CD Triage (`agent_01_cicd_triage`)
 2. Kubernetes Alert Fatigue & Remediation (`agent_02_k8s_alert`)
@@ -189,6 +192,7 @@ against `agents/agent_01_*` … `agent_10_*` in this repo:
 8. Drift Detection & Auto-Correction (`agent_08_drift_detection`, Growth+)
 9. Context-Aware Onboarding & On-Call Buddy (`agent_09_onboarding_buddy`, Growth+)
 10. Dependency & Vulnerability Patching (`agent_10_dependency_patch`, Growth+)
+11. Cloud Resource Health Monitoring (`agent_11_resource_health`, Growth+)
 
 DataSanitizationShield is not a numbered agent — it's shared platform
 infrastructure (`security/sanitizer.py`) every agent runs through, per
