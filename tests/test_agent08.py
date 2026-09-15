@@ -89,6 +89,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from botocore.exceptions import ClientError
 
 from agents.agent_08_drift_detection.tools import DriftTools
 from core.repo_tools import NoRepoCredentialError
@@ -492,6 +493,363 @@ class TestFetchAppServiceState:
             mock_cls.return_value = ctx
             result = await tools.fetch_app_service_state("acme-app", "acme-rg", "sub-1")
 
+        assert "error" in result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DriftTools — fetch_s3_bucket_state() (Phase 1, storage drift)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestFetchS3BucketState:
+    @pytest.fixture
+    def fake_s3(self):
+        s3 = MagicMock()
+        s3.get_bucket_versioning.return_value = {"Status": "Enabled"}
+        s3.get_bucket_encryption.return_value = {
+            "ServerSideEncryptionConfiguration": {"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]}
+        }
+        s3.get_public_access_block.return_value = {
+            "PublicAccessBlockConfiguration": {
+                "BlockPublicAcls": True, "IgnorePublicAcls": True,
+                "BlockPublicPolicy": True, "RestrictPublicBuckets": True,
+            }
+        }
+        s3.get_bucket_policy.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchBucketPolicy", "Message": "no policy"}}, "GetBucketPolicy"
+        )
+        s3.get_bucket_replication.side_effect = ClientError(
+            {"Error": {"Code": "ReplicationConfigurationNotFoundError", "Message": "none"}}, "GetBucketReplication"
+        )
+        return s3
+
+    @pytest.fixture
+    def tools(self, fake_s3):
+        session = MagicMock()
+        session.client.return_value = fake_s3
+        return DriftTools(aws_session=session)
+
+    async def test_returns_error_without_aws_session(self):
+        no_session = DriftTools(aws_session=None)
+        result = await no_session.fetch_s3_bucket_state("my-bucket")
+        assert "error" in result
+
+    async def test_returns_ok_with_no_findings_when_fully_locked_down(self, tools):
+        result = await tools.fetch_s3_bucket_state("my-bucket")
+        assert result["status"] == "ok"
+        assert result["findings"] == []
+        assert result["versioning"]["status"] == "Enabled"
+        assert result["replication"]["status"] == "not_configured"
+
+    async def test_flags_disabled_versioning(self, tools, fake_s3):
+        fake_s3.get_bucket_versioning.return_value = {"Status": "Disabled"}
+        result = await tools.fetch_s3_bucket_state("my-bucket")
+        assert any("Versioning" in f for f in result["findings"])
+
+    async def test_flags_missing_encryption(self, tools, fake_s3):
+        fake_s3.get_bucket_encryption.side_effect = ClientError(
+            {"Error": {"Code": "ServerSideEncryptionConfigurationNotFoundError", "Message": "none"}},
+            "GetBucketEncryption",
+        )
+        result = await tools.fetch_s3_bucket_state("my-bucket")
+        assert result["encryption"] is None
+        assert any("encryption" in f for f in result["findings"])
+
+    async def test_flags_missing_public_access_block(self, tools, fake_s3):
+        fake_s3.get_public_access_block.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchPublicAccessBlockConfiguration", "Message": "none"}},
+            "GetPublicAccessBlock",
+        )
+        result = await tools.fetch_s3_bucket_state("my-bucket")
+        assert result["public_access_block"] is None
+        assert any("Public Access Block" in f for f in result["findings"])
+
+    async def test_flags_public_bucket_policy(self, tools, fake_s3):
+        public_policy = json.dumps({
+            "Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject"}]
+        })
+        fake_s3.get_bucket_policy.side_effect = None
+        fake_s3.get_bucket_policy.return_value = {"Policy": public_policy}
+        result = await tools.fetch_s3_bucket_state("my-bucket")
+        assert any("public" in f.lower() for f in result["findings"])
+
+    async def test_returns_error_on_unexpected_client_error(self, tools, fake_s3):
+        fake_s3.get_bucket_versioning.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "nope"}}, "GetBucketVersioning"
+        )
+        result = await tools.fetch_s3_bucket_state("my-bucket")
+        assert "error" in result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DriftTools — fetch_azure_blob_storage_state() (Phase 1, storage drift)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestFetchAzureBlobStorageState:
+    def _ctx(self, account_resp, blob_resp):
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        ctx.get = AsyncMock(side_effect=[account_resp, blob_resp])
+        return ctx
+
+    async def test_returns_error_without_azure_token(self):
+        tools = DriftTools(azure_access_token=None)
+        result = await tools.fetch_azure_blob_storage_state("acmestorage", "acme-rg", "sub-1")
+        assert "error" in result
+
+    async def test_returns_ok_with_findings_for_insecure_account(self):
+        account_resp = MagicMock(status_code=200)
+        account_resp.json.return_value = {
+            "sku": {"name": "Standard_LRS"},
+            "properties": {
+                "encryption": {"services": {"blob": {"enabled": False}}},
+                "publicNetworkAccess": "Enabled",
+                "allowBlobPublicAccess": True,
+            },
+        }
+        blob_resp = MagicMock(status_code=200)
+        blob_resp.json.return_value = {"properties": {"deleteRetentionPolicy": {"enabled": False}}}
+
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(account_resp, blob_resp)
+            result = await tools.fetch_azure_blob_storage_state("acmestorage", "acme-rg", "sub-1")
+
+        assert result["status"] == "ok"
+        assert result["replication_sku"] == "Standard_LRS"
+        assert len(result["findings"]) == 5  # encryption, public network, public blob access, soft delete, LRS
+
+    async def test_returns_no_findings_for_locked_down_account(self):
+        account_resp = MagicMock(status_code=200)
+        account_resp.json.return_value = {
+            "sku": {"name": "Standard_RAGRS"},
+            "properties": {
+                "encryption": {"services": {"blob": {"enabled": True}}},
+                "publicNetworkAccess": "Disabled",
+                "allowBlobPublicAccess": False,
+            },
+        }
+        blob_resp = MagicMock(status_code=200)
+        blob_resp.json.return_value = {"properties": {"deleteRetentionPolicy": {"enabled": True}}}
+
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(account_resp, blob_resp)
+            result = await tools.fetch_azure_blob_storage_state("acmestorage", "acme-rg", "sub-1")
+
+        assert result["findings"] == []
+
+    async def test_returns_error_when_account_call_fails(self):
+        account_resp = MagicMock(status_code=404, text="Not Found")
+        blob_resp = MagicMock(status_code=200)
+
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(account_resp, blob_resp)
+            result = await tools.fetch_azure_blob_storage_state("acmestorage", "acme-rg", "sub-1")
+
+        assert "error" in result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DriftTools — fetch_security_group_state() / fetch_route_table_state()
+# (Phase 2, AWS networking drift)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestFetchSecurityGroupState:
+    @pytest.fixture
+    def fake_ec2(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_ec2):
+        session = MagicMock()
+        session.client.return_value = fake_ec2
+        return DriftTools(aws_session=session)
+
+    async def test_returns_error_without_aws_session(self):
+        no_session = DriftTools(aws_session=None)
+        result = await no_session.fetch_security_group_state("sg-123")
+        assert "error" in result
+
+    async def test_returns_error_when_group_not_found(self, tools, fake_ec2):
+        fake_ec2.describe_security_groups.return_value = {"SecurityGroups": []}
+        result = await tools.fetch_security_group_state("sg-missing")
+        assert "error" in result
+
+    async def test_flags_ssh_open_to_world(self, tools, fake_ec2):
+        fake_ec2.describe_security_groups.return_value = {
+            "SecurityGroups": [{
+                "GroupName": "web-sg",
+                "IpPermissions": [{
+                    "IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                }],
+                "IpPermissionsEgress": [],
+            }]
+        }
+        result = await tools.fetch_security_group_state("sg-123")
+        assert result["status"] == "ok"
+        assert any("SSH" in f for f in result["findings"])
+
+    async def test_no_findings_for_restricted_rule(self, tools, fake_ec2):
+        fake_ec2.describe_security_groups.return_value = {
+            "SecurityGroups": [{
+                "GroupName": "web-sg",
+                "IpPermissions": [{
+                    "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                }],
+                "IpPermissionsEgress": [],
+            }]
+        }
+        result = await tools.fetch_security_group_state("sg-123")
+        assert result["findings"] == []
+
+    async def test_returns_error_on_client_error(self, tools, fake_ec2):
+        fake_ec2.describe_security_groups.side_effect = ClientError(
+            {"Error": {"Code": "InvalidGroup.NotFound", "Message": "nope"}}, "DescribeSecurityGroups"
+        )
+        result = await tools.fetch_security_group_state("sg-123")
+        assert "error" in result
+
+
+class TestFetchRouteTableState:
+    @pytest.fixture
+    def fake_ec2(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_ec2):
+        session = MagicMock()
+        session.client.return_value = fake_ec2
+        return DriftTools(aws_session=session)
+
+    async def test_returns_error_without_aws_session(self):
+        no_session = DriftTools(aws_session=None)
+        result = await no_session.fetch_route_table_state("rtb-123")
+        assert "error" in result
+
+    async def test_returns_routes_on_success(self, tools, fake_ec2):
+        fake_ec2.describe_route_tables.return_value = {
+            "RouteTables": [{"Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1"}]}]
+        }
+        result = await tools.fetch_route_table_state("rtb-123")
+        assert result["status"] == "ok"
+        assert result["routes"][0]["GatewayId"] == "igw-1"
+
+    async def test_returns_error_when_not_found(self, tools, fake_ec2):
+        fake_ec2.describe_route_tables.return_value = {"RouteTables": []}
+        result = await tools.fetch_route_table_state("rtb-missing")
+        assert "error" in result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DriftTools — fetch_nsg_state() / fetch_azure_route_table_state()
+# (Phase 2, Azure networking drift)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestFetchNsgState:
+    def _ctx(self, resp):
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        ctx.get = AsyncMock(return_value=resp)
+        return ctx
+
+    async def test_returns_error_without_azure_token(self):
+        tools = DriftTools(azure_access_token=None)
+        result = await tools.fetch_nsg_state("web-nsg", "acme-rg", "sub-1")
+        assert "error" in result
+
+    async def test_flags_rdp_open_to_any(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {
+            "properties": {
+                "securityRules": [{
+                    "name": "allow-rdp",
+                    "properties": {
+                        "direction": "Inbound", "access": "Allow", "priority": 100,
+                        "destinationPortRange": "3389", "sourceAddressPrefix": "*",
+                    },
+                }]
+            }
+        }
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(resp)
+            result = await tools.fetch_nsg_state("web-nsg", "acme-rg", "sub-1")
+
+        assert result["status"] == "ok"
+        assert any("RDP" in f for f in result["findings"])
+
+    async def test_lower_priority_deny_suppresses_finding(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "deny-rdp-first",
+                        "properties": {
+                            "direction": "Inbound", "access": "Deny", "priority": 90,
+                            "destinationPortRange": "3389", "sourceAddressPrefix": "*",
+                        },
+                    },
+                    {
+                        "name": "allow-rdp-later",
+                        "properties": {
+                            "direction": "Inbound", "access": "Allow", "priority": 200,
+                            "destinationPortRange": "3389", "sourceAddressPrefix": "*",
+                        },
+                    },
+                ]
+            }
+        }
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(resp)
+            result = await tools.fetch_nsg_state("web-nsg", "acme-rg", "sub-1")
+
+        assert result["findings"] == []
+
+    async def test_returns_error_on_non_200(self):
+        resp = MagicMock(status_code=403, text="Forbidden")
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(resp)
+            result = await tools.fetch_nsg_state("web-nsg", "acme-rg", "sub-1")
+        assert "error" in result
+
+
+class TestFetchAzureRouteTableState:
+    def _ctx(self, resp):
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        ctx.get = AsyncMock(return_value=resp)
+        return ctx
+
+    async def test_returns_error_without_azure_token(self):
+        tools = DriftTools(azure_access_token=None)
+        result = await tools.fetch_azure_route_table_state("rt-1", "acme-rg", "sub-1")
+        assert "error" in result
+
+    async def test_returns_routes_on_success(self):
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"properties": {"routes": [{"name": "default", "properties": {"addressPrefix": "0.0.0.0/0"}}]}}
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(resp)
+            result = await tools.fetch_azure_route_table_state("rt-1", "acme-rg", "sub-1")
+        assert result["status"] == "ok"
+        assert result["routes"][0]["name"] == "default"
+
+    async def test_returns_error_on_non_200(self):
+        resp = MagicMock(status_code=404, text="Not Found")
+        tools = DriftTools(azure_access_token="fake-arm-token")
+        with patch("agents.agent_08_drift_detection.tools.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = self._ctx(resp)
+            result = await tools.fetch_azure_route_table_state("rt-1", "acme-rg", "sub-1")
         assert "error" in result
 
 
@@ -1033,6 +1391,121 @@ class TestIngestNode:
 
         assert result["error"] is None  # ingest itself succeeds; the fetch error rides in actual_state_text
         assert result["actual_state_text"] == "error-included"
+
+    async def test_live_fetch_dispatches_to_fetch_s3_bucket_state(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {}, "live_fetch": {"bucket_name": "acme-bucket"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_s3_bucket_state",
+                new=AsyncMock(return_value={"status": "ok", "findings": []}),
+            ) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_awaited_once_with("acme-bucket")
+
+    async def test_live_fetch_dispatches_to_fetch_azure_blob_storage_state(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {},
+            "live_fetch": {"storage_account_name": "acmestorage", "resource_group": "acme-rg", "subscription_id": "sub-1"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_azure_blob_storage_state",
+                new=AsyncMock(return_value={"status": "ok", "findings": []}),
+            ) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_awaited_once_with(
+            storage_account_name="acmestorage", resource_group="acme-rg", subscription_id="sub-1",
+        )
+
+    async def test_live_fetch_dispatches_to_fetch_security_group_state(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {}, "live_fetch": {"security_group_id": "sg-abc123"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_security_group_state",
+                new=AsyncMock(return_value={"status": "ok", "findings": []}),
+            ) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_awaited_once_with("sg-abc123")
+
+    async def test_live_fetch_dispatches_to_fetch_nsg_state(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {},
+            "live_fetch": {"nsg_name": "web-nsg", "resource_group": "acme-rg", "subscription_id": "sub-1"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_nsg_state",
+                new=AsyncMock(return_value={"status": "ok", "findings": []}),
+            ) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_awaited_once_with(nsg_name="web-nsg", resource_group="acme-rg", subscription_id="sub-1")
+
+    async def test_live_fetch_dispatches_to_fetch_route_table_state(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {}, "live_fetch": {"route_table_id": "rtb-123"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_route_table_state",
+                new=AsyncMock(return_value={"status": "ok", "routes": []}),
+            ) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_awaited_once_with("rtb-123")
+
+    async def test_live_fetch_dispatches_to_fetch_azure_route_table_state(self, wf, workspace_id):
+        state = _base_state(workspace_id, {
+            "desired_state": {},
+            "live_fetch": {"route_table_name": "rt-1", "resource_group": "acme-rg", "subscription_id": "sub-1"},
+        })
+        shield_mock = MagicMock()
+        shield_mock.sanitize.return_value = MagicMock(sanitized_text="sanitized")
+
+        with (
+            patch("agents.agent_08_drift_detection.workflow.shield", shield_mock),
+            patch.object(
+                wf._tools, "fetch_azure_route_table_state",
+                new=AsyncMock(return_value={"status": "ok", "routes": []}),
+            ) as mock_fetch,
+        ):
+            await wf._ingest_node(state)
+
+        mock_fetch.assert_awaited_once_with(
+            route_table_name="rt-1", resource_group="acme-rg", subscription_id="sub-1",
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

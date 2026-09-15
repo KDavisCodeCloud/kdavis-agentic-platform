@@ -81,8 +81,8 @@ Database-as-a-Service).
 | Domain | AWS `resource_type` example | Azure `resource_type` example |
 |---|---|---|
 | IAM/RBAC/Policy | `aws_iam_role` (attached policy vs. IaC-defined; also: orphaned access keys with no IaC reference) | `azure_role_assignment` (RBAC assignments that exist live but shouldn't, or are missing) |
-| Networking | `aws_security_group` (see the worked example above; also route table drift, VPC peering state) | `azure_network_security_group` (NSG rule drift — flag as CRITICAL by default, this is the highest-severity drift category) |
-| Storage | `aws_s3_bucket` (versioning/encryption/lifecycle/object-lock drift) | `azure_storage_account` (access policy changed outside IaC, replication rules) |
+| Networking | `aws_security_group` (see the worked example above; also route table drift, VPC peering state — Security Group and route table both have dedicated live-state fetchers now, see below) | `azure_network_security_group` (NSG rule drift — flag as CRITICAL by default, this is the highest-severity drift category; also has a dedicated live-state fetcher, see below) |
+| Storage | `aws_s3_bucket` (versioning/encryption/lifecycle/object-lock drift — dedicated live-state fetcher, see below) | `azure_storage_account` (access policy changed outside IaC, replication rules — dedicated live-state fetcher, see below) |
 | Compute | `aws_instance` (instance type, auto-scaling min/max/desired, AMI version, tag compliance drift) | `azure_app_service` (see App Service content/config drift below — the one domain with a dedicated live-state fetcher instead of relying on the caller to supply `actual_state`) |
 | Database-as-a-Service | `aws_db_instance` / `aws_dynamodb_table` (engine/instance-class drift, parameter group drift, backup-retention drift, DynamoDB billing-mode or GSI/LSI drift) | `azure_sql_database` / `azure_cosmosdb_account` (service-tier/DTU-vCore drift, firewall-rule drift, Cosmos DB throughput/RU drift) |
 
@@ -135,6 +135,73 @@ a missing file shows up as a `desired_state.files` entry absent from the
 live listing, with the path it should be at; a bad app-settings value that
 fails JSON validation (when JSON is expected) is flagged CRITICAL, never
 silently accepted. See `prompts/diagnose.md` rules 8-9.
+
+### Storage drift, dedicated fetchers (Phase 1, 2026-09-14)
+
+`DriftTools.fetch_s3_bucket_state(bucket_name)` (AWS) and
+`DriftTools.fetch_azure_blob_storage_state(storage_account_name,
+resource_group, subscription_id)` (Azure) live-fetch the same way
+`fetch_app_service_state` does — post `live_fetch` instead of
+`actual_state`:
+
+```json
+{"live_fetch": {"bucket_name": "acme-prod-uploads"}}
+```
+```json
+{"live_fetch": {"storage_account_name": "acmeprodstorage", "resource_group": "acme-prod-rg", "subscription_id": "..."}}
+```
+
+Both return a `findings` list computed directly from the live config
+(versioning/encryption/Public Access Block/policy/replication for S3;
+encryption/public network access/soft delete/replication SKU for Blob) —
+these findings feed straight into the diagnose step's drift summary even
+before any `desired_state` comparison, so a genuinely misconfigured
+bucket/storage account is flagged even when the caller has no IaC
+definition to diff against.
+
+### Networking drift, dedicated fetchers (Phase 2, 2026-09-14)
+
+Security Groups and NSGs are the highest-value, most commonly
+misconfigured networking resource, so they're covered first (route
+tables next):
+
+```json
+{"live_fetch": {"security_group_id": "sg-0a1b2c3d"}}
+```
+```json
+{"live_fetch": {"nsg_name": "acme-prod-nsg", "resource_group": "acme-prod-rg", "subscription_id": "..."}}
+```
+```json
+{"live_fetch": {"route_table_id": "rtb-0a1b2c3d"}}
+```
+```json
+{"live_fetch": {"route_table_name": "acme-prod-rt", "resource_group": "acme-prod-rg", "subscription_id": "..."}}
+```
+
+`fetch_security_group_state` flags any inbound rule opening a sensitive
+management/DB port (SSH 22, RDP 3389, MySQL 3306, PostgreSQL 5432, Redis
+6379, Elasticsearch 9200, MongoDB 27017, Kibana 5601) — or all
+ports/protocols — to `0.0.0.0/0`/`::/0`. `fetch_nsg_state` does the
+equivalent for Azure NSGs, but with **effective-rule evaluation**: rules
+are sorted by priority ascending and only the first rule matching a given
+port+source is checked, matching how Azure itself evaluates NSG rules —
+a lower-priority Deny correctly suppresses a finding that a naive
+per-rule scan would have raised. Route table fetchers return raw routes
+only (no findings computed yet — the "default route bypasses expected
+gateway" check is comparison-driven, left to the LLM diagnose step
+against a supplied `desired_state`, not hardcoded here).
+
+**Agent 11 (health monitoring) integration:** rather than adding a new
+polling path, AWS Security Group change alerts (via a CloudWatch Events/
+EventBridge rule → SNS topic) and Azure NSG change alerts (via an Azure
+Monitor Activity Log alert → Action Group) are ingested through the
+*already-generic* `/webhooks/resource-health-alert` endpoint — it already
+detects and handles both AWS SNS and Azure Monitor Common Alert Schema
+payloads (see `api/routes/webhooks.py`). No endpoint changes were needed
+for this; what was missing (and is now built) was Agent 08's ability to
+independently verify what a Security Group/NSG's rules actually are once
+an alert names one, which these fetchers now provide. See Agent 11's own
+`sop.md` for the exact CloudWatch/Azure Monitor alert configuration.
 
 ---
 

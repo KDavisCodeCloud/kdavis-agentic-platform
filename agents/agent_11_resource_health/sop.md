@@ -68,6 +68,46 @@ never processed.
 delivered any way other than through an SNS topic (e.g., directly via
 EventBridge → Lambda). Route GuardDuty through SNS for now.
 
+### Security Group / NSG change alerts (Phase 2, 2026-09-14)
+
+No new webhook code was needed for this — the endpoint above already
+generically accepts both AWS SNS and Azure Monitor Common Alert Schema
+payloads regardless of what changed. What's new is Agent 08's ability to
+independently re-verify a Security Group/NSG's actual live rules once an
+alert names one (`DriftTools.fetch_security_group_state` /
+`fetch_nsg_state`, see Agent 08's `sop.md`). This is how to configure the
+*change*-detection alert itself, distinct from the anomaly/health alerts
+in the Domain Coverage table above:
+
+**AWS — Security Group rule changes via CloudWatch:**
+```
+aws events put-rule \
+  --name cloud-decoded-sg-changes \
+  --event-pattern '{"source":["aws.ec2"],"detail-type":["AWS API Call via CloudTrail"],
+    "detail":{"eventName":["AuthorizeSecurityGroupIngress","AuthorizeSecurityGroupEgress",
+    "RevokeSecurityGroupIngress","RevokeSecurityGroupEgress"]}}'
+
+aws events put-targets --rule cloud-decoded-sg-changes \
+  --targets "Id"="1","Arn"="arn:aws:sns:us-east-1:123456789012:cloud-decoded-alerts"
+```
+Publishes to the same SNS topic already subscribed above — no separate
+subscription needed, `resource-health-alert`'s existing SNS branch
+handles it.
+
+**Azure — NSG rule changes via Azure Monitor (Activity Log alert):**
+```
+az monitor activity-log alert create \
+  --name cloud-decoded-nsg-changes \
+  --resource-group acme-prod-rg \
+  --condition category=Administrative \
+    and resourceType=Microsoft.Network/networkSecurityGroups \
+    and operationName=Microsoft.Network/networkSecurityGroups/securityRules/write \
+  --action-group <the Action Group already wired to the webhook URL above>
+```
+Fires the same Action Group already registered, so no new webhook
+registration is needed either — Agent 11 ingests it through the existing
+Azure Monitor branch.
+
 ---
 
 ## Domain Coverage

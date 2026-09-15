@@ -23,10 +23,14 @@ Supported drift sources:
 
 Domain coverage (all use the generic desired/actual-state diff path except
 where a dedicated fetch helper exists): IAM/RBAC/Policy, Networking,
-Storage, Compute. Azure App Service content/config drift (missing files,
-bad app settings) additionally has a dedicated live-state fetcher,
-fetch_app_service_state() below. Database-as-a-service resources are out
-of scope. GCP: payload shape only, no collection built (see sop.md).
+Storage, Compute. Dedicated live-state fetchers exist for: Azure App
+Service content/config (fetch_app_service_state), S3 + Azure Blob storage
+security config (fetch_s3_bucket_state, fetch_azure_blob_storage_state --
+Phase 1, site-audit gap closure), and AWS Security Group + Azure NSG +
+AWS/Azure route tables (fetch_security_group_state, fetch_nsg_state,
+fetch_route_table_state, fetch_azure_route_table_state -- Phase 2).
+Database-as-a-service resources are out of scope. GCP: payload shape
+only, no collection built (see sop.md).
 
 Correction options:
   opt_1 — Create Remediation PR (for all drift sources — goes through code review)
@@ -51,8 +55,23 @@ from core.workspace_credentials import build_kubeconfig
 log = logging.getLogger(__name__)
 
 _GH_API               = "https://api.github.com"
+_ARM_API              = "https://management.azure.com"
 _MAX_KUBECTL_TIMEOUT  = 120
 _MAX_HTTP_TIMEOUT     = 30
+
+# Shared between fetch_security_group_state (AWS) and fetch_nsg_state
+# (Azure) -- the highest-value management/DB ports to flag when exposed
+# to the open internet (0.0.0.0/0, ::/0, or Azure's "*"/"Internet"/"Any").
+_SENSITIVE_PORTS = {
+    22:    "SSH",
+    3389:  "RDP",
+    3306:  "MySQL",
+    5432:  "PostgreSQL",
+    6379:  "Redis",
+    9200:  "Elasticsearch",
+    27017: "MongoDB",
+    5601:  "Kibana",
+}
 
 
 class DriftTools:
@@ -244,6 +263,315 @@ class DriftTools:
                 for f in files_resp.json()
             ],
             "status": "ok",
+        }
+
+    async def fetch_s3_bucket_state(self, bucket_name: str) -> dict:
+        """
+        Fetch an S3 bucket's live security configuration for the Phase 1
+        storage-drift check -- versioning, default encryption, Public
+        Access Block, bucket policy (flagged for public/wildcard-principal
+        statements), and cross-region replication. Same read-only,
+        error-dict-on-failure shape as fetch_cloudformation_stack() above.
+
+        Encryption / Public Access Block / policy / replication are each
+        independently optional on S3 -- a bucket with none configured
+        returns a specific ClientError code (NotFound / NotConfigured),
+        not a real failure. Only a ClientError with a DIFFERENT code (bad
+        credentials, bucket doesn't exist, etc.) is treated as fatal.
+
+        Returns {"status": "ok", "bucket_name": ..., "versioning": {...},
+        "encryption": {...} | None, "public_access_block": {...} | None,
+        "policy": {...} | None, "replication": {"status": ...},
+        "findings": [...]} or {"error": ...}.
+        """
+        if not self.aws_session:
+            return {"error": "AWS role not connected for this workspace"}
+
+        s3 = self.aws_session.client("s3")
+        findings: list[str] = []
+
+        try:
+            versioning_resp = s3.get_bucket_versioning(Bucket=bucket_name)
+        except ClientError as exc:
+            return {"error": f"Could not fetch bucket versioning for {bucket_name}: {exc}"}
+        versioning_status = versioning_resp.get("Status", "Disabled")
+        if versioning_status != "Enabled":
+            findings.append(f"Versioning is not enabled (status={versioning_status})")
+
+        try:
+            encryption = s3.get_bucket_encryption(Bucket=bucket_name).get("ServerSideEncryptionConfiguration")
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "ServerSideEncryptionConfigurationNotFoundError":
+                return {"error": f"Could not fetch bucket encryption for {bucket_name}: {exc}"}
+            encryption = None
+        if encryption is None:
+            findings.append("No default server-side encryption configured")
+
+        try:
+            pab = s3.get_public_access_block(Bucket=bucket_name).get("PublicAccessBlockConfiguration")
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "NoSuchPublicAccessBlockConfiguration":
+                return {"error": f"Could not fetch Public Access Block for {bucket_name}: {exc}"}
+            pab = None
+        if pab is None:
+            findings.append("No Public Access Block configuration -- bucket may be publicly reachable")
+        elif not all(pab.get(k, False) for k in (
+            "BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets"
+        )):
+            findings.append("Public Access Block configured but not fully locked down")
+
+        try:
+            policy_resp = s3.get_bucket_policy(Bucket=bucket_name)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "NoSuchBucketPolicy":
+                return {"error": f"Could not fetch bucket policy for {bucket_name}: {exc}"}
+            policy_resp = None
+        policy_document = None
+        if policy_resp:
+            try:
+                policy_document = json.loads(policy_resp.get("Policy", "{}"))
+            except json.JSONDecodeError:
+                policy_document = {}
+            if _s3_policy_allows_public_access(policy_document):
+                findings.append("Bucket policy contains a statement allowing public (wildcard principal) access")
+
+        try:
+            s3.get_bucket_replication(Bucket=bucket_name)
+            replication_status = "configured"
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "ReplicationConfigurationNotFoundError":
+                return {"error": f"Could not fetch bucket replication for {bucket_name}: {exc}"}
+            replication_status = "not_configured"
+
+        return {
+            "status": "ok",
+            "bucket_name": bucket_name,
+            "versioning": {"status": versioning_status},
+            "encryption": encryption,
+            "public_access_block": pab,
+            "policy": policy_document,
+            "replication": {"status": replication_status},
+            "findings": findings,
+        }
+
+    async def fetch_azure_blob_storage_state(
+        self, storage_account_name: str, resource_group: str, subscription_id: str,
+    ) -> dict:
+        """
+        Fetch an Azure Storage account's live blob-security configuration
+        for the Phase 1 storage-drift check -- encryption-at-rest, public
+        network access / blob public access, soft delete (blob service
+        delete retention policy), and replication SKU
+        (LRS/ZRS/GRS/RA-GRS). Two ARM REST calls, same bearer-token /
+        error-dict-on-failure shape as fetch_app_service_state() above:
+        the storage account resource itself (encryption, public access,
+        SKU) and its blob service sub-resource (soft delete).
+
+        Returns {"status": "ok", "storage_account_name": ...,
+        "encryption": {...}, "public_network_access": str,
+        "allow_blob_public_access": bool, "soft_delete": {...},
+        "replication_sku": str, "findings": [...]} or {"error": ...}.
+        """
+        if not self.azure_access_token:
+            return {"error": "Azure Service Principal not connected for this workspace"}
+
+        headers = {"Authorization": f"Bearer {self.azure_access_token}"}
+        account_url = (
+            f"{_ARM_API}/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+            f"/providers/Microsoft.Storage/storageAccounts/{storage_account_name}?api-version=2023-01-01"
+        )
+        blob_service_url = (
+            f"{_ARM_API}/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+            f"/providers/Microsoft.Storage/storageAccounts/{storage_account_name}"
+            f"/blobServices/default?api-version=2023-01-01"
+        )
+
+        async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
+            try:
+                account_resp = await client.get(account_url, headers=headers)
+                blob_resp = await client.get(blob_service_url, headers=headers)
+            except httpx.RequestError as exc:
+                return {"error": f"Could not reach Azure Storage APIs: {exc}"}
+
+        if account_resp.status_code != 200:
+            return {"error": f"Could not fetch storage account ({account_resp.status_code}): {account_resp.text[:300]}"}
+        if blob_resp.status_code != 200:
+            return {"error": f"Could not fetch blob service properties ({blob_resp.status_code}): {blob_resp.text[:300]}"}
+
+        account = account_resp.json()
+        properties = account.get("properties", {})
+        blob_properties = blob_resp.json().get("properties", {})
+
+        encryption = properties.get("encryption", {})
+        public_network_access = properties.get("publicNetworkAccess", "Enabled")
+        allow_blob_public_access = properties.get("allowBlobPublicAccess", True)
+        soft_delete = blob_properties.get("deleteRetentionPolicy", {})
+        replication_sku = account.get("sku", {}).get("name", "unknown")
+
+        findings: list[str] = []
+        if not encryption.get("services", {}).get("blob", {}).get("enabled", False):
+            findings.append("Blob service encryption at rest is not enabled")
+        if public_network_access != "Disabled":
+            findings.append(f"Public network access is not disabled (publicNetworkAccess={public_network_access})")
+        if allow_blob_public_access:
+            findings.append("allowBlobPublicAccess is true -- anonymous container/blob access is possible")
+        if not soft_delete.get("enabled", False):
+            findings.append("Soft delete is not enabled for blob service")
+        if replication_sku in ("Standard_LRS", "Premium_LRS"):
+            findings.append(f"Replication SKU is {replication_sku} -- no geo-redundancy configured")
+
+        return {
+            "status": "ok",
+            "storage_account_name": storage_account_name,
+            "encryption": encryption,
+            "public_network_access": public_network_access,
+            "allow_blob_public_access": allow_blob_public_access,
+            "soft_delete": soft_delete,
+            "replication_sku": replication_sku,
+            "findings": findings,
+        }
+
+    async def fetch_security_group_state(self, group_id: str) -> dict:
+        """
+        Fetch an AWS Security Group's live inbound/outbound rules for the
+        Phase 2 networking-drift check. Flags any rule exposing a
+        sensitive management/DB port (see _SENSITIVE_PORTS) to an
+        overpermissive CIDR (0.0.0.0/0 or ::/0) -- the highest-value,
+        most commonly misconfigured networking pattern.
+
+        Returns {"status": "ok", "group_id": ..., "group_name": ...,
+        "ip_permissions": [...], "ip_permissions_egress": [...],
+        "findings": [...]} or {"error": ...}.
+        """
+        if not self.aws_session:
+            return {"error": "AWS role not connected for this workspace"}
+
+        ec2 = self.aws_session.client("ec2")
+        try:
+            resp = ec2.describe_security_groups(GroupIds=[group_id])
+        except ClientError as exc:
+            return {"error": f"Could not fetch security group {group_id}: {exc}"}
+
+        groups = resp.get("SecurityGroups", [])
+        if not groups:
+            return {"error": f"Security group {group_id} not found"}
+        group = groups[0]
+
+        return {
+            "status": "ok",
+            "group_id": group_id,
+            "group_name": group.get("GroupName", ""),
+            "ip_permissions": group.get("IpPermissions", []),
+            "ip_permissions_egress": group.get("IpPermissionsEgress", []),
+            "findings": _find_overpermissive_sg_rules(group.get("IpPermissions", [])),
+        }
+
+    async def fetch_route_table_state(self, route_table_id: str) -> dict:
+        """
+        Fetch an AWS VPC route table's live routes for networking-drift
+        comparison against the Terraform/CloudFormation definition --
+        Phase 2 expansion once Security Group checks are live-verified.
+
+        Returns {"status": "ok", "route_table_id": ..., "routes": [...]}
+        or {"error": ...}.
+        """
+        if not self.aws_session:
+            return {"error": "AWS role not connected for this workspace"}
+
+        ec2 = self.aws_session.client("ec2")
+        try:
+            resp = ec2.describe_route_tables(RouteTableIds=[route_table_id])
+        except ClientError as exc:
+            return {"error": f"Could not fetch route table {route_table_id}: {exc}"}
+
+        tables = resp.get("RouteTables", [])
+        if not tables:
+            return {"error": f"Route table {route_table_id} not found"}
+
+        return {
+            "status": "ok",
+            "route_table_id": route_table_id,
+            "routes": tables[0].get("Routes", []),
+        }
+
+    async def fetch_nsg_state(
+        self, nsg_name: str, resource_group: str, subscription_id: str,
+    ) -> dict:
+        """
+        Fetch an Azure Network Security Group's live security rules for
+        the Phase 2 networking-drift check. Evaluates EFFECTIVE exposure,
+        not each rule in isolation: sorts inbound rules by priority
+        ascending (Azure evaluates lower-priority-number rules first and
+        stops at the first match) and flags a sensitive management/DB
+        port only when the FIRST matching rule for an open source
+        ("*"/"Internet"/"Any") is an Allow -- matching the real-world
+        checks in this product's own azure-nsg-misconfiguration blog
+        post: rule priority evaluation, RDP/SSH open to Any, management
+        ports on production resources.
+
+        Returns {"status": "ok", "nsg_name": ..., "security_rules": [...],
+        "findings": [...]} or {"error": ...}.
+        """
+        if not self.azure_access_token:
+            return {"error": "Azure Service Principal not connected for this workspace"}
+
+        headers = {"Authorization": f"Bearer {self.azure_access_token}"}
+        url = (
+            f"{_ARM_API}/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+            f"/providers/Microsoft.Network/networkSecurityGroups/{nsg_name}?api-version=2023-05-01"
+        )
+
+        async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
+            try:
+                resp = await client.get(url, headers=headers)
+            except httpx.RequestError as exc:
+                return {"error": f"Could not reach Azure Network API: {exc}"}
+
+        if resp.status_code != 200:
+            return {"error": f"Could not fetch NSG {nsg_name} ({resp.status_code}): {resp.text[:300]}"}
+
+        rules = resp.json().get("properties", {}).get("securityRules", [])
+
+        return {
+            "status": "ok",
+            "nsg_name": nsg_name,
+            "security_rules": rules,
+            "findings": _find_overpermissive_nsg_rules(rules),
+        }
+
+    async def fetch_azure_route_table_state(
+        self, route_table_name: str, resource_group: str, subscription_id: str,
+    ) -> dict:
+        """
+        Fetch an Azure route table's live routes for networking-drift
+        comparison -- the Azure equivalent of fetch_route_table_state()
+        above, Phase 2 expansion.
+
+        Returns {"status": "ok", "route_table_name": ..., "routes": [...]}
+        or {"error": ...}.
+        """
+        if not self.azure_access_token:
+            return {"error": "Azure Service Principal not connected for this workspace"}
+
+        headers = {"Authorization": f"Bearer {self.azure_access_token}"}
+        url = (
+            f"{_ARM_API}/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+            f"/providers/Microsoft.Network/routeTables/{route_table_name}?api-version=2023-05-01"
+        )
+
+        async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
+            try:
+                resp = await client.get(url, headers=headers)
+            except httpx.RequestError as exc:
+                return {"error": f"Could not reach Azure Network API: {exc}"}
+
+        if resp.status_code != 200:
+            return {"error": f"Could not fetch route table {route_table_name} ({resp.status_code}): {resp.text[:300]}"}
+
+        return {
+            "status": "ok",
+            "route_table_name": route_table_name,
+            "routes": resp.json().get("properties", {}).get("routes", []),
         }
 
     # ──────────────────────────────────────────────
@@ -486,3 +814,105 @@ def _gh_headers(token: str) -> dict:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def _s3_policy_allows_public_access(document: dict) -> bool:
+    """
+    True if any Allow statement's Principal is the wildcard "*" (any AWS
+    principal) or includes {"AWS": "*"} -- the same public-bucket-policy
+    signal AWS's own S3 console and Access Analyzer surface.
+    """
+    for stmt in document.get("Statement", []):
+        if stmt.get("Effect") != "Allow":
+            continue
+        principal = stmt.get("Principal")
+        if principal == "*":
+            return True
+        if isinstance(principal, dict):
+            aws_principal = principal.get("AWS")
+            if aws_principal == "*" or (isinstance(aws_principal, list) and "*" in aws_principal):
+                return True
+    return False
+
+
+_OPEN_CIDRS = {"0.0.0.0/0", "::/0"}
+
+
+def _find_overpermissive_sg_rules(ip_permissions: list) -> list[str]:
+    """
+    Flags any AWS Security Group inbound rule that opens a sensitive
+    management/DB port (_SENSITIVE_PORTS) -- or all ports/protocols
+    (IpProtocol "-1") -- to 0.0.0.0/0 or ::/0.
+    """
+    findings = []
+    for perm in ip_permissions:
+        from_port = perm.get("FromPort")
+        to_port = perm.get("ToPort")
+        open_ranges = [r["CidrIp"] for r in perm.get("IpRanges", []) if r.get("CidrIp") in _OPEN_CIDRS]
+        open_ranges += [r["CidrIpv6"] for r in perm.get("Ipv6Ranges", []) if r.get("CidrIpv6") in _OPEN_CIDRS]
+        if not open_ranges:
+            continue
+        if perm.get("IpProtocol") == "-1":
+            findings.append(f"All traffic (all ports) open to {'/'.join(open_ranges)}")
+            continue
+        for port, name in _SENSITIVE_PORTS.items():
+            if from_port is not None and to_port is not None and from_port <= port <= to_port:
+                findings.append(f"{name} (port {port}) open to {'/'.join(open_ranges)}")
+    return findings
+
+
+_OPEN_NSG_SOURCES = {"*", "internet", "any"}
+
+
+def _nsg_rule_matches_port(props: dict, port: int) -> bool:
+    ranges = props.get("destinationPortRanges") or [props.get("destinationPortRange", "")]
+    for r in ranges:
+        r = str(r)
+        if r == "*":
+            return True
+        if "-" in r:
+            lo, hi = r.split("-", 1)
+            try:
+                if int(lo) <= port <= int(hi):
+                    return True
+            except ValueError:
+                continue
+        elif r.isdigit() and int(r) == port:
+            return True
+    return False
+
+
+def _nsg_rule_matches_open_source(props: dict) -> bool:
+    prefixes = props.get("sourceAddressPrefixes") or [props.get("sourceAddressPrefix", "")]
+    return any(str(p).lower() in _OPEN_NSG_SOURCES for p in prefixes)
+
+
+def _find_overpermissive_nsg_rules(rules: list) -> list[str]:
+    """
+    Effective-rule evaluation for Azure NSGs: for each sensitive port,
+    finds the lowest-priority (first-evaluated) Inbound rule whose port
+    range and source together could match traffic from the public
+    internet, and flags it only if that first match is an Allow -- a
+    lower-priority Deny for the same port/source correctly suppresses the
+    finding, matching Azure's real evaluation order (ascending priority,
+    first match wins).
+    """
+    inbound = sorted(
+        (r for r in rules if r.get("properties", {}).get("direction") == "Inbound"),
+        key=lambda r: r.get("properties", {}).get("priority", 65000),
+    )
+    findings = []
+    for port, name in _SENSITIVE_PORTS.items():
+        for rule in inbound:
+            props = rule.get("properties", {})
+            if not _nsg_rule_matches_port(props, port):
+                continue
+            if not _nsg_rule_matches_open_source(props):
+                continue
+            if props.get("access") == "Allow":
+                findings.append(
+                    f"{name} (port {port}) reachable from the internet via rule "
+                    f"'{rule.get('name', '?')}' (priority {props.get('priority')})"
+                )
+            break  # first match at this port wins, regardless of allow/deny
+    return findings

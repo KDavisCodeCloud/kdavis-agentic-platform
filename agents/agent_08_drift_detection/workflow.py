@@ -242,10 +242,14 @@ class DriftWorkflow(BaseAgent):
             or {}
         )
 
-        # App Service content/config drift (Phase B) is the one domain with
-        # a dedicated live-state fetcher instead of requiring the caller to
-        # supply actual_state themselves -- see sop.md's "App Service
-        # content/config drift" section for the live_fetch payload shape.
+        # App Service content/config drift (Phase B), S3/Azure Blob storage
+        # drift (Phase 1), and AWS Security Group / Azure NSG / AWS+Azure
+        # route table networking drift (Phase 2) are the domains with a
+        # dedicated live-state fetcher instead of requiring the caller to
+        # supply actual_state themselves -- see sop.md's "live_fetch payload
+        # shapes" section for the full key reference. Checked in order;
+        # first live_fetch shape that matches wins -- a given incident is
+        # always about exactly one resource.
         live_fetch = payload.get("live_fetch")
         if not actual_raw and live_fetch and live_fetch.get("app_name"):
             fetched = await self._tools.fetch_app_service_state(
@@ -258,6 +262,48 @@ class DriftWorkflow(BaseAgent):
                 actual_raw = {"error": fetched["error"]}
             else:
                 actual_raw = {"app_settings": fetched["app_settings"], "files": [f["name"] for f in fetched["files"]]}
+
+        elif not actual_raw and live_fetch and live_fetch.get("bucket_name"):
+            actual_raw = await self._tools.fetch_s3_bucket_state(live_fetch["bucket_name"])
+            if "error" in actual_raw:
+                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
+
+        elif not actual_raw and live_fetch and live_fetch.get("storage_account_name"):
+            actual_raw = await self._tools.fetch_azure_blob_storage_state(
+                storage_account_name=live_fetch["storage_account_name"],
+                resource_group=live_fetch.get("resource_group", ""),
+                subscription_id=live_fetch.get("subscription_id", ""),
+            )
+            if "error" in actual_raw:
+                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
+
+        elif not actual_raw and live_fetch and live_fetch.get("security_group_id"):
+            actual_raw = await self._tools.fetch_security_group_state(live_fetch["security_group_id"])
+            if "error" in actual_raw:
+                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
+
+        elif not actual_raw and live_fetch and live_fetch.get("nsg_name"):
+            actual_raw = await self._tools.fetch_nsg_state(
+                nsg_name=live_fetch["nsg_name"],
+                resource_group=live_fetch.get("resource_group", ""),
+                subscription_id=live_fetch.get("subscription_id", ""),
+            )
+            if "error" in actual_raw:
+                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
+
+        elif not actual_raw and live_fetch and live_fetch.get("route_table_id"):
+            actual_raw = await self._tools.fetch_route_table_state(live_fetch["route_table_id"])
+            if "error" in actual_raw:
+                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
+
+        elif not actual_raw and live_fetch and live_fetch.get("route_table_name"):
+            actual_raw = await self._tools.fetch_azure_route_table_state(
+                route_table_name=live_fetch["route_table_name"],
+                resource_group=live_fetch.get("resource_group", ""),
+                subscription_id=live_fetch.get("subscription_id", ""),
+            )
+            if "error" in actual_raw:
+                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
 
         desired_text = _normalize_state_text(desired_raw)
         actual_text  = _normalize_state_text(actual_raw)
