@@ -31,11 +31,57 @@ same model as Agent 02's AKS alerting.
 
 ### Azure — Action Group webhook
 
-Register as a webhook action on an Azure Monitor Action Group:
+**Verified setup path (live-tested 2026-09-15 — see Verification status
+below for the full trace):**
 
-```
-URL: https://your-api.cloud-decoded.com/api/v1/webhooks/resource-health-alert?token=<ws_token>
-```
+1. **Register the resource providers first**, on the subscription —
+   `Microsoft.Insights` and `Microsoft.AlertsManagement`. An
+   unregistered provider is the most common reason a freshly-created
+   Action Group's webhook silently never fires:
+   ```
+   az provider register --namespace Microsoft.Insights
+   az provider register --namespace Microsoft.AlertsManagement
+   az provider show --namespace Microsoft.Insights --query registrationState
+   az provider show --namespace Microsoft.AlertsManagement --query registrationState
+   ```
+   Wait for both to report `Registered` before continuing.
+
+2. **Create the Action Group**, then add an action of type **Webhook —
+   not "Secure Webhook"**. Secure Webhook requires an Azure AD auth
+   handshake (AAD app registration, token validation) this backend does
+   not implement; a plain Webhook action is what `resource_health_alert_webhook`
+   (`api/routes/webhooks.py`) expects — token-in-query-string auth only.
+
+3. **Turn the "Common Alert Schema" toggle ON** for the webhook action.
+   This is not optional: `is_azure_monitor` detection
+   (`api/routes/webhooks.py`) only recognizes the Common Alert Schema's
+   `{"data": {"essentials": {...}}}` shape. The legacy (non-common)
+   schema is a structurally different payload and falls through to
+   `{"status": "ignored", "reason": "unrecognized alert payload format"}`
+   — silently dropped, not an error, so this is easy to miss if the
+   toggle is left off.
+
+4. **Webhook URI** — must include the `/api/v1` prefix
+   (`api/main.py` mounts `webhooks.router` under `/api/v1` on top of the
+   router's own `/webhooks` prefix; every path in this doc has
+   historically been documented without it, which is itself a bug this
+   session fixed live — see commit `e30e3a7`). The current production
+   URL (no custom domain mapped to this Railway service yet):
+   ```
+   URL: https://kdavis-agentic-platform-production.up.railway.app/api/v1/webhooks/resource-health-alert?token=<ws_token>
+   ```
+
+5. **Test it** — in the Azure Portal, open the Action Group → **Test
+   action group** → sample type **Metric alert** (both the "static
+   threshold" and "dynamic threshold" Metric alert samples exercise the
+   same Common Alert Schema shape and both were used for the live
+   verification below). A successful test reaches
+   `resource_health_alert_webhook`, which returns `200` — if you instead
+   see Azure report `403 Forbidden`, the most common cause is a stray
+   space or line-break character accidentally pasted into the `token`
+   query-string value (copy from a plain-text field, not a
+   line-wrapping chat/terminal view, and verify the pasted URL has no
+   embedded whitespace before saving).
 
 Any Azure Monitor alert rule (Defender for Cloud/Identity findings, Azure
 Policy compliance alerts, NSG flow-log anomalies, VM/App Service/Storage
@@ -54,7 +100,7 @@ to:
 aws sns subscribe \
   --topic-arn arn:aws:sns:us-east-1:123456789012:cloud-decoded-alerts \
   --protocol https \
-  --notification-endpoint "https://your-api.cloud-decoded.com/api/v1/webhooks/resource-health-alert?token=<ws_token>"
+  --notification-endpoint "https://kdavis-agentic-platform-production.up.railway.app/api/v1/webhooks/resource-health-alert?token=<ws_token>"
 ```
 
 AWS sends a `SubscriptionConfirmation` message once, immediately after
@@ -219,9 +265,94 @@ landed in `incidents` at `pending_approval` with a correct plain-English
 `parsed_error` within 6 seconds. Test topic, subscription, and workspace
 were all torn down immediately after.
 
-**Azure Action Group path: not yet live-verified** — no Azure Service
-Principal credential is configured on this backend service to test
-against a real Action Group. It reuses the exact Common Alert Schema
-parsing `aks_alert_webhook` already proves works in production for AKS
-alerts, so the risk here is low, but it hasn't been exercised end-to-end
-the way the AWS path now has.
+**Azure Action Group path: live-verified end-to-end against production on
+2026-09-15**, using the setup steps documented above (a real Action
+Group in Kelvin's own subscription, webhook action, Common Alert Schema
+on). Two real Azure Monitor test alerts were fired via the Portal's Test
+action group → Metric alert sample type — one **static threshold**, one
+**dynamic threshold** — both reached `resource_health_alert_webhook`,
+both were correctly detected as `format=azure_monitor`, and both ran
+Agent 11's full graph: ingest → diagnose (LLM) → a real incident row
+created (`pending_approval`, plain-English `parsed_error`, two real
+remediation options) → `interrupt()` fired correctly, pausing for
+operator approval exactly as designed.
+
+Getting from "alert lands as a pending incident" to a genuinely
+complete approve → execute → resolved loop surfaced **four** real,
+previously-undiscovered production bugs this same session — the
+ingest half had clearly been exercised before (SNS path above), but
+approve → resume never had been, for any agent, until this. Each was
+found by actually driving the full loop against production and reading
+the failure, not by inspection:
+
+1. **Checkpoint write crash on interrupt**
+   `TypeError: AsyncPostgresSaver.aput_writes() takes 4 positional
+   arguments but 5 were given` (`core/checkpointer_lock.py`) — a
+   version-skew bug between `langgraph-checkpoint` 2.1.2's abstract
+   interface (added a `task_path` parameter) and the pinned
+   `langgraph-checkpoint-postgres==2.0.4` concrete implementation
+   (predates it). Affected every agent's HITL-gate checkpoint, not just
+   Agent 11's. Fixed, commit `8a0ae1a`.
+
+2. **Agent 11 missing from the approve-resume dispatch table**
+   `api/routes/incidents.py`'s `_WORKFLOW_CLASSES` had no entry for
+   `agent_11_resource_health` at all — every real approval of a real
+   Agent 11 incident selecting anything but `hold` hit a 500 "No
+   workflow class registered." Broken since Agent 11 shipped, for every
+   customer. Fixed, commit `c84a1c1`.
+
+3. **Sync `get_state()` against an async-only checkpointer** — 7 of 11
+   agents (02, 03, 04, 07, 09, 10, 11) called the synchronous
+   `self._graph.get_state(config)` right after `ainvoke()` returns from
+   an interrupted run, to pull the interrupt payload back out.
+   `core/checkpointer_lock.py`'s `LockedAsyncPostgresSaver` only
+   implements the async interface; the sync path raises
+   `NotImplementedError`, crashing `run()` itself immediately after
+   every interrupt, for all 7 agents. Fixed with `await
+   self._graph.aget_state(config)`, commit `8110344` — see
+   `tests/test_agent_workflow_conventions.py` for the static regression
+   guard.
+
+4. **Incident id never matched the real LangGraph checkpoint thread_id**
+   — the actual root cause of the `InvalidUpdateError` that survived
+   fix #3. The same 7 agents generated a fresh `thread_id` for the
+   checkpoint config but never seeded `initial_state["incident_id"]`
+   with it (hardcoded `None`), and Agent 11's own `_ingest_node`
+   independently reset it back to `None` a second time even where it
+   had been seeded — so `create_incident()` got no `incident_id` kwarg,
+   Postgres auto-generated an unrelated random UUID for the DB row, and
+   `POST /incidents/{id}/approve` naturally resumed against *that* id
+   instead of the real thread_id the graph was actually checkpointed
+   under. LangGraph found no checkpoint, treated `Command(resume=...)`
+   as a fresh `__start__` invocation, and raised — a `Command` object is
+   not valid raw state input there. Fixed to match the pattern
+   agent_01/05/06/08 already had correct, commit `3900fd8`. Immediately
+   surfaced a **fifth**, narrower bug in Agent 11 specifically: its
+   dedup-collapse routing (`_route_after_dedup`) keyed off
+   `incident_id`'s truthiness, which is exactly what fix #4 made
+   always-true from the start of every run — so every alert, new ones
+   included, got silently routed to `dedup_complete` and no incident was
+   ever created. Fixed with an explicit `is_dedup_match` state field,
+   commit `68c25c2`.
+
+Each of the five fixes was deployed and re-tested against a fresh
+synthetic Azure Monitor alert before moving to the next — a fix that
+looked complete in isolation twice turned out to still be blocked by
+the next bug in the chain, so **the only claim trusted here is the one
+backed by the final clean run**, not any intermediate "should work now."
+
+**Full loop verified end-to-end against production, 2026-09-15**: a
+real synthetic Azure Monitor test alert → webhook accepted → real
+incident created (`pending_approval`) → `POST /incidents/{id}/approve`
+→ agent resumes from the persisted checkpoint under the correct
+thread_id → `execute` node runs (returned `skipped` — no repo
+configured on the test workspace, the documented, expected, side-
+effect-free outcome per the Error Handling table above, not a failure)
+→ `complete` node runs → incident reaches `execution_status = 'executed'`
+with `resolved_at` populated → a full 7-row `audit_events` trail for the
+incident confirms GAPS.md #28's audit writer fired correctly at every
+step (`created` → `hitl_gate` → `execute:opt_1` → `hitl_gate` → `complete`
+→ `executed`). Four earlier test incidents, created and stranded by
+bugs 1-5 above before each respective fix deployed, were deleted rather
+than left as unapprovable orphans in the Cloud Decoded — Internal QA
+workspace.
