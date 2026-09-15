@@ -181,3 +181,52 @@ If the minimized policy appears incorrect:
 1. Select **hold** at the HITL gate
 2. Use the `permissions_kept` list as a starting point for manual policy construction
 3. Re-run with a longer access log window (90 days recommended for seasonal workloads)
+
+---
+
+## Managed Identity Detection (Phase 3, 2026-09-14)
+
+Standalone read-only checks in `IAMMinimizeTools`, separate from the
+principal-minimization workflow above -- these don't go through the
+ingest/diagnose/HITL/execute pipeline (there's no "correction" step;
+they're detection only, the finding itself is the product). Call
+directly, e.g. from a scheduled sweep or on-demand via the dashboard.
+
+**Azure — orphaned identities:** `detect_orphaned_managed_identities(subscription_id)`
+lists every user-assigned managed identity in the subscription
+(`list_azure_managed_identities`, `Microsoft.ManagedIdentity/
+userAssignedIdentities`) and cross-references each against its role
+assignments (`get_azure_role_assignments`, already existed). An identity
+with zero assignments is flagged orphaned -- created, once possibly
+wired up, now doing nothing. System-assigned identities are out of
+scope: they're tied 1:1 to their host resource's lifecycle and can't
+outlive it the way a standalone user-assigned identity can.
+
+**Azure — overpermissive identities:** `detect_overpermissive_managed_identities(subscription_id, expected_role_definition_ids)`
+takes a caller-supplied IaC definition (`{principal_id: [role_definition_id, ...]}`,
+built from the workspace's Terraform/Bicep `azurerm_role_assignment` /
+`Microsoft.Authorization/roleAssignments` resources) and flags any
+identity holding a role assignment NOT in its expected set. Identities
+with no entry in `expected_role_definition_ids` are skipped, not
+flagged -- this check only applies where the caller actually has an IaC
+definition to compare against.
+
+**AWS equivalent:** `list_aws_instance_profile_roles()` and
+`list_lambda_execution_roles()` enumerate the AWS analogue of a managed
+identity (an EC2 instance profile's role; a Lambda function's execution
+role). `detect_overpermissive_aws_roles(role_arns, expected_actions)`
+fetches each role's attached-managed-policy actions plus inline-policy
+actions (`_summarize_permissions`, the same flattening the minimization
+workflow already uses) and flags any action not in
+`expected_actions[role_name]`. Same skip-if-no-IaC-entry behavior as the
+Azure check.
+
+All four return `{"error": ...}` on a missing/broken credential or API
+failure rather than raising -- unlike this file's older single-call
+fetchers (`get_azure_role_assignments` etc., which raise
+`EnvironmentError`/`RuntimeError`), these are multi-call aggregations
+where a partial result being useless is common, so the caller checks
+`"error" in result` the same way Agent 08's live-state fetchers already
+work. No new agent, no HITL gate -- these are read-only findings meant
+to feed a future sweep/alert, same scope boundary as Agent 08's Phase
+1/2 storage and networking fetchers.

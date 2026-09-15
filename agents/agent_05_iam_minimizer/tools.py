@@ -144,6 +144,241 @@ class IAMMinimizeTools:
         return resp.json()
 
     # ──────────────────────────────────────────────
+    # Managed identity detection (Phase 3, 2026-09-14) — always safe, no approval needed
+    # ──────────────────────────────────────────────
+
+    async def list_azure_managed_identities(self, subscription_id: str) -> dict:
+        """
+        List every user-assigned managed identity in an Azure subscription.
+        System-assigned identities are tied 1:1 to the resource that hosts
+        them and can't outlive it, so they're out of scope for "orphaned
+        identity" detection the way a standalone user-assigned identity
+        can be -- created, attached to a VM/App Service, then left behind
+        after that resource is deleted or repointed at a different
+        identity.
+        Ref: https://learn.microsoft.com/en-us/rest/api/managedidentity/user-assigned-identities/list-by-subscription
+
+        Returns {"status": "ok", "identities": [{"id", "name",
+        "principal_id", "resource_group"}, ...]} or {"error": ...}.
+        """
+        if not self.azure_access_token:
+            return {"error": "AZURE_ACCESS_TOKEN not configured for this workspace"}
+
+        url = (
+            f"{_ARM_API}/subscriptions/{subscription_id}"
+            f"/providers/Microsoft.ManagedIdentity/userAssignedIdentities?api-version=2023-01-31"
+        )
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.get(url, headers=_azure_headers(self.azure_access_token))
+            except httpx.RequestError as exc:
+                return {"error": f"Could not reach Azure Managed Identity API: {exc}"}
+
+        if resp.status_code != 200:
+            return {"error": f"Could not list managed identities ({resp.status_code}): {resp.text[:300]}"}
+
+        identities = []
+        for item in resp.json().get("value", []):
+            props = item.get("properties", {})
+            identities.append({
+                "id": item.get("id", ""),
+                "name": item.get("name", ""),
+                "principal_id": props.get("principalId", ""),
+                "resource_group": _resource_group_from_id(item.get("id", "")),
+            })
+        return {"status": "ok", "identities": identities}
+
+    async def detect_orphaned_managed_identities(self, subscription_id: str) -> dict:
+        """
+        Cross-references every user-assigned managed identity in the
+        subscription against its role assignments (reusing
+        get_azure_role_assignments) and flags any identity with zero
+        assignments at all -- created, possibly once wired up, now doing
+        nothing. An orphaned identity is a live credential no IaC
+        definition, and no one, is tracking the blast radius of.
+
+        Returns {"status": "ok", "checked": N, "orphaned": [{"id", "name",
+        "principal_id", "resource_group"}, ...]} or {"error": ...}.
+        """
+        listed = await self.list_azure_managed_identities(subscription_id)
+        if "error" in listed:
+            return listed
+
+        orphaned = []
+        for identity in listed["identities"]:
+            principal_id = identity.get("principal_id", "")
+            if not principal_id:
+                continue
+            assignments = await self.get_azure_role_assignments(subscription_id, principal_id)
+            if not assignments:
+                orphaned.append(identity)
+
+        return {"status": "ok", "checked": len(listed["identities"]), "orphaned": orphaned}
+
+    async def detect_overpermissive_managed_identities(
+        self, subscription_id: str, expected_role_definition_ids: dict,
+    ) -> dict:
+        """
+        For every user-assigned managed identity in the subscription,
+        compares its ACTUAL role assignments against the roles its IaC
+        definition says it should have (expected_role_definition_ids,
+        keyed by principal_id -- e.g. built from a Terraform/Bicep
+        azurerm_role_assignment / Microsoft.Authorization/roleAssignments
+        resource list). Flags any identity holding a role assignment not
+        present in its expected set as broader-than-defined.
+
+        Identities with no entry in expected_role_definition_ids are
+        SKIPPED, not flagged -- this check is scoped to identities the
+        caller actually has an IaC definition for. Use
+        detect_orphaned_managed_identities for identities with no IaC
+        definition and no role assignments at all.
+
+        Returns {"status": "ok", "checked": N, "overpermissive": [{"id",
+        "name", "principal_id", "resource_group",
+        "extra_role_definition_ids": [...]}, ...]} or {"error": ...}.
+        """
+        listed = await self.list_azure_managed_identities(subscription_id)
+        if "error" in listed:
+            return listed
+
+        overpermissive = []
+        checked = 0
+        for identity in listed["identities"]:
+            principal_id = identity.get("principal_id", "")
+            if principal_id not in expected_role_definition_ids:
+                continue
+            checked += 1
+            expected = set(expected_role_definition_ids[principal_id])
+            assignments = await self.get_azure_role_assignments(subscription_id, principal_id)
+            actual = {a.get("properties", {}).get("roleDefinitionId", "") for a in assignments}
+            actual.discard("")
+            extra = actual - expected
+            if extra:
+                overpermissive.append({**identity, "extra_role_definition_ids": sorted(extra)})
+
+        return {"status": "ok", "checked": checked, "overpermissive": overpermissive}
+
+    async def list_aws_instance_profile_roles(self) -> dict:
+        """
+        Lists every EC2 IAM instance profile and the role(s) attached to
+        it -- AWS equivalent of a managed identity, Phase 3.
+        Ref: https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListInstanceProfiles.html
+
+        Returns {"status": "ok", "instance_profiles": [{"name", "arn",
+        "role_names": [...]}, ...]} or {"error": ...}.
+        """
+        if not self.aws_session:
+            return {"error": "AWS role not connected for this workspace"}
+
+        iam = self.aws_session.client("iam")
+        profiles = []
+        try:
+            paginator = iam.get_paginator("list_instance_profiles")
+            for page in paginator.paginate():
+                for profile in page.get("InstanceProfiles", []):
+                    profiles.append({
+                        "name": profile.get("InstanceProfileName", ""),
+                        "arn": profile.get("Arn", ""),
+                        "role_names": [r.get("RoleName", "") for r in profile.get("Roles", [])],
+                    })
+        except ClientError as exc:
+            return {"error": f"Could not list EC2 instance profiles: {exc}"}
+
+        return {"status": "ok", "instance_profiles": profiles}
+
+    async def list_lambda_execution_roles(self) -> dict:
+        """
+        Lists every Lambda function's execution role ARN, deduplicated by
+        role -- the serverless-compute equivalent of a managed identity,
+        Phase 3.
+        Ref: https://docs.aws.amazon.com/lambda/latest/api/API_ListFunctions.html
+
+        Returns {"status": "ok", "execution_roles": [{"role_arn",
+        "function_names": [...]}, ...]} or {"error": ...}.
+        """
+        if not self.aws_session:
+            return {"error": "AWS role not connected for this workspace"}
+
+        lambda_client = self.aws_session.client("lambda")
+        roles: dict = {}
+        try:
+            paginator = lambda_client.get_paginator("list_functions")
+            for page in paginator.paginate():
+                for fn in page.get("Functions", []):
+                    role_arn = fn.get("Role", "")
+                    if not role_arn:
+                        continue
+                    roles.setdefault(role_arn, []).append(fn.get("FunctionName", ""))
+        except ClientError as exc:
+            return {"error": f"Could not list Lambda functions: {exc}"}
+
+        return {
+            "status": "ok",
+            "execution_roles": [{"role_arn": arn, "function_names": names} for arn, names in roles.items()],
+        }
+
+    async def detect_overpermissive_aws_roles(
+        self, role_arns: list, expected_actions: dict,
+    ) -> dict:
+        """
+        For each given IAM role ARN (sourced from
+        list_aws_instance_profile_roles / list_lambda_execution_roles),
+        fetches its attached-managed-policy actions plus inline-policy
+        actions (reusing _summarize_permissions, the same flattening this
+        file already uses for policy-minimization diagnosis) and compares
+        against the actions its IaC definition says it should have
+        (expected_actions, keyed by role name). Flags any role holding an
+        action not present in its expected set as broader-than-defined --
+        the AWS equivalent of detect_overpermissive_managed_identities.
+
+        Roles with no entry in expected_actions are SKIPPED, not flagged
+        -- scoped to roles the caller actually has an IaC definition for.
+
+        Returns {"status": "ok", "checked": N, "overpermissive":
+        [{"role_name", "role_arn", "extra_actions": [...]}, ...]} or
+        {"error": ...}.
+        """
+        if not self.aws_session:
+            return {"error": "AWS role not connected for this workspace"}
+
+        iam = self.aws_session.client("iam")
+        overpermissive = []
+        checked = 0
+
+        for role_arn in role_arns:
+            role_name = role_arn.split("/")[-1]
+            if role_name not in expected_actions:
+                continue
+            checked += 1
+            expected = {a.lower() for a in expected_actions[role_name]}
+
+            try:
+                actual: set = set()
+                attached = iam.list_attached_role_policies(RoleName=role_name)["AttachedPolicies"]
+                for pol in attached:
+                    versions = iam.list_policy_versions(PolicyArn=pol["PolicyArn"])["Versions"]
+                    version_id = next(v["VersionId"] for v in versions if v["IsDefaultVersion"])
+                    doc = iam.get_policy_version(
+                        PolicyArn=pol["PolicyArn"], VersionId=version_id
+                    )["PolicyVersion"]["Document"]
+                    if isinstance(doc, str):
+                        from urllib.parse import unquote
+                        doc = json.loads(unquote(doc))
+                    actual |= set(_summarize_permissions(doc))
+
+                for policy_name in iam.list_role_policies(RoleName=role_name)["PolicyNames"]:
+                    inline_doc = iam.get_role_policy(RoleName=role_name, PolicyName=policy_name)["PolicyDocument"]
+                    actual |= set(_summarize_permissions(inline_doc))
+            except ClientError as exc:
+                return {"error": f"Could not fetch policies for role {role_name}: {exc}"}
+
+            extra = actual - expected
+            if extra:
+                overpermissive.append({"role_name": role_name, "role_arn": role_arn, "extra_actions": sorted(extra)})
+
+        return {"status": "ok", "checked": checked, "overpermissive": overpermissive}
+
+    # ──────────────────────────────────────────────
     # Write — post-approval only
     # ──────────────────────────────────────────────
 
@@ -463,3 +698,17 @@ def _summarize_permissions(policy_document: dict) -> list[str]:
             action = [action]
         actions.extend(action)
     return sorted(set(a.lower() for a in actions))
+
+
+def _resource_group_from_id(resource_id: str) -> str:
+    """
+    Extracts the resource group name from a full ARM resource id
+    (.../resourceGroups/<name>/...) -- used by
+    list_azure_managed_identities so callers don't have to re-parse it.
+    Returns "" if the id doesn't contain a resourceGroups segment.
+    """
+    parts = resource_id.split("/")
+    for i, part in enumerate(parts):
+        if part.lower() == "resourcegroups" and i + 1 < len(parts):
+            return parts[i + 1]
+    return ""

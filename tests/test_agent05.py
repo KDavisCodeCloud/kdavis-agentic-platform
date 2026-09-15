@@ -72,6 +72,7 @@ import pytest
 from agents.agent_05_iam_minimizer.tools import (
     IAMMinimizeTools,
     _summarize_permissions,
+    _resource_group_from_id,
 )
 from agents.agent_05_iam_minimizer.workflow import (
     IAMMinimizeWorkflow,
@@ -422,6 +423,290 @@ class TestGetGCPIAMPolicy:
         assert "bindings" in result
         call_url = ctx.post.call_args.args[0]
         assert "my-project:getIamPolicy" in call_url
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# IAMMinimizeTools — managed identity detection (Phase 3)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _identities_ctx(resp):
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=ctx)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    ctx.get = AsyncMock(return_value=resp)
+    return ctx
+
+
+class TestResourceGroupFromId:
+    def test_extracts_resource_group(self):
+        rid = "/subscriptions/sub-1/resourceGroups/acme-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mi-1"
+        assert _resource_group_from_id(rid) == "acme-rg"
+
+    def test_returns_empty_string_when_absent(self):
+        assert _resource_group_from_id("/subscriptions/sub-1") == ""
+
+
+class TestListAzureManagedIdentities:
+    async def test_raises_returns_error_without_azure_token(self):
+        no_token = IAMMinimizeTools(azure_access_token="")
+        result = await no_token.list_azure_managed_identities("sub-1")
+        assert "error" in result
+
+    async def test_returns_parsed_identities(self):
+        resp = _make_http_resp(200, {"value": [{
+            "id": "/subscriptions/sub-1/resourceGroups/acme-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mi-1",
+            "name": "mi-1",
+            "properties": {"principalId": "principal-1"},
+        }]})
+        tools = IAMMinimizeTools(azure_access_token="tok")
+        with patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=_identities_ctx(resp))):
+            result = await tools.list_azure_managed_identities("sub-1")
+
+        assert result["status"] == "ok"
+        assert result["identities"][0]["principal_id"] == "principal-1"
+        assert result["identities"][0]["resource_group"] == "acme-rg"
+
+    async def test_returns_error_on_non_200(self):
+        resp = _make_http_resp(403, {})
+        resp.text = "Forbidden"
+        tools = IAMMinimizeTools(azure_access_token="tok")
+        with patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=_identities_ctx(resp))):
+            result = await tools.list_azure_managed_identities("sub-1")
+        assert "error" in result
+
+
+class TestDetectOrphanedManagedIdentities:
+    async def test_propagates_list_error(self):
+        tools = IAMMinimizeTools(azure_access_token="")
+        result = await tools.detect_orphaned_managed_identities("sub-1")
+        assert "error" in result
+
+    async def test_flags_identity_with_zero_assignments(self):
+        tools = IAMMinimizeTools(azure_access_token="tok")
+        with (
+            patch.object(tools, "list_azure_managed_identities", new=AsyncMock(return_value={
+                "status": "ok",
+                "identities": [
+                    {"id": "id-1", "name": "mi-orphan", "principal_id": "p-1", "resource_group": "rg"},
+                    {"id": "id-2", "name": "mi-active", "principal_id": "p-2", "resource_group": "rg"},
+                ],
+            })),
+            patch.object(tools, "get_azure_role_assignments", new=AsyncMock(side_effect=[[], [{"id": "a-1"}]])),
+        ):
+            result = await tools.detect_orphaned_managed_identities("sub-1")
+
+        assert result["status"] == "ok"
+        assert result["checked"] == 2
+        assert [i["name"] for i in result["orphaned"]] == ["mi-orphan"]
+
+    async def test_no_orphans_when_all_assigned(self):
+        tools = IAMMinimizeTools(azure_access_token="tok")
+        with (
+            patch.object(tools, "list_azure_managed_identities", new=AsyncMock(return_value={
+                "status": "ok",
+                "identities": [{"id": "id-1", "name": "mi-1", "principal_id": "p-1", "resource_group": "rg"}],
+            })),
+            patch.object(tools, "get_azure_role_assignments", new=AsyncMock(return_value=[{"id": "a-1"}])),
+        ):
+            result = await tools.detect_orphaned_managed_identities("sub-1")
+        assert result["orphaned"] == []
+
+
+class TestDetectOverpermissiveManagedIdentities:
+    async def test_flags_identity_with_extra_role(self):
+        tools = IAMMinimizeTools(azure_access_token="tok")
+        expected = {"p-1": ["/roleDefinitions/reader"]}
+        with (
+            patch.object(tools, "list_azure_managed_identities", new=AsyncMock(return_value={
+                "status": "ok",
+                "identities": [{"id": "id-1", "name": "mi-1", "principal_id": "p-1", "resource_group": "rg"}],
+            })),
+            patch.object(tools, "get_azure_role_assignments", new=AsyncMock(return_value=[
+                {"properties": {"roleDefinitionId": "/roleDefinitions/reader"}},
+                {"properties": {"roleDefinitionId": "/roleDefinitions/owner"}},
+            ])),
+        ):
+            result = await tools.detect_overpermissive_managed_identities("sub-1", expected)
+
+        assert result["checked"] == 1
+        assert result["overpermissive"][0]["name"] == "mi-1"
+        assert result["overpermissive"][0]["extra_role_definition_ids"] == ["/roleDefinitions/owner"]
+
+    async def test_skips_identity_with_no_expected_entry(self):
+        tools = IAMMinimizeTools(azure_access_token="tok")
+        with (
+            patch.object(tools, "list_azure_managed_identities", new=AsyncMock(return_value={
+                "status": "ok",
+                "identities": [{"id": "id-1", "name": "mi-1", "principal_id": "p-1", "resource_group": "rg"}],
+            })),
+            patch.object(tools, "get_azure_role_assignments", new=AsyncMock()) as mock_assignments,
+        ):
+            result = await tools.detect_overpermissive_managed_identities("sub-1", {})
+
+        assert result["checked"] == 0
+        assert result["overpermissive"] == []
+        mock_assignments.assert_not_awaited()
+
+    async def test_no_finding_when_actual_is_subset_of_expected(self):
+        tools = IAMMinimizeTools(azure_access_token="tok")
+        expected = {"p-1": ["/roleDefinitions/reader", "/roleDefinitions/owner"]}
+        with (
+            patch.object(tools, "list_azure_managed_identities", new=AsyncMock(return_value={
+                "status": "ok",
+                "identities": [{"id": "id-1", "name": "mi-1", "principal_id": "p-1", "resource_group": "rg"}],
+            })),
+            patch.object(tools, "get_azure_role_assignments", new=AsyncMock(return_value=[
+                {"properties": {"roleDefinitionId": "/roleDefinitions/reader"}},
+            ])),
+        ):
+            result = await tools.detect_overpermissive_managed_identities("sub-1", expected)
+        assert result["overpermissive"] == []
+
+
+class TestListAwsInstanceProfileRoles:
+    @pytest.fixture
+    def fake_iam(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_iam):
+        session = MagicMock()
+        session.client.return_value = fake_iam
+        return IAMMinimizeTools(aws_session=session)
+
+    async def test_returns_error_without_aws_session(self):
+        no_session = IAMMinimizeTools(aws_session=None)
+        result = await no_session.list_aws_instance_profile_roles()
+        assert "error" in result
+
+    async def test_returns_profiles_with_role_names(self, tools, fake_iam):
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{
+            "InstanceProfiles": [{
+                "InstanceProfileName": "web-profile",
+                "Arn": "arn:aws:iam::123:instance-profile/web-profile",
+                "Roles": [{"RoleName": "web-role"}],
+            }]
+        }]
+        fake_iam.get_paginator.return_value = paginator
+
+        result = await tools.list_aws_instance_profile_roles()
+        assert result["status"] == "ok"
+        assert result["instance_profiles"][0]["role_names"] == ["web-role"]
+
+    async def test_returns_error_on_client_error(self, tools, fake_iam):
+        fake_iam.get_paginator.side_effect = _client_error("AccessDenied", "ListInstanceProfiles")
+        result = await tools.list_aws_instance_profile_roles()
+        assert "error" in result
+
+
+class TestListLambdaExecutionRoles:
+    @pytest.fixture
+    def fake_lambda(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_lambda):
+        session = MagicMock()
+        session.client.return_value = fake_lambda
+        return IAMMinimizeTools(aws_session=session)
+
+    async def test_returns_error_without_aws_session(self):
+        no_session = IAMMinimizeTools(aws_session=None)
+        result = await no_session.list_lambda_execution_roles()
+        assert "error" in result
+
+    async def test_dedupes_functions_sharing_a_role(self, tools, fake_lambda):
+        paginator = MagicMock()
+        paginator.paginate.return_value = [{
+            "Functions": [
+                {"FunctionName": "fn-a", "Role": "arn:aws:iam::123:role/shared-role"},
+                {"FunctionName": "fn-b", "Role": "arn:aws:iam::123:role/shared-role"},
+            ]
+        }]
+        fake_lambda.get_paginator.return_value = paginator
+
+        result = await tools.list_lambda_execution_roles()
+        assert result["status"] == "ok"
+        assert len(result["execution_roles"]) == 1
+        assert sorted(result["execution_roles"][0]["function_names"]) == ["fn-a", "fn-b"]
+
+    async def test_returns_error_on_client_error(self, tools, fake_lambda):
+        fake_lambda.get_paginator.side_effect = _client_error("AccessDenied", "ListFunctions")
+        result = await tools.list_lambda_execution_roles()
+        assert "error" in result
+
+
+class TestDetectOverpermissiveAwsRoles:
+    @pytest.fixture
+    def fake_iam(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def tools(self, fake_iam):
+        session = MagicMock()
+        session.client.return_value = fake_iam
+        return IAMMinimizeTools(aws_session=session)
+
+    async def test_returns_error_without_aws_session(self):
+        no_session = IAMMinimizeTools(aws_session=None)
+        result = await no_session.detect_overpermissive_aws_roles(["arn:aws:iam::123:role/r"], {"r": ["s3:getobject"]})
+        assert "error" in result
+
+    async def test_skips_role_with_no_expected_entry(self, tools, fake_iam):
+        result = await tools.detect_overpermissive_aws_roles(["arn:aws:iam::123:role/unlisted"], {})
+        assert result["checked"] == 0
+        fake_iam.list_attached_role_policies.assert_not_called()
+
+    async def test_flags_role_with_extra_action(self, tools, fake_iam):
+        fake_iam.list_attached_role_policies.return_value = {"AttachedPolicies": [
+            {"PolicyArn": "arn:aws:iam::123:policy/wide-policy"}
+        ]}
+        fake_iam.list_policy_versions.return_value = {"Versions": [{"VersionId": "v1", "IsDefaultVersion": True}]}
+        fake_iam.get_policy_version.return_value = {"PolicyVersion": {"Document": {
+            "Statement": [{"Action": ["s3:GetObject", "s3:DeleteObject"]}]
+        }}}
+        fake_iam.list_role_policies.return_value = {"PolicyNames": []}
+
+        result = await tools.detect_overpermissive_aws_roles(
+            ["arn:aws:iam::123:role/lambda-exec"], {"lambda-exec": ["s3:getobject"]},
+        )
+
+        assert result["checked"] == 1
+        assert result["overpermissive"][0]["role_name"] == "lambda-exec"
+        assert result["overpermissive"][0]["extra_actions"] == ["s3:deleteobject"]
+
+    async def test_includes_inline_policy_actions(self, tools, fake_iam):
+        fake_iam.list_attached_role_policies.return_value = {"AttachedPolicies": []}
+        fake_iam.list_role_policies.return_value = {"PolicyNames": ["inline-1"]}
+        fake_iam.get_role_policy.return_value = {"PolicyDocument": {
+            "Statement": [{"Action": "ec2:TerminateInstances"}]
+        }}
+
+        result = await tools.detect_overpermissive_aws_roles(
+            ["arn:aws:iam::123:role/instance-role"], {"instance-role": []},
+        )
+
+        assert result["overpermissive"][0]["extra_actions"] == ["ec2:terminateinstances"]
+
+    async def test_no_finding_when_actual_is_subset_of_expected(self, tools, fake_iam):
+        fake_iam.list_attached_role_policies.return_value = {"AttachedPolicies": []}
+        fake_iam.list_role_policies.return_value = {"PolicyNames": ["inline-1"]}
+        fake_iam.get_role_policy.return_value = {"PolicyDocument": {
+            "Statement": [{"Action": "s3:GetObject"}]
+        }}
+
+        result = await tools.detect_overpermissive_aws_roles(
+            ["arn:aws:iam::123:role/instance-role"], {"instance-role": ["s3:getobject", "s3:putobject"]},
+        )
+        assert result["overpermissive"] == []
+
+    async def test_returns_error_on_client_error(self, tools, fake_iam):
+        fake_iam.list_attached_role_policies.side_effect = _client_error("AccessDenied", "ListAttachedRolePolicies")
+        result = await tools.detect_overpermissive_aws_roles(
+            ["arn:aws:iam::123:role/instance-role"], {"instance-role": []},
+        )
+        assert "error" in result
 
 
 # ──────────────────────────────────────────────────────────────────────────────
