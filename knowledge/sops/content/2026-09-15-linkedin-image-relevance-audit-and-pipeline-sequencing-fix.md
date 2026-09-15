@@ -52,6 +52,14 @@ Final backlog result: **11 images fixed and attached, 1 flagged for manual HITL 
 
 ---
 
+## Second wave — caught by Kelvin after deploy, same day
+
+After the first commit (`a9fc757`) pushed and Railway auto-deployed it (confirmed via Railway deployment timestamps: deploy completed 2026-09-15 23:45-23:47 UTC), Kelvin flagged from the live dashboard that he was still seeing the CI/CD diagram on brand-new posts. Root cause: a batch had been drafted at 23:37-23:39 UTC — in the ~8-minute window between the `git push` and Railway finishing the deploy — by the still-running old backend, which still had the draft-time `asset_selector` bug. 5 more rows, same failure signature (`"selected_because": "topic match on: and"` / `"topic match on: not, product"` — matching on trivial common words). Fixed the same way: added them to `fix_image_relevance_backlog.py` as `SECOND_WAVE_FLAGGED_ROWS` and re-ran.
+
+**Real bug found running that second pass:** added an idempotency guard to the script (skip a row if its `image_brief.selected_because` shows it was already fixed by a prior run of this script) so re-running the growing `FLAGGED_ROWS` list wouldn't keep re-spending Gemini/Claude calls on rows already fixed — but wrote the guard checking for the wrong string (`"scene-gated generation"`, which is what `api/routes/internal_marketing.py`'s post-approval path writes) instead of the string this script itself actually writes (`"scene-gated regeneration"`). Net effect: the first run of the guarded script silently re-regenerated all 12 first-wave rows in addition to the 5 new ones — not a correctness problem (all 17 still passed the relevance gate, confirmed by re-viewing two of the second-wave images directly) but a real waste of ~12 unnecessary paid API calls. Fixed the string, confirmed the fix by running the script a third time with 0 rows left to fix — it correctly reported `17 already fixed by a prior run (skipped)`, 0 regenerated.
+
+Final state after both waves: **27 of 27 total unpublished-with-image rows checked are relevant** (22 from the original audit + 5 second-wave; 0 remaining flagged), 24 already-published rows untouched throughout.
+
 ## If this breaks again
 
 - **A future post's image is topically wrong again:** check whether `assets_library/asset_selector.py` got reintroduced into the approval flow — it should never be called from `mkt_li1_linkedin_brand.py` or the approval endpoints again. The fix here was removing vault-matching from the LinkedIn flow entirely in favor of always-bespoke, scene-gated generation.

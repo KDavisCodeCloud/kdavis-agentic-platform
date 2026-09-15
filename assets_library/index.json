@@ -1102,5 +1102,120 @@
       "Building robust AI products: lessons from nature",
       "Infrastructure as the foundation of reliable AI agents"
     ]
+  },
+  {
+    "id": "img_049",
+    "filename": "my_originals/product-business-and-cta/building-cloud-decoded-finding-the-product-in-the-complaints-nobody-s-fixing_20260915.png",
+    "category": "Cloud / DevOps",
+    "topic_tags": [
+      "DevOps",
+      "Incident Management",
+      "Governance",
+      "AI-Assisted Operations"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "DevOps incident response best practices",
+      "Moving from manual to automated governance pipelines",
+      "Human-in-the-Loop (HITL) approval workflows",
+      "Audit trails and least-privilege access in cloud systems",
+      "Production-ready AI-assisted DevOps systems"
+    ]
+  },
+  {
+    "id": "img_050",
+    "filename": "my_originals/product-business-and-cta/how-cloud-decoded-s-product-decisions-get-made-research-first-complaint-driven-not-feature-driven_20260915.png",
+    "category": "AI / Agents",
+    "topic_tags": [
+      "human-in-the-loop",
+      "AI safety",
+      "DevOps",
+      "approval gates"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "AI pipeline safety",
+      "human oversight in AI deployments",
+      "proactive vs reactive DevOps",
+      "Terraform and AI hallucinations",
+      "structured approval workflows for AI agents"
+    ]
+  },
+  {
+    "id": "img_051",
+    "filename": "my_originals/product-business-and-cta/how-cloud-decoded-was-actually-chosen-starting-from-reddit-complaints-not-a-product-idea_20260915.png",
+    "category": "Cloud / DevOps",
+    "topic_tags": [
+      "DevOps",
+      "Kubernetes",
+      "SysAdmin",
+      "AI hallucination"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "DevOps pain points and frustrations",
+      "AI in infrastructure management",
+      "Kubernetes operational challenges",
+      "Runbook drift and outdated documentation",
+      "The reality of cloud engineering day-to-day"
+    ]
+  },
+  {
+    "id": "img_052",
+    "filename": "my_originals/product-business-and-cta/why-cloud-decoded-is-llm-agnostic-and-why-that-decision-matters-more-than-the-model-you-re-running_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "LLM abstraction",
+      "vendor lock-in",
+      "AI governance",
+      "multi-model routing"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "avoiding LLM vendor lock-in",
+      "building LLM abstraction layers",
+      "multi-provider AI architecture",
+      "HITL governance in AI systems",
+      "cost and latency optimization for LLMs"
+    ]
+  },
+  {
+    "id": "img_053",
+    "filename": "my_originals/product-business-and-cta/why-cloud-decoded-is-llm-agnostic-and-why-that-was-the-only-defensible-architecture-decision_20260915.png",
+    "category": "System Design",
+    "topic_tags": [
+      "orchestration",
+      "LLM architecture",
+      "abstraction layer",
+      "AI governance"
+    ],
+    "original_creator": "Kelvin Davis",
+    "creator_linkedin": "linkedin.com/in/kelvin-davis",
+    "is_original": true,
+    "last_used_date": null,
+    "times_used": 0,
+    "compatible_post_topics": [
+      "Why ChatGPT wrappers are a bad architecture choice",
+      "How to build model-agnostic AI systems",
+      "LLM orchestration stack best practices",
+      "Multi-model AI architecture design",
+      "AI governance and compliance in production systems"
+    ]
   }
 ]

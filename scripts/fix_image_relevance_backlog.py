@@ -98,6 +98,22 @@ FLAGGED_ROWS = [
     ("f10f786b-7a8d-42e6-8fe7-4dd02eddd779", "PARTIAL: right topic, badly garbled diagram text"),
 ]
 
+# Second wave, 2026-09-15 ~23:37-23:39 UTC: a batch drafted by the still-live
+# pre-fix backend in the ~8-minute window between this commit being pushed
+# and Railway finishing the deploy (confirmed via Railway deployment
+# timestamps -- deploy of a9fc757 completed 23:45-23:47 UTC). Same exact bug:
+# asset_selector.py matched on trivial common words ("and", "not, product")
+# and reused another post's image. Kelvin caught this from the dashboard
+# before this second wave could be folded into the first backlog run.
+SECOND_WAVE_FLAGGED_ROWS = [
+    ("392d5e21-40ee-42ec-9ab1-49957e386958", "MISMATCH: had the CI/CD diagram (matched on the word 'and')"),
+    ("936cdd7d-205d-4488-a3d6-2b1eb57e0b3e", "MISMATCH: had the CI/CD diagram (same stale batch)"),
+    ("37304cce-2c18-4806-9a8f-a5078f2f2027", "MISMATCH: had the CI/CD diagram (same stale batch)"),
+    ("0238a59c-b67b-46fd-849f-65e36ef79a73", "MISMATCH: had the CI/CD diagram (same stale batch)"),
+    ("b4522890-5d86-4cb7-bab6-636a11377b68", "MISMATCH: had the RAG-pipeline diagram (matched on 'not, product')"),
+]
+FLAGGED_ROWS = FLAGGED_ROWS + SECOND_WAVE_FLAGGED_ROWS
+
 
 def main() -> None:
     client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -105,7 +121,7 @@ def main() -> None:
     ids = [row_id for row_id, _ in FLAGGED_ROWS]
     rows = (
         client.table("linkedin_content_queue")
-        .select("id,status,topic,pillar_name,post_copy,notes")
+        .select("id,status,topic,pillar_name,post_copy,notes,image_brief")
         .in_("id", ids)
         .execute()
     ).data
@@ -113,6 +129,7 @@ def main() -> None:
 
     fixed = 0
     flagged = 0
+    skipped_already_fixed = 0
     errors: list[str] = []
 
     for queue_id, verdict in FLAGGED_ROWS:
@@ -122,6 +139,20 @@ def main() -> None:
             continue
         if row["status"] == "published":
             errors.append(f"{queue_id}: status is 'published' -- skipping, out of scope")
+            continue
+        # Idempotency guard: this script's FLAGGED_ROWS list is kept as a
+        # permanent, appended record of every wave found (see the
+        # SECOND_WAVE_FLAGGED_ROWS comment above) -- re-running it wholesale
+        # must not re-spend Gemini/Claude calls re-generating rows an earlier
+        # run of this same script already fixed. "scene-gated regeneration"
+        # is the selected_because prefix only this script writes (below) --
+        # api/routes/internal_marketing.py's own post-approval path writes a
+        # differently-worded "scene-gated generation, ..." prefix, which is
+        # intentionally a different string (it's a different code path,
+        # not a backlog run) and not what this guard is checking for.
+        existing_because = (row.get("image_brief") or {}).get("selected_because") or ""
+        if existing_because.startswith("scene-gated regeneration"):
+            skipped_already_fixed += 1
             continue
 
         print(f"\n--- {queue_id} | {verdict}")
@@ -173,7 +204,10 @@ def main() -> None:
             .execute()
         )
 
-    print(f"\n{fixed} images fixed and attached, {flagged} flagged for manual HITL review, {len(errors)} errors.")
+    print(
+        f"\n{fixed} images fixed and attached, {flagged} flagged for manual HITL review, "
+        f"{skipped_already_fixed} already fixed by a prior run (skipped), {len(errors)} errors."
+    )
     for err in errors:
         print(f"  ERROR: {err}")
 
