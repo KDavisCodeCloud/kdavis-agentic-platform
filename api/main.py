@@ -63,6 +63,7 @@ from api.routes import compliance_agent
 from api.routes import github_app_admin
 from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
+from core.pool_timeout import TimeoutBoundPool
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ async def lifespan(app: FastAPI):
     # in run_internal_agent() followed by the UPDATE in _execute_internal_agent()
     # a moment later. Found by exercising that exact pattern directly against
     # the live DB; every route using this pool was exposed, not just new ones.
-    app.state.db_pool = await asyncpg.create_pool(
+    _raw_db_pool = await asyncpg.create_pool(
         asyncpg_url,
         min_size=2,
         max_size=10,
@@ -136,6 +137,12 @@ async def lifespan(app: FastAPI):
         statement_cache_size=0,
         init=register_jsonb_codec,
     )
+    # asyncpg has no pool-wide default acquire() timeout (only a per-call
+    # one, and every call site in this codebase omits it) -- wrapped so
+    # pool exhaustion surfaces as a clear 503 (see _pool_timeout_handler
+    # above) after 5s instead of blocking indefinitely. See
+    # core/pool_timeout.py's own docstring.
+    app.state.db_pool = TimeoutBoundPool(_raw_db_pool)
     log.info("[API] Database pool created")
 
     # Applies db/migrations/*.sql before anything else touches the DB --
@@ -204,6 +211,19 @@ app = FastAPI(
 # Rate limiter
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(TimeoutError)
+async def _pool_timeout_handler(request: Request, exc: TimeoutError) -> JSONResponse:
+    """core/pool_timeout.py gives every db_pool.acquire() a default
+    timeout (5s) instead of waiting indefinitely for pool exhaustion --
+    this turns the resulting asyncio.TimeoutError into a clear 503
+    instead of an unhandled 500."""
+    log.warning("[API] DB pool acquire timed out — %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Service temporarily unavailable — database connection pool exhausted. Retry shortly."},
+    )
 
 # CORS — ALLOWED_ORIGINS is a comma-separated list; multiple real frontends
 # (ceo-dashboard, team-dashboard, Cloud Decoded's customer site) all need

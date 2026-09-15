@@ -31,6 +31,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from api.middleware.rate_limiter import limiter, _webhook_tier_limit
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 from core.error_tracking import capture_exception
+from core.execution_semaphore import bounded_execution
 from core.ingestion_log import log_alert_received, mark_alert_processed
 from core.token_budget import BudgetExceededError
 from security.encryption import decrypt
@@ -497,6 +498,7 @@ async def resource_health_alert_webhook(
 # Background task — runs the agent
 # ──────────────────────────────────────────────
 
+@bounded_execution("agent_01_cicd_triage")
 async def _run_cicd_triage(
     app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
 ) -> None:
@@ -558,6 +560,7 @@ async def _run_cicd_triage(
                 await mark_alert_processed(conn, ingestion_log_id)
 
 
+@bounded_execution("agent_02_k8s_alert")
 async def _run_k8s_alert_triage(
     app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
 ) -> None:
@@ -611,6 +614,7 @@ async def _run_k8s_alert_triage(
                 await mark_alert_processed(conn, ingestion_log_id)
 
 
+@bounded_execution("agent_11_resource_health")
 async def _run_resource_health_alert(
     app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
 ) -> None:
@@ -663,6 +667,7 @@ async def _run_resource_health_alert(
                 await mark_alert_processed(conn, ingestion_log_id)
 
 
+@bounded_execution("agent_03_pr_review")
 async def _run_pr_review(
     app, workspace: dict, payload: dict, cloud_provider: str, ingestion_log_id: Optional[str] = None,
 ) -> None:
@@ -713,6 +718,7 @@ async def _run_pr_review(
                 await mark_alert_processed(conn, ingestion_log_id)
 
 
+@bounded_execution("agent_04_migration")
 async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
     """
     Background task: runs Agent 04 for the given migration payload.
@@ -759,6 +765,7 @@ async def _run_migration(app, workspace: dict, payload: dict, cloud_provider: st
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_04_migration")
 
 
+@bounded_execution("agent_05_iam_minimizer")
 async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
     """
     Background task: runs Agent 05 for the given IAM principal payload.
@@ -805,6 +812,7 @@ async def _run_iam_minimize(app, workspace: dict, payload: dict, cloud_provider:
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_05_iam_minimizer")
 
 
+@bounded_execution("agent_06_finops")
 async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
     """
     Background task: runs Agent 06 for the given billing data payload.
@@ -851,6 +859,7 @@ async def _run_finops(app, workspace: dict, payload: dict, cloud_provider: str) 
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_06_finops")
 
 
+@bounded_execution("agent_07_runbook")
 async def _run_runbook(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
     """
     Background task: runs Agent 07 for the given runbook payload.
@@ -895,6 +904,7 @@ async def _run_runbook(app, workspace: dict, payload: dict, cloud_provider: str)
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_07_runbook")
 
 
+@bounded_execution("agent_08_drift_detection")
 async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
     """
     Background task: runs Agent 08 for the given drift detection payload.
@@ -948,6 +958,7 @@ async def _run_drift_detection(app, workspace: dict, payload: dict, cloud_provid
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_08_drift_detection")
 
 
+@bounded_execution("agent_09_onboarding_buddy")
 async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
     """
     Background task: runs Agent 09 for the given onboarding or on-call question.
@@ -992,6 +1003,7 @@ async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provi
         capture_exception(exc, workspace_id=workspace_id, agent_id="agent_09_onboarding_buddy")
 
 
+@bounded_execution("agent_10_dependency_patch")
 async def _run_dependency_patch(app, workspace: dict, payload: dict, cloud_provider: str) -> None:
     """
     Background task: runs Agent 10 for the given dependency manifest scan.

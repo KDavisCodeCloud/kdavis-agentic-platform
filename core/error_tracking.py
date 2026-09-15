@@ -71,3 +71,26 @@ def capture_exception(
             for key, value in extra.items():
                 scope.set_extra(key, value)
         sentry_sdk.capture_exception(exc)
+
+
+def capture_message(
+    message: str,
+    *,
+    level: str = "warning",
+    workspace_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    extra: Optional[dict] = None,
+) -> None:
+    """Report a non-exception event to Sentry (e.g. sustained backpressure,
+    core/execution_semaphore.py) -- distinct from capture_exception so a
+    real informational signal isn't reported as a fabricated exception
+    just to get it into Sentry. Same tagging/no-op-without-DSN behavior."""
+    with sentry_sdk.new_scope() as scope:
+        if workspace_id:
+            scope.set_tag("workspace_id", str(workspace_id))
+        if agent_id:
+            scope.set_tag("agent_id", agent_id)
+        if extra:
+            for key, value in extra.items():
+                scope.set_extra(key, value)
+        sentry_sdk.capture_message(message, level=level)

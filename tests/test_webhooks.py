@@ -30,6 +30,7 @@ def _make_request(workspace_row: dict, body: dict) -> SimpleNamespace:
     pool_ctx.__aexit__ = AsyncMock(return_value=False)
     pool = MagicMock()
     pool.acquire = MagicMock(return_value=pool_ctx)
+    pool.get_max_size = MagicMock(return_value=10)
     app = SimpleNamespace(state=SimpleNamespace(db_pool=pool))
     payload_bytes = json.dumps(body).encode()
     request = SimpleNamespace(app=app, body=AsyncMock(return_value=payload_bytes))
@@ -237,6 +238,7 @@ def _make_app_webhook_request(fetchrow_results: list, body: dict, headers: dict)
     pool_ctx.__aexit__ = AsyncMock(return_value=False)
     pool = MagicMock()
     pool.acquire = MagicMock(return_value=pool_ctx)
+    pool.get_max_size = MagicMock(return_value=10)
     app = SimpleNamespace(state=SimpleNamespace(db_pool=pool))
     payload_bytes = json.dumps(body).encode()
     request = SimpleNamespace(app=app, body=AsyncMock(return_value=payload_bytes), headers=headers)
@@ -342,6 +344,7 @@ def _make_run_request(workspace_row: dict) -> SimpleNamespace:
     pool_ctx.__aexit__ = AsyncMock(return_value=False)
     pool = MagicMock()
     pool.acquire = MagicMock(return_value=pool_ctx)
+    pool.get_max_size = MagicMock(return_value=10)
     app = SimpleNamespace(state=SimpleNamespace(db_pool=pool, checkpointer=MagicMock()))
     return SimpleNamespace(app=app), conn
 
