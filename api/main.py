@@ -129,10 +129,19 @@ async def lifespan(app: FastAPI):
     # in run_internal_agent() followed by the UPDATE in _execute_internal_agent()
     # a moment later. Found by exercising that exact pattern directly against
     # the live DB; every route using this pool was exposed, not just new ones.
+    # max_size=20 (Phase 8, scale-readiness build -- raised from 10). Each
+    # of the 4 uvicorn worker processes (see Procfile/railway.json's
+    # --workers 4) gets its OWN pool via its own lifespan() run, so total
+    # platform capacity against Supabase's transaction-mode pooler becomes
+    # 4 x 20 = 80 connections, up from the single-process 10 this
+    # platform ran with until now. Worth confirming against Supabase's
+    # own pooler connection ceiling for this project if pool-exhaustion
+    # 503s (Phase 7's TimeoutBoundPool + _pool_timeout_handler) show up
+    # under real load -- that's the first place to look.
     _raw_db_pool = await asyncpg.create_pool(
         asyncpg_url,
         min_size=2,
-        max_size=10,
+        max_size=20,
         command_timeout=60,
         statement_cache_size=0,
         init=register_jsonb_codec,

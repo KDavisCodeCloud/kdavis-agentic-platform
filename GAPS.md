@@ -822,3 +822,43 @@ direct regression guard for the `-1`-slice bug (enterprise must see all
 11 agents, `agent_11_resource_health` included, not 10). Full suite:
 1412 passing (was 1398), same 4 pre-existing unrelated failures, zero
 regressions.
+
+### 18. Multi-worker deploy weakens rate limiting; DB connection hold window still spans the LLM call (2026-09-15)
+
+Two real, known items from Phase 8 of the scale-readiness build,
+deliberately not fixed in this pass -- flagged rather than silently
+shipped or silently skipped.
+
+**Rate limiting is ~4x weaker than configured, per worker.**
+`--workers 4` (Procfile, railway.json) means 4 independent OS processes,
+each running its own `slowapi.Limiter` with the default in-memory
+`MemoryStorage` -- there is no shared counter across workers. A customer
+load-balanced across all 4 workers effectively gets ~4x Phase 4's
+configured limits (e.g. Starter's 60/min webhook ceiling becomes ~240/min
+in practice) before any single worker's counter trips. Checked
+`limits` (slowapi's underlying package) for a Postgres-backed storage
+option to reuse infrastructure already provisioned, the same pattern
+Phase 6 used for the durable queue -- none exists; only Memory,
+Memcached, MongoDB, and Redis are supported, and no Redis instance is
+provisioned for this service (`REDIS_URL` absent from Railway env vars,
+confirmed live). Kelvin's explicit call: ship `--workers 4` anyway
+(the pool/semaphore/backpressure work from Phases 5-7 still functions
+correctly per-worker regardless), revisit with Redis-backed
+`Limiter(storage_uri=REDIS_URL)` once that instance exists.
+
+**DB connection hold window still spans the full `agent.run()` call,
+including the LLM round trip.** Every one of `webhooks.py`'s 11 `_run_*`
+functions acquires one connection and holds it for the entire agent
+workflow execution (ingest → diagnose's LLM call → hitl_gate's DB write)
+because each workflow class's constructor takes a single `conn` object
+used throughout every node via `self._db`. Narrowing this properly means
+every one of the 11 agent workflow classes acquiring/releasing its own
+connection per-node instead of being handed one for its whole lifetime
+-- a real architectural change touching every agent's constructor and
+node methods, not a small tweak, and meaningfully larger in scope and
+regression risk than the rest of this phase combined. Not attempted in
+this pass. Phase 7's semaphore + Phase 8's pool resize to max_size=20
+both reduce how much this matters in practice (more headroom before a
+long-held connection becomes contention), but the underlying hold-window
+issue is unchanged. Needs its own dedicated pass if it becomes a real
+bottleneck under load.
