@@ -130,7 +130,7 @@ export default function ProblemsPage() {
           >
             <div style={{ flex: 1, minWidth: 260 }}>
               <h2 style={{ fontFamily: HEAD_FONT, fontWeight: 600, fontSize: 22, color: '#fff', margin: '0 0 8px' }}>
-                See all ten agents in detail.
+                See all eleven agents in detail.
               </h2>
               <p style={{ fontSize: 14.5, lineHeight: 1.6, color: 'rgba(232,236,242,.62)', margin: 0 }}>
                 What each one touches, and what it needs your approval for.

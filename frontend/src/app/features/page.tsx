@@ -3,14 +3,14 @@ import { MarketingHead, MarketingNav, MarketingFooter, Eyebrow, PrimaryCta, PAGE
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://theclouddecoded.com'),
-  title: 'Features — All 10 Cloud Decoded Agents | Cloud Decoded',
+  title: 'Features — All 11 Cloud Decoded Agents | Cloud Decoded',
   description:
-    'Every Cloud Decoded agent workflow: CI/CD triage, Kubernetes alerts, PR review, migration, IAM, FinOps, runbooks, drift detection, on-call knowledge, and dependency patching. Each one detects, triages, and proposes — you approve before anything executes.',
+    'Every Cloud Decoded agent workflow: CI/CD triage, Kubernetes alerts, PR review, migration, IAM, FinOps, runbooks, drift detection, on-call knowledge, dependency patching, and live resource health monitoring. Each one detects, triages, and proposes — you approve before anything executes.',
   alternates: { canonical: 'https://theclouddecoded.com/features' },
   openGraph: {
     type: 'website',
     url: 'https://theclouddecoded.com/features',
-    title: 'Features — All 10 Cloud Decoded Agents',
+    title: 'Features — All 11 Cloud Decoded Agents',
     description: 'Every agent workflow, what it does, what it touches, and the approval gate in front of every one of them.',
   },
 }
@@ -78,6 +78,12 @@ const AGENTS: { id: string; tier: Tier; name: string; blurb: string; touches: st
     touches: 'One dependency manifest at a time, on request or schedule',
     option: 'Patch PR, a tracking issue, or both — your choice per finding',
   },
+  {
+    id: 'agent_11', tier: 'Growth+', name: 'Cloud Resource Health Monitoring',
+    blurb: 'Catches a resource going down, a threshold breach, or a security finding the moment your cloud provider fires the alert — the runtime counterpart to CI/CD triage and drift detection.',
+    touches: 'Azure Monitor Action Groups, AWS SNS/CloudWatch alarms — push-driven, no polling',
+    option: 'Remediation PR, or a tracking issue — never a live restart/scale call on its own',
+  },
 ]
 
 const TIER_COLOR: Record<Tier, string> = { Starter: '#3fd17a', 'Growth+': '#f5a623' }
@@ -133,14 +139,14 @@ export default function FeaturesPage() {
         <MarketingNav />
 
         <section style={{ padding: '64px 40px 20px', maxWidth: 1140, margin: '0 auto' }}>
-          <Eyebrow label="FEATURES" sub="10 agents · every one HITL-gated" />
+          <Eyebrow label="FEATURES" sub="11 agents · every one HITL-gated" />
           <h1
             style={{
               fontFamily: HEAD_FONT, fontWeight: 600, fontSize: 46, lineHeight: 1.08,
               letterSpacing: '-.025em', color: '#fff', margin: '0 0 18px', maxWidth: 820,
             }}
           >
-            Ten agents. One rule none of them can break.
+            Eleven agents. One rule none of them can break.
           </h1>
           <p style={{ fontSize: 18, lineHeight: 1.6, color: 'rgba(232,236,242,.66)', margin: '0 0 20px', maxWidth: 720 }}>
             Every workflow below detects, triages, and proposes a fix — and every one of them stops at a hard
@@ -172,12 +178,12 @@ export default function FeaturesPage() {
           >
             <div style={{ flex: 1, minWidth: 280 }}>
               <h2 style={{ fontFamily: HEAD_FONT, fontWeight: 600, fontSize: 24, color: '#fff', margin: '0 0 8px' }}>
-                Starter gets you three. Growth+ gets you all ten.
+                Starter gets you three. Growth+ gets you all eleven.
               </h2>
               <p style={{ fontSize: 14.5, lineHeight: 1.6, color: 'rgba(232,236,242,.62)', margin: 0, maxWidth: 520 }}>
-                CI/CD triage, Kubernetes alerts, and PR review ship on every plan. The other seven — migration,
-                IAM, FinOps, runbooks, drift, on-call knowledge, dependency patching — come with Growth and
-                Enterprise.
+                CI/CD triage, Kubernetes alerts, and PR review ship on every plan. The other eight — migration,
+                IAM, FinOps, runbooks, drift, on-call knowledge, dependency patching, and resource health
+                monitoring — come with Growth and Enterprise.
               </p>
             </div>
             <PrimaryCta>Start free trial</PrimaryCta>

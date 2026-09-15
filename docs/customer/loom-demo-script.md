@@ -54,7 +54,7 @@ Cut fast — this section earns the next 100 seconds, don't linger.
 ## 1:30–2:00 — Outcome + CTA
 
 **Voice:**
-> "That's one of ten agents — this one for CI/CD. Same pattern for
+> "That's one of eleven agents — this one for CI/CD. Same pattern for
 > Kubernetes alerts, IAM cleanup, cost waste, dependency patching. It
 > connects to what you already run — GitHub or Azure DevOps, AWS or
 > Azure, your existing cluster. No migration. And nothing executes

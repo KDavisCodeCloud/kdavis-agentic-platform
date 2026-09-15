@@ -18,7 +18,7 @@ export const metadata: Metadata = {
 const PILLARS = [
   {
     title: 'Human approval, not a configuration option',
-    body: 'Every agent — all ten — stops at a hard HITL gate before any proposed fix executes against your infrastructure. This isn’t a setting you can turn off; it’s how the platform is built. Detection and triage are automatic. Action is never autonomous.',
+    body: 'Every agent — all eleven — stops at a hard HITL gate before any proposed fix executes against your infrastructure. This isn’t a setting you can turn off; it’s how the platform is built. Detection and triage are automatic. Action is never autonomous.',
   },
   {
     title: 'Per-tenant isolation, enforced at the database layer',

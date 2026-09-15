@@ -97,7 +97,7 @@ with per-user scoped access instead of one shared token.
 **Can Cloud Decoded's agents take autonomous action against customer
 infrastructure?** No. Every agent's execution stops at a human-in-the-loop
 approval gate before any proposed change is applied. This is not a
-configurable setting — it is how every one of the ten agents is built.
+configurable setting — it is how every one of the eleven agents is built.
 Detection and diagnosis are automated; execution requires an explicit
 human approval, every time.
 
