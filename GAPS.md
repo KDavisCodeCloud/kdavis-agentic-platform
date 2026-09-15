@@ -1085,7 +1085,36 @@ the first human member(s)"), not an oversight -- but it does mean the
 workspace token remains a full-trust credential for this action, same as
 it already is for everything else it can currently do.
 
-**Frontend not yet built as of this commit** -- `/login`'s rework to
-real Supabase email/password and the `/accept-invite` page are the next
-piece of this same phase, tracked as a direct continuation, not a
-separate gap.
+**Frontend shipped in a follow-up commit (70b6230)** -- `/login`'s
+primary sign-in is now real Supabase email/password
+(`supabase.auth.signInWithPassword`), with workspace-token entry kept as
+an explicit secondary fallback for the reason above. `/accept-invite`
+handles the invite-link → set-password → `POST /workspace-members/accept`
+flow. `lib/api.ts`'s `request()` picks the right auth header by token
+shape (`cd_ws_` prefix vs. not), so the existing single `token` state
+threaded through every dashboard call site carries either credential
+with no per-call-site changes. Verified live: `tsc --noEmit` clean,
+`next build` succeeds, and both pages confirmed serving the new content
+on `theclouddecoded.com` post-deploy (`curl` showed the new "Use a
+workspace access token instead" copy on `/login`, `200` on
+`/accept-invite`).
+
+**Full literal end-to-end verification NOT performed** -- the plan's own
+Phase A verification bar ("a real signup → invite a second user → both
+users list the same workspace's incidents, scoped correctly") requires
+`SUPABASE_SERVICE_ROLE_KEY` to drive the Supabase Admin API (or a real
+email inbox to click a live invite link through), and this session's
+local `.env` only carries `SUPABASE_URL`/`DATABASE_URL` -- the service
+role key lives in Railway's environment only, and Railway's variable
+values are redacted from every tool available in this session (by
+design). What WAS verified: all 32 new backend tests (every code path --
+bootstrap invite, admin-only gating, duplicate/409, Supabase-failure/502,
+accept-invite success and every failure mode) pass against mocks, and
+migration 033 + both new endpoints are confirmed live and responding
+correctly in production (`401` with no credentials, `200`/correct schema
+otherwise). The one thing NOT independently confirmed against a real
+Supabase project: that `invite_user_by_email`'s redirect actually lands
+on `/accept-invite` and that `detectSessionInUrl` actually picks up the
+resulting session client-side, end to end, exactly as designed. Someone
+with the Supabase dashboard (or the service role key) should do one real
+test invite before telling a real customer this feature exists.
