@@ -52,7 +52,7 @@ class WorkspaceComplianceGuard:
     """
 
     TIER_LIMITS = {
-        "starter":    {"max_agents": 3,  "max_repos": 2,  "max_cloud_providers": 1},
+        "starter":    {"max_agents": 3,  "max_repos": 2,  "max_cloud_providers": 1, "retention_days": 90},
         # 11, not 10 -- Agent 11 (Cloud Resource Health Monitoring) is a
         # real 2026-09-15 addition to the Growth+ roster, not an
         # Enterprise-exclusive by design. _extract_agent_number() gates
@@ -60,8 +60,15 @@ class WorkspaceComplianceGuard:
         # bumped every time a new agent is added, or the newest agent
         # accidentally becomes Enterprise-only by numbering coincidence
         # rather than a deliberate pricing decision.
-        "growth":     {"max_agents": 11, "max_repos": 15, "max_cloud_providers": 2},
-        "enterprise": {"max_agents": -1, "max_repos": -1, "max_cloud_providers": -1},
+        "growth":     {"max_agents": 11, "max_repos": 15, "max_cloud_providers": 2, "retention_days": 365},
+        # retention_days: -1 -- same "-1 == unlimited" sentinel as the
+        # other limits above -- means Enterprise gets no automatic
+        # deletion at all. "Configurable Enterprise" retention (a
+        # per-customer override) is a real product surface someone still
+        # has to build (a workspace-level column + admin UI), not this
+        # dict; -1 is the correct default until that exists. Phase 12,
+        # scale-readiness build -- core/retention.py reads this key.
+        "enterprise": {"max_agents": -1, "max_repos": -1, "max_cloud_providers": -1, "retention_days": -1},
     }
 
     def __init__(self, db_conn):

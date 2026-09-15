@@ -2,6 +2,53 @@
 
 Architectural decisions log.
 
+## 2026-09-15 — 12-phase scale-readiness build (merged sequence, complete)
+
+Full detail: `knowledge/operator/architecture-decisions/2026-09-15-scale-readiness-build.md`
+
+Sequential 12-phase build addressing real scale/reliability gaps found in
+a pre-build readiness assessment. Phases 1-9 (incidents schema, ingest
+fixes, dedup, webhook rate limiting, checkpointer connection safety,
+durable queue + `alert_ingestion_log`, execution semaphore + pool
+acquire-timeout, DB pool `max_size=20` + real `--workers 4`, LLM
+retry/backoff) landed earlier in this session. This entry closes out the
+remaining three:
+
+- **Phase 10** — `core/hitl.py`'s new `create_failed_incident()` gives
+  all 11 agents a real `execution_status='failed'` incident instead of a
+  silently dropped run when a diagnose-node error occurs upstream of
+  HITL. `core/json_logging.py` replaces plain-text logging with one JSON
+  object per line (Railway-queryable by field) across the highest-value
+  call sites (HITL, LLM router, webhook ingestion).
+- **Phase 11** — Real Postgres RLS policies on `workspaces`/`incidents`/
+  `audit_events`/`token_usage` (migration 031), closing a real gap
+  between what the customer security questionnaire claimed and what
+  existed. Deliberately did **not** set `FORCE ROW LEVEL SECURITY`
+  blind — `db/migrate.py`'s new `log_security_posture()` confirmed live
+  in production that `DATABASE_URL`'s role (`postgres`) carries
+  `rolbypassrls=true`, meaning the app's own connection bypasses these
+  policies regardless of FORCE; the policies still close the gap for
+  every *other* access path (Supabase Studio, anon/authenticated keys).
+  `core/workspace_scope.py` wires real DB-level scoping into the two
+  customer-facing incident read routes as a proof of the mechanism, not
+  a platform-wide rollout (see GAPS.md #20).
+- **Phase 12** — Tier-based retention (`core/compliance.py`'s
+  `TIER_LIMITS` gains `retention_days`: 90/365/unlimited) enforced by an
+  in-process periodic cleanup task (`core/retention.py`,
+  `pg_try_advisory_xact_lock`-guarded across Phase 8's 4 worker
+  processes), plus composite/GIN indexes matching the actual query and
+  cleanup filter shapes (migration 032).
+
+Real, checked-not-assumed finding worth calling out on its own: Supabase's
+`postgres` role is **not** a Postgres superuser but **does** carry
+`BYPASSRLS`. Any future RLS work on this platform must account for that
+specific fact, not a generic assumption about what "the postgres role"
+does.
+
+Full test suite: 1511 passing (was ~1463 before Phase 9), same 4
+pre-existing unrelated failures throughout. See GAPS.md #18-#21 for
+every deliberate scope-narrowing decision made along the way.
+
 ## 2026-09-14 — Connectivity roadmap completion + operational readiness fixes
 
 Full detail: `knowledge/operator/architecture-decisions/2026-09-14-connectivity-roadmap-and-operational-readiness.md`

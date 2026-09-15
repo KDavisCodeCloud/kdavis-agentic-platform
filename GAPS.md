@@ -976,3 +976,58 @@ infrastructure at all (docker-compose/testcontainers/similar), so this
 is not unique to RLS and would need a deliberate decision to add before
 any DB-level behavior can be regression-tested rather than manually
 re-verified each time.
+
+### 21. Incident/audit-event retention + composite indexes shipped; enterprise "configurable" retention still just a sentinel (2026-09-15)
+
+Phase 12, scale-readiness build -- the last of the 12-phase merged
+sequence. `core/compliance.py`'s `TIER_LIMITS` (already the single
+source of truth for agent/repo/cloud-provider caps, GAPS.md #16) gains
+`retention_days`: starter=90, growth=365, enterprise=-1 (the same
+"-1 == unlimited" sentinel used for every other tier limit in that
+dict). `core/retention.py`'s `run_retention_cleanup()` deletes
+`incidents`/`audit_events` rows past that window per-workspace-tier, and
+runs as an in-process periodic background task started in `api/main.py`'s
+lifespan (once at startup, then every 24h) -- there is no separate
+worker/cron service in this deployment to host a scheduled job
+elsewhere, and `pg_try_advisory_xact_lock` (transaction-scoped, matching
+`db/migrate.py`'s established reasoning for Supabase's transaction-mode
+pooler) keeps Phase 8's 4 `--workers` processes from double-deleting.
+`db/migrations/032_retention_and_indexes.sql` adds the composite
+indexes the plan called for
+(`incidents(workspace_id, execution_status, created_at)`,
+`audit_events(workspace_id, status, created_at)`) plus a GIN index on
+`audit_events.metadata`.
+
+**"Configurable Enterprise" retention is still just the -1 sentinel**,
+not a real per-customer override -- the plan named this explicitly
+("configurable Enterprise"), and today enterprise simply never deletes
+anything, full stop. A real implementation needs a workspace-level
+`retention_days_override` column (or similar) plus an admin surface to
+set it per customer, and `run_retention_cleanup()` would need to read
+that column instead of (or in addition to) the tier default. Not built
+here -- no Enterprise customer has asked for a specific number yet, and
+guessing a UI/schema shape for a requirement nobody has stated would be
+the wrong kind of speculative work for this phase.
+
+**No batching on the DELETE** -- each tier/table pass is a single
+unbounded `DELETE ... WHERE created_at < cutoff`, correct and fine at
+current table sizes, but if `incidents`/`audit_events` grow into the
+range where a single DELETE holds a long-running lock or a large
+transaction, this will need chunking (e.g. `DELETE ... LIMIT N` in a
+loop, or a helper table of ids to delete in batches). Not a problem
+today; flagged so it isn't a surprise later.
+
+**Same real-Postgres test-infrastructure gap as #20** -- `tests/
+test_retention.py` pins the SQL/lock/tier-skip shape against a mocked
+pool, not a real DELETE against a real database. The advisory-lock
+concurrency-safety claim (multiple workers, one wins) and the actual
+row-deletion behavior were reasoned from the same proven pattern
+`db/migrate.py` already uses in production, not independently verified
+against a live multi-worker race in this session.
+
+This closes the merged 12-phase scale-readiness sequence (incidents
+schema → ingest fixes → dedup → webhook rate limiting → checkpointer
+safety → durable queue → semaphore/timeout → DB pool/workers → LLM
+retry → structured logging/failed-run visibility → RLS → retention/
+indexes). See DECISIONS.md for the running architectural log across all
+12 phases.

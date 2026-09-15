@@ -70,3 +70,22 @@ class TestAssertAgentPermitted:
         guard = WorkspaceComplianceGuard(conn)
         with pytest.raises(SubscriptionError):
             await guard.assert_agent_permitted(str(uuid4()), "agent_01_cicd_triage")
+
+
+class TestTierLimitsRetentionDays:
+    """
+    Phase 12, scale-readiness build. core/retention.py reads
+    retention_days directly off TIER_LIMITS -- this pins the single-
+    source-of-truth values so a future edit here can't silently change
+    what gets deleted without a test noticing (same GAPS.md #16 drift
+    class this dict already exists to prevent for agent/repo/cloud caps).
+    """
+
+    def test_starter_retention_is_90_days(self):
+        assert WorkspaceComplianceGuard.TIER_LIMITS["starter"]["retention_days"] == 90
+
+    def test_growth_retention_is_365_days(self):
+        assert WorkspaceComplianceGuard.TIER_LIMITS["growth"]["retention_days"] == 365
+
+    def test_enterprise_retention_is_unlimited(self):
+        assert WorkspaceComplianceGuard.TIER_LIMITS["enterprise"]["retention_days"] == -1

@@ -19,6 +19,7 @@ Production:
 
 # ruff: noqa: E402  -- sys.path/env setup must run before these imports
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -206,12 +207,37 @@ async def lifespan(app: FastAPI):
 
     app.state.request_counts = {}
 
+    # Phase 12, scale-readiness build: periodic incident/audit_events
+    # retention cleanup (core/retention.py). One pass at startup, then
+    # every 24h for the life of this process -- no separate cron service
+    # exists to host this elsewhere, and run_retention_cleanup()'s
+    # pg_try_advisory_xact_lock makes it safe for all 4 --workers
+    # processes to run this same loop without duplicating deletes.
+    app.state.retention_task = asyncio.create_task(_retention_loop(app.state.db_pool))
+
     yield
 
     # Shutdown
+    app.state.retention_task.cancel()
     await app.state.db_pool.close()
     await lg_conn.close()
     log.info("[API] Shutdown complete")
+
+
+_RETENTION_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _retention_loop(pool) -> None:
+    from core.retention import run_retention_cleanup
+
+    while True:
+        try:
+            await run_retention_cleanup(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[Retention] Cleanup pass failed — will retry next cycle")
+        await asyncio.sleep(_RETENTION_INTERVAL_SECONDS)
 
 
 # ──────────────────────────────────────────────
