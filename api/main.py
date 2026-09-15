@@ -61,6 +61,7 @@ from api.routes import audit
 from api.routes import finops_agent
 from api.routes import compliance_agent
 from api.routes import github_app_admin
+from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
 
 log = logging.getLogger(__name__)
@@ -164,9 +165,16 @@ async def lifespan(app: FastAPI):
     lg_conn = await AsyncConnection.connect(
         lg_url, autocommit=True, prepare_threshold=None, row_factory=dict_row
     )
-    checkpointer = AsyncPostgresSaver(conn=lg_conn)
-    await checkpointer.setup()
-    app.state.checkpointer = checkpointer
+    _inner_checkpointer = AsyncPostgresSaver(conn=lg_conn)
+    await _inner_checkpointer.setup()
+    # Wrapped in a lock (core/checkpointer_lock.py) rather than used
+    # directly: lg_conn is a single, non-pooled connection shared by
+    # every agent workflow on this process -- without serializing access
+    # to it, two agent runs whose checkpoint writes land in the same
+    # moment risk protocol-level interleaving, not just slowness. See
+    # that module's docstring for why this is a lock and not a
+    # connection pool.
+    app.state.checkpointer = LockedAsyncPostgresSaver(_inner_checkpointer)
     log.info("[API] LangGraph Postgres checkpointer initialized")
 
     app.state.request_counts = {}
