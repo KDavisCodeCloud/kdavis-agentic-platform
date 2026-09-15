@@ -63,6 +63,13 @@ class HITLGate:
         tokens_used: int = 0,
         estimated_duration_seconds: Optional[int] = None,
         incident_id: Optional[str] = None,
+        resource_id: Optional[str] = None,
+        resource_name: Optional[str] = None,
+        resource_group: Optional[str] = None,
+        metric_name: Optional[str] = None,
+        metric_current_value: Optional[float] = None,
+        metric_threshold: Optional[float] = None,
+        alert_name: Optional[str] = None,
     ) -> str:
         """
         Persist a new incident in pending_approval state and write to audit log.
@@ -78,8 +85,15 @@ class HITLGate:
         broken this way since none of them had ever been exercised for real
         until this session's live end-to-end test). If omitted, the database
         generates one as before -- kept optional for any other caller.
+
+        resource_id/resource_name/resource_group/metric_*/alert_name: all
+        optional, all default None -- only Agent 11 populates these today
+        (GAPS.md scale-readiness build, migration 029). Agents 01-10 never
+        pass them and their incidents simply get NULL in these columns,
+        exactly as before this change.
         """
         raw_log_hash = hashlib.sha256(raw_log.encode()).hexdigest()
+        now = datetime.now(timezone.utc)
 
         if incident_id is not None:
             # ON CONFLICT DO NOTHING: LangGraph re-executes a node's full
@@ -94,8 +108,12 @@ class HITLGate:
                 INSERT INTO incidents (
                     id, workspace_id, agent_id, cloud_provider, raw_log_hash,
                     parsed_error, remediation_options, execution_status,
-                    tokens_used, estimated_duration_seconds
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    tokens_used, estimated_duration_seconds,
+                    resource_id, resource_name, resource_group,
+                    metric_name, metric_current_value, metric_threshold,
+                    alert_name, last_seen_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                          $11, $12, $13, $14, $15, $16, $17, $18)
                 ON CONFLICT (id) DO NOTHING
                 RETURNING id
                 """,
@@ -109,6 +127,14 @@ class HITLGate:
                 STATUS_PENDING,
                 tokens_used,
                 estimated_duration_seconds,
+                resource_id,
+                resource_name,
+                resource_group,
+                metric_name,
+                metric_current_value,
+                metric_threshold,
+                alert_name,
+                now,
             )
         else:
             row = await self._db.fetchrow(
@@ -116,8 +142,12 @@ class HITLGate:
                 INSERT INTO incidents (
                     workspace_id, agent_id, cloud_provider, raw_log_hash,
                     parsed_error, remediation_options, execution_status,
-                    tokens_used, estimated_duration_seconds
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    tokens_used, estimated_duration_seconds,
+                    resource_id, resource_name, resource_group,
+                    metric_name, metric_current_value, metric_threshold,
+                    alert_name, last_seen_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                          $10, $11, $12, $13, $14, $15, $16, $17)
                 RETURNING id
                 """,
                 workspace_id,
@@ -129,6 +159,14 @@ class HITLGate:
                 STATUS_PENDING,
                 tokens_used,
                 estimated_duration_seconds,
+                resource_id,
+                resource_name,
+                resource_group,
+                metric_name,
+                metric_current_value,
+                metric_threshold,
+                alert_name,
+                now,
             )
         if row is None:
             # ON CONFLICT DO NOTHING fired -- this incident already exists

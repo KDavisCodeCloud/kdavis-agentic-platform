@@ -93,6 +93,50 @@ AWS_CLOUDWATCH_PAYLOAD = {
     }
 }
 
+# Phase 2 (scale-readiness build) fixtures -- realistic Metric Alert shape
+# (data.alertContext.condition.allOf), the structured fields real Azure DTU/
+# CPU/etc. threshold alerts actually carry, previously never read at all.
+AZURE_METRIC_ALERT_PAYLOAD = {
+    "data": {
+        "essentials": {
+            "alertRule": "DTU high",
+            "severity": "Sev2",
+            "targetResourceType": "Microsoft.Sql/servers/databases",
+            "alertTargetIDs": [
+                "/subscriptions/x/resourceGroups/production-rg/providers/Microsoft.Sql/servers/prod-sql-01/databases/appdb"
+            ],
+            "monitorCondition": "Fired",
+            "description": "DTU percentage exceeded threshold",
+        },
+        "alertContext": {
+            "condition": {
+                "allOf": [
+                    {"metricName": "dtu_consumption_percent", "metricValue": 90.5, "threshold": 80, "operator": "GreaterThan"}
+                ]
+            }
+        },
+    }
+}
+
+# Realistic bracket-format NewStateReason, matching what CloudWatch actually
+# sends for a metric-threshold alarm (the original AWS_CLOUDWATCH_PAYLOAD
+# above uses a simplified reason string that doesn't match this format --
+# kept as-is to also prove the parser fails safe on an unparseable reason).
+AWS_CLOUDWATCH_METRIC_PAYLOAD = {
+    "cloudwatch_alarm": {
+        "AlarmName": "prod-rds-cpu-high",
+        "AWSAccountId": "402916653765",
+        "AlarmArn": "arn:aws:cloudwatch:us-east-1:402916653765:alarm:prod-rds-cpu-high",
+        "NewStateValue": "ALARM",
+        "NewStateReason": "Threshold Crossed: 1 datapoint [95.0 (15/09/26 01:00:00)] was greater than the threshold (80.0).",
+        "Trigger": {
+            "MetricName": "CPUUtilization",
+            "Namespace": "AWS/RDS",
+            "Dimensions": [{"name": "DBInstanceIdentifier", "value": "prod-db-01"}],
+        },
+    }
+}
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ResourceHealthWorkflow credential wiring
@@ -300,6 +344,88 @@ class TestIngestNode:
         state = _base_state(workspace_id, payload)
         result = await wf._ingest_node(state)
         assert result["domain"] == "networking"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ResourceHealthWorkflow._ingest_node() -- structured resource/metric
+# extraction (Phase 2, scale-readiness build). Asserts resource_name,
+# metric_name, and metric_current_value are populated correctly -- not
+# just that parsed_error ends up non-empty, which a purely prose-based
+# pipeline could satisfy without ever extracting anything real.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestIngestNodeStructuredResourceExtraction:
+    async def test_azure_metric_alert_extracts_resource_and_metric_fields(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id, AZURE_METRIC_ALERT_PAYLOAD)
+
+        result = await wf._ingest_node(state)
+
+        assert result["resource_name"] == "appdb"
+        assert result["resource_group"] == "production-rg"
+        assert result["metric_name"] == "dtu_consumption_percent"
+        assert result["metric_current_value"] == 90.5
+        assert result["metric_threshold"] == 80.0
+
+    async def test_azure_non_metric_alert_leaves_metric_fields_none(self, mock_db, workspace_id, mock_router):
+        """Activity Log / Service Health alerts have no alertContext.condition
+        -- must not crash, must not fabricate metric data, but resource
+        name/group still come from the ARM ID regardless of alert type."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id, AZURE_ALERT_PAYLOAD)  # no alertContext at all
+
+        result = await wf._ingest_node(state)
+
+        assert result["metric_name"] is None
+        assert result["metric_current_value"] is None
+        assert result["metric_threshold"] is None
+        assert result["resource_name"] == "acme-prod-vm"
+        assert result["resource_group"] == "acme-rg"
+
+    async def test_aws_cloudwatch_extracts_metric_and_account(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id, AWS_CLOUDWATCH_METRIC_PAYLOAD)
+
+        result = await wf._ingest_node(state)
+
+        assert result["resource_name"] == "prod-db-01"
+        assert result["resource_group"] == "402916653765"
+        assert result["metric_name"] == "CPUUtilization"
+        assert result["metric_current_value"] == 95.0
+        assert result["metric_threshold"] == 80.0
+
+    async def test_aws_account_id_falls_back_to_arn_when_no_direct_field(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        payload = {
+            "cloudwatch_alarm": {
+                "AlarmName": "x", "NewStateValue": "ALARM",
+                "AlarmArn": "arn:aws:cloudwatch:us-east-1:999888777666:alarm:x",
+                "NewStateReason": "",
+                "Trigger": {"MetricName": "M", "Namespace": "AWS/EC2", "Dimensions": [{"name": "InstanceId", "value": "i-abc"}]},
+            }
+        }
+        state = _base_state(workspace_id, payload)
+        result = await wf._ingest_node(state)
+        assert result["resource_group"] == "999888777666"
+
+    async def test_aws_unparseable_reason_leaves_metric_fields_none(self, mock_db, workspace_id, mock_router):
+        """The original fixture's NewStateReason ('Threshold Crossed:
+        CPUUtilization > 90 for 5 datapoints') doesn't match the bracket
+        format real CloudWatch sends -- must fail safe, not crash or
+        fabricate numbers."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id, AWS_CLOUDWATCH_PAYLOAD)
+
+        result = await wf._ingest_node(state)
+
+        assert result["metric_current_value"] is None
+        assert result["metric_threshold"] is None
+
+    def test_parse_arm_resource_handles_malformed_id(self):
+        from agents.agent_11_resource_health.workflow import _parse_arm_resource
+        assert _parse_arm_resource("unknown") == ("unknown", "unknown")
+        assert _parse_arm_resource("") == ("unknown", "unknown")
+        assert _parse_arm_resource("not-an-arm-id") == ("not-an-arm-id", "unknown")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

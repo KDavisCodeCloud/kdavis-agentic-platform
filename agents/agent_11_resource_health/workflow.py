@@ -29,6 +29,7 @@ Enterprise-only by numbering accident).
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional, TypedDict
 
@@ -61,6 +62,13 @@ class ResourceHealthState(TypedDict):
     severity: str
     alert_name: str
     log_excerpt: str
+
+    # Structured resource/metric pinpointing (Phase 2, GAPS.md scale-readiness build)
+    resource_name: Optional[str]
+    resource_group: Optional[str]        # Azure resource group, or AWS account ID
+    metric_name: Optional[str]
+    metric_current_value: Optional[float]
+    metric_threshold: Optional[float]
 
     # After diagnose
     incident_id: Optional[str]
@@ -124,6 +132,113 @@ def _classify_domain_azure(target_resource_type: str) -> str:
 def _classify_domain_aws(namespace: str) -> str:
     n = (namespace or "").lower()
     return _AWS_NAMESPACE_DOMAIN_HINTS.get(n, "unknown")
+
+
+# ──────────────────────────────────────────────
+# Structured resource/metric extraction (Phase 2, scale-readiness build)
+# ──────────────────────────────────────────────
+
+def _parse_arm_resource(resource_id: str) -> tuple[str, str]:
+    """Extract (resource_name, resource_group) from an Azure ARM resource ID.
+
+    ARM ID shape: /subscriptions/{sub}/resourceGroups/{rg}/providers/{ns}/
+    {type}/{name}[/{subtype}/{subname}...]. resource_name is the LAST path
+    segment -- the specific resource that actually fired the alert, whatever
+    its type (a VM, a SQL database, a storage account). The full ARM ID
+    stays available separately in `resource_id` for anyone who needs the
+    complete chain (e.g. which SQL *server* a database belongs to) --
+    resource_name/resource_group are the short, queryable fields this
+    column pair is for, not a replacement for the full path.
+
+    Returns ("unknown", "unknown") if the ID doesn't parse as expected --
+    never raises, since a malformed/unexpected ID shouldn't break ingest.
+    """
+    if not resource_id or resource_id == "unknown":
+        return "unknown", "unknown"
+
+    parts = [p for p in resource_id.split("/") if p]
+    if not parts:
+        return "unknown", "unknown"
+
+    resource_name = parts[-1]
+    resource_group = "unknown"
+    for i, part in enumerate(parts):
+        if part.lower() == "resourcegroups" and i + 1 < len(parts):
+            resource_group = parts[i + 1]
+            break
+
+    return resource_name, resource_group
+
+
+def _extract_azure_metric_context(
+    payload: dict,
+) -> tuple[Optional[str], Optional[float], Optional[float]]:
+    """Extract (metric_name, current_value, threshold) from a Metric Alert's
+    data.alertContext.condition.allOf[0] -- the structured fields Azure
+    Monitor actually sends for a metric threshold alert. Only present for
+    Metric Alert type payloads (Microsoft.Insights/metricAlerts); absent
+    for other alert types (Activity Log, Service Health, etc.), in which
+    case this returns (None, None, None) rather than guessing.
+
+    Previously this data was never read at all -- _ingest_node only parsed
+    data.essentials, which doesn't carry metric name/value/threshold.
+    """
+    try:
+        condition = payload["data"]["alertContext"]["condition"]
+        all_of = condition.get("allOf") or []
+        if not all_of:
+            return None, None, None
+        first = all_of[0]
+        metric_name = first.get("metricName")
+        current_value = first.get("metricValue")
+        threshold = first.get("threshold")
+        return (
+            metric_name,
+            float(current_value) if current_value is not None else None,
+            float(threshold) if threshold is not None else None,
+        )
+    except (KeyError, TypeError, IndexError, ValueError):
+        return None, None, None
+
+
+# CloudWatch's NewStateReason for a metric alarm is a semi-standard sentence,
+# e.g. "Threshold Crossed: 1 datapoint [95.0 (15/09/26 01:00:00)] was
+# greater than the threshold (80.0)." -- extracts the datapoint value and
+# the threshold value out of that free text into real numbers.
+_AWS_REASON_RE = re.compile(
+    r"\[\s*(?P<value>-?\d+(?:\.\d+)?)\s*\(.*?\)\s*\]\s+was\s+.*?"
+    r"threshold\s*\(\s*(?P<threshold>-?\d+(?:\.\d+)?)\s*\)",
+    re.IGNORECASE,
+)
+
+
+def _extract_aws_metric_context(reason: str) -> tuple[Optional[float], Optional[float]]:
+    """Structurally parse CloudWatch's NewStateReason for the current value
+    and threshold, instead of just truncating it to 300 chars of free text
+    and hoping the LLM restates the numbers correctly."""
+    match = _AWS_REASON_RE.search(reason or "")
+    if not match:
+        return None, None
+    try:
+        return float(match.group("value")), float(match.group("threshold"))
+    except (TypeError, ValueError):
+        return None, None
+
+
+def _extract_aws_account_id(alarm: dict) -> str:
+    """AWS SNS-delivered CloudWatch alarm notifications usually include a
+    top-level AWSAccountId field directly; fall back to parsing it out of
+    AlarmArn (arn:aws:cloudwatch:{region}:{account_id}:alarm:{name}) if
+    that field is absent."""
+    account_id = alarm.get("AWSAccountId")
+    if account_id:
+        return str(account_id)
+
+    arn_parts = (alarm.get("AlarmArn") or "").split(":")
+    if len(arn_parts) >= 5 and arn_parts[0] == "arn":
+        return arn_parts[4]
+
+    return "unknown"
 
 
 # ──────────────────────────────────────────────
@@ -204,6 +319,12 @@ class ResourceHealthWorkflow(BaseAgent):
         severity      = "unknown"
         alert_name    = "unknown"
 
+        resource_name         = None
+        resource_group        = None
+        metric_name            = None
+        metric_current_value   = None
+        metric_threshold       = None
+
         # ── Azure Monitor Common Alert Schema ──
         if "data" in payload and "essentials" in payload.get("data", {}):
             alert_source = "azure_monitor"
@@ -215,6 +336,9 @@ class ResourceHealthWorkflow(BaseAgent):
             resource_id = affected[0] if affected else "unknown"
             domain = _classify_domain_azure(resource_type)
 
+            resource_name, resource_group = _parse_arm_resource(resource_id)
+            metric_name, metric_current_value, metric_threshold = _extract_azure_metric_context(payload)
+
             log_lines = [
                 f"Alert Rule: {alert_name}",
                 f"Severity: {severity}",
@@ -223,6 +347,10 @@ class ResourceHealthWorkflow(BaseAgent):
                 f"Monitor Condition: {essentials.get('monitorCondition', 'unknown')}",
                 f"Description: {essentials.get('description', '')[:300]}",
             ]
+            if metric_name:
+                log_lines.append(
+                    f"Metric: {metric_name} = {metric_current_value} (threshold: {metric_threshold})"
+                )
 
         # ── AWS CloudWatch Alarm (already unwrapped from SNS) ──
         elif "cloudwatch_alarm" in payload:
@@ -236,14 +364,22 @@ class ResourceHealthWorkflow(BaseAgent):
             resource_id = dims[0].get("value", "unknown") if dims else alarm.get("AlarmName", "unknown")
             domain = _classify_domain_aws(resource_type)
 
+            resource_name = resource_id
+            resource_group = _extract_aws_account_id(alarm)
+            metric_name = trigger.get("MetricName")
+            reason = alarm.get("NewStateReason", "")
+            metric_current_value, metric_threshold = _extract_aws_metric_context(reason)
+
             log_lines = [
                 f"Alarm: {alert_name}",
                 f"State: {severity}",
                 f"Namespace: {resource_type}",
                 f"Resource: {resource_id}",
-                f"Metric: {trigger.get('MetricName', 'unknown')}",
-                f"Reason: {alarm.get('NewStateReason', '')[:300]}",
+                f"Metric: {metric_name or 'unknown'}",
+                f"Reason: {reason[:300]}",
             ]
+            if metric_current_value is not None:
+                log_lines.append(f"Parsed value: {metric_current_value} (threshold: {metric_threshold})")
 
         else:
             log.warning("[Agent11] Unknown alert payload format — using raw excerpt")
@@ -254,8 +390,8 @@ class ResourceHealthWorkflow(BaseAgent):
 
         self._write_audit("ingest", "ok")
         log.info(
-            "[Agent11] Ingested: source=%s domain=%s resource=%s severity=%s",
-            alert_source, domain, resource_id, severity,
+            "[Agent11] Ingested: source=%s domain=%s resource=%s severity=%s metric=%s",
+            alert_source, domain, resource_id, severity, metric_name,
         )
 
         return {
@@ -266,6 +402,11 @@ class ResourceHealthWorkflow(BaseAgent):
             "severity":       severity,
             "alert_name":     alert_name,
             "log_excerpt":    sanitized.sanitized_text,
+            "resource_name":         resource_name,
+            "resource_group":        resource_group,
+            "metric_name":            metric_name,
+            "metric_current_value":  metric_current_value,
+            "metric_threshold":       metric_threshold,
             "tokens_used":    0,
             "incident_id":    None,
             "parsed_error":   None,
@@ -342,6 +483,13 @@ class ResourceHealthWorkflow(BaseAgent):
             cloud_provider=state["cloud_provider"],
             tokens_used=state.get("tokens_used", 0),
             estimated_duration_seconds=state.get("estimated_duration_seconds"),
+            resource_id=state.get("resource_id"),
+            resource_name=state.get("resource_name"),
+            resource_group=state.get("resource_group"),
+            metric_name=state.get("metric_name"),
+            metric_current_value=state.get("metric_current_value"),
+            metric_threshold=state.get("metric_threshold"),
+            alert_name=state.get("alert_name"),
         )
 
         await self.record_token_usage(
@@ -439,6 +587,11 @@ class ResourceHealthWorkflow(BaseAgent):
             "severity": "",
             "alert_name": "",
             "log_excerpt": "",
+            "resource_name": None,
+            "resource_group": None,
+            "metric_name": None,
+            "metric_current_value": None,
+            "metric_threshold": None,
             "incident_id": None,
             "parsed_error": None,
             "remediation_options": None,
