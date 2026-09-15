@@ -912,3 +912,67 @@ logs are now one JSON object per line with `extra={}` fields (
 `workspace_id`, `agent_id`, `incident_id`, provider/retry fields on LLM
 calls, subscription/budget-block reasons on webhook ingestion) promoted
 to top-level queryable keys, instead of opaque message strings.
+
+### 20. Row-level security shipped on core tables; full connection-level enforcement deliberately scoped down (2026-09-15)
+
+Phase 11, scale-readiness build. `docs/customer/security-questionnaire-response.md`
+told customers "row-level security enforced at the database layer, not
+just application logic" while `workspaces`, `incidents`, `audit_events`,
+and `token_usage` had **zero** RLS policies -- every query was correct
+only insofar as its own `WHERE workspace_id = $N` was correct, with no
+database-level backstop. `db/migrations/031_rls_core_tables.sql` fixes
+this: all four tables now have `ENABLE ROW LEVEL SECURITY` plus a
+`service_role_all` bypass (matches the existing convention in
+`005_leads.sql`/`019_cloud_audit_findings.sql`) and a
+`workspace_isolation` policy keyed on the `app.current_workspace_id`
+session variable, which the new `core/workspace_scope.py`'s
+`workspace_scoped_connection()` sets via `set_config(..., true)`
+(transaction-local, so it can never leak across Supabase's transaction-
+mode pooler onto an unrelated later request).
+
+**Critical caveat, checked rather than assumed:** a Postgres superuser,
+or the owner of a table that isn't also `FORCE ROW LEVEL SECURITY`'d,
+bypasses RLS policies unconditionally. `db/migrate.py`'s new
+`log_security_posture()` queries `pg_roles` for `DATABASE_URL`'s actual
+role at every startup and logs `rolsuper`/`rolbypassrls` (+ a WARNING if
+either is true) -- this is the real, live answer, not a guess, and it is
+checked on every single boot going forward so a future credential
+rotation can't silently change this without it showing up in logs.
+Migration 031 deliberately does **not** set `FORCE ROW LEVEL SECURITY`:
+if `DATABASE_URL`'s role turns out to be the table owner and is not a
+superuser, forcing RLS would apply these policies to the app's own
+primary connection too -- and since `workspace_scoped_connection()` has
+only been wired into two call sites so far (see below), every other
+query path would suddenly see zero rows platform-wide. That would have
+been a self-inflicted full outage to find out empirically; the safe
+version is a startup log line instead.
+
+**Deliberately narrow rollout of `workspace_scoped_connection()` in this
+pass** -- only `api/routes/incidents.py`'s `get_incident` and
+`list_incidents` (the two customer-facing read paths) use it. Every
+other route in the codebase still relies solely on application-layer
+`WHERE workspace_id = $N` scoping, unchanged. Wrapping every `db.acquire()`
+call site platform-wide (dozens, across ~15 route files, several without
+a workspace in scope at all -- e.g. Stripe webhook handlers that look up
+a workspace by `stripe_customer_id` before one is known) is a
+materially larger change than this phase, and the ROI depends entirely
+on the `log_security_posture()` finding above: if the connecting role
+bypasses RLS anyway, wrapping more call sites protects other access
+paths (Supabase Studio, anon/authenticated keys) but does nothing for
+this app's own queries, which already have correct `WHERE` clauses.
+
+**No automated regression test proves the RLS policy itself blocks a
+cross-workspace query** -- this test suite has no real Postgres
+available (`asyncpg` is stubbed in `tests/conftest.py`, confirmed
+"always mocked at DB layer"), so RLS enforcement can only be verified
+against a real database, which was done live against production this
+session (role posture read via `log_security_posture()`'s log output
+post-deploy) rather than captured as a repeatable test. `tests/
+test_workspace_scope.py` and the `get_incident`/`list_incidents` tests
+in `tests/test_incidents_workspace_scope.py` only pin that the Python
+helper sends the right `set_config` call — a genuine future gap worth
+flagging: this codebase has no real-Postgres integration test
+infrastructure at all (docker-compose/testcontainers/similar), so this
+is not unique to RLS and would need a deliberate decision to add before
+any DB-level behavior can be regression-tested rather than manually
+re-verified each time.

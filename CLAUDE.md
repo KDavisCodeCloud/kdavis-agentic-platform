@@ -3166,6 +3166,19 @@ and Azure onboarding live in production as of 2026-09-12.
 
 Last deploy: 2026-09-12 (Railway: main platform, `cloud-decoded-mcp`,
 `kdavis-finops-agent`, `kdavis-compliance-agent`; Vercel: frontend).
+A scale-readiness build continued past that date (see GAPS.md #14-#20
+and DECISIONS.md for the running log) -- do not treat 2026-09-12 as the
+last real change to this codebase, only as this footer's last full
+rewrite.
+
+Row-level security: `workspaces`, `incidents`, `audit_events`, and
+`token_usage` carry real Postgres RLS policies as of migration 031
+(GAPS.md #20) -- previously zero coverage despite the customer-facing
+security questionnaire claiming otherwise. Whether the app's own
+`DATABASE_URL` connection is itself subject to those policies (vs. a
+superuser/table-owner bypass) is logged at every startup by
+`db/migrate.py`'s `log_security_posture()` — check Railway logs for
+`[Security] DB role posture` rather than assuming either way.
 
 What's real and live: backend, frontend, Stripe paywall, DNS (all
 hostnames), MCP server (TLS cert was still provisioning as of the last

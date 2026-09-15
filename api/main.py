@@ -167,8 +167,14 @@ async def lifespan(app: FastAPI):
     # Fails closed by design: an exception here aborts startup rather than
     # serving traffic against a schema the application code doesn't match.
     # See db/migrate.py's own docstring and GAPS.md #15.
-    from db.migrate import run_pending_migrations
+    from db.migrate import run_pending_migrations, log_security_posture
     await run_pending_migrations(app.state.db_pool)
+
+    # Read-only check of whether DATABASE_URL's role actually enforces
+    # the RLS policies migration 031 adds, or silently bypasses them
+    # (superuser / unforced table owner) -- see db/migrate.py's own
+    # docstring and GAPS.md #20.
+    await log_security_posture(app.state.db_pool)
 
     # LangGraph Postgres checkpointer — persists agent workflow state
     # Uses psycopg (separate from asyncpg) — both connect to the same Postgres DB

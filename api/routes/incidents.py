@@ -43,6 +43,7 @@ from agents.agent_08_drift_detection.workflow import DriftWorkflow
 from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
 from core.workspace_credentials import build_agent_credentials, build_k8s_credentials, resolve_k8s_context
+from core.workspace_scope import workspace_scoped_connection
 
 
 class IncidentRejectRequest(BaseModel):
@@ -115,7 +116,7 @@ async def get_incident(
     Only returns incidents belonging to the authenticated workspace.
     """
     db = request.app.state.db_pool
-    async with db.acquire() as conn:
+    async with workspace_scoped_connection(db, workspace["id"]) as conn:
         row = await conn.fetchrow(
             """
             SELECT id, workspace_id, agent_id, parsed_error, remediation_options,
@@ -375,7 +376,7 @@ async def list_incidents(
 
     query += f" ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
 
-    async with db.acquire() as conn:
+    async with workspace_scoped_connection(db, workspace["id"]) as conn:
         rows = await conn.fetch(query, *params)
 
     results = []

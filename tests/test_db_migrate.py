@@ -185,3 +185,61 @@ class TestRunPendingMigrations:
 
         insert_calls = [c for c in conn.execute.await_args_list if "INSERT INTO schema_migrations" in c.args[0]]
         assert len(insert_calls) == 0
+
+
+class TestLogSecurityPosture:
+    """
+    Phase 11, scale-readiness build (GAPS.md #20). log_security_posture()
+    is a read-only diagnostic -- it must never raise, never write
+    anything, and must warn specifically when the connecting role would
+    silently bypass every RLS policy migration 031 adds.
+    """
+
+    def _mock_pool_for_role(self, role, rolsuper, rolbypassrls):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            return_value={"role": role, "rolsuper": rolsuper, "rolbypassrls": rolbypassrls}
+        )
+        return _mock_pool(conn), conn
+
+    async def test_queries_pg_roles_for_current_user(self):
+        pool, conn = self._mock_pool_for_role("app_user", False, False)
+
+        await migrate.log_security_posture(pool)
+
+        conn.fetchrow.assert_awaited_once()
+        sql = conn.fetchrow.await_args.args[0]
+        assert "pg_roles" in sql
+        assert "current_user" in sql
+
+    async def test_does_not_raise_for_a_non_privileged_role(self, caplog):
+        pool, _ = self._mock_pool_for_role("app_user", False, False)
+
+        await migrate.log_security_posture(pool)  # must not raise
+
+    async def test_warns_when_role_is_superuser(self, caplog):
+        import logging
+        pool, _ = self._mock_pool_for_role("postgres", True, False)
+
+        with caplog.at_level(logging.WARNING, logger="db.migrate"):
+            await migrate.log_security_posture(pool)
+
+        assert any("bypasses row-level security" in r.message for r in caplog.records)
+
+    async def test_warns_when_role_has_bypassrls(self, caplog):
+        import logging
+        pool, _ = self._mock_pool_for_role("app_user", False, True)
+
+        with caplog.at_level(logging.WARNING, logger="db.migrate"):
+            await migrate.log_security_posture(pool)
+
+        assert any("bypasses row-level security" in r.message for r in caplog.records)
+
+    async def test_no_warning_for_a_properly_scoped_role(self, caplog):
+        import logging
+        pool, _ = self._mock_pool_for_role("app_user", False, False)
+
+        with caplog.at_level(logging.WARNING, logger="db.migrate"):
+            await migrate.log_security_posture(pool)
+
+        assert not any("bypasses row-level security" in r.message for r in caplog.records)

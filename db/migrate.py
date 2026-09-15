@@ -140,3 +140,44 @@ async def run_pending_migrations(pool: asyncpg.Pool) -> list[str]:
                 log.info("[Migrate] Schema up to date — 0 pending migrations")
 
             return newly_applied
+
+
+async def log_security_posture(pool: asyncpg.Pool) -> None:
+    """
+    Read-only diagnostic, run once at every startup after migrations.
+    Phase 11, scale-readiness build (GAPS.md #20).
+
+    "Row-level security is enabled on these tables" and "row-level
+    security is enforced for THIS application's own queries" are two
+    different claims -- a Postgres superuser, or the owner of a table
+    that isn't FORCE ROW LEVEL SECURITY'd (migration 031 deliberately
+    doesn't force it -- see that file's own comment), silently bypasses
+    every RLS policy no matter how correctly it's written. This logs
+    which case DATABASE_URL's role is actually in, instead of leaving it
+    an assumption baked into a comment that can go stale.
+    """
+    async with pool.acquire() as conn:
+        role_row = await conn.fetchrow(
+            "SELECT current_user AS role, rolsuper, rolbypassrls "
+            "FROM pg_roles WHERE rolname = current_user"
+        )
+
+    log.info(
+        "[Security] DB role posture — role=%s superuser=%s bypassrls=%s",
+        role_row["role"], role_row["rolsuper"], role_row["rolbypassrls"],
+        extra={
+            "db_role": role_row["role"],
+            "db_role_superuser": role_row["rolsuper"],
+            "db_role_bypassrls": role_row["rolbypassrls"],
+        },
+    )
+    if role_row["rolsuper"] or role_row["rolbypassrls"]:
+        log.warning(
+            "[Security] DATABASE_URL's role bypasses row-level security "
+            "entirely for this application's own queries — RLS policies on "
+            "workspaces/incidents/audit_events/token_usage protect other "
+            "access paths (Supabase Studio, anon/authenticated keys, future "
+            "tools connecting as a different role), not this app's own "
+            "connection. Application-layer workspace_id scoping remains the "
+            "real boundary here. See GAPS.md #20.",
+        )

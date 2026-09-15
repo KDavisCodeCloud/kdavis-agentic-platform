@@ -67,9 +67,14 @@ confirmed — don't guess or leave implied.
 
 ## Access control & encryption
 
-**How is customer data isolated?** Every table is scoped by workspace,
-with row-level security enforced at the database layer, not just
-application logic. A query without a workspace scope fails closed.
+**How is customer data isolated?** Every table is scoped by workspace.
+The core tables (workspaces, incidents, audit events, token usage) carry
+Postgres row-level security policies keyed on workspace id, in addition
+to every query's own explicit workspace scope in application code — a
+query missing that scope fails closed rather than returning cross-
+workspace rows. Every application query is also scoped in code with an
+explicit workspace-id filter, which remains the primary, always-active
+isolation boundary for the product's own API and dashboard.
 
 **Encryption in transit:** TLS for all connections to Cloud Decoded's
 API and dashboard.
