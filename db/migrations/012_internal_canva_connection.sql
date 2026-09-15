@@ -27,5 +27,6 @@ CREATE TABLE IF NOT EXISTS internal_canva_connection (
 
 ALTER TABLE internal_canva_connection ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "internal_canva_connection_service_role" ON internal_canva_connection;
 CREATE POLICY "internal_canva_connection_service_role" ON internal_canva_connection
   FOR ALL TO service_role USING (true) WITH CHECK (true);

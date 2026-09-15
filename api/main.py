@@ -131,6 +131,17 @@ async def lifespan(app: FastAPI):
     )
     log.info("[API] Database pool created")
 
+    # Applies db/migrations/*.sql before anything else touches the DB --
+    # built 2026-09-15 after migrations 024-028 were deployed for an
+    # entire session without ever actually running against production
+    # (no migration runner existed anywhere in the deploy pipeline; real
+    # customer signups failed with a 500 for as long as nobody noticed).
+    # Fails closed by design: an exception here aborts startup rather than
+    # serving traffic against a schema the application code doesn't match.
+    # See db/migrate.py's own docstring and GAPS.md #15.
+    from db.migrate import run_pending_migrations
+    await run_pending_migrations(app.state.db_pool)
+
     # LangGraph Postgres checkpointer — persists agent workflow state
     # Uses psycopg (separate from asyncpg) — both connect to the same Postgres DB
     #

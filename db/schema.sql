@@ -7,7 +7,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ──────────────────────────────────────────────
 -- WORKSPACES — one row per paying customer
 -- ──────────────────────────────────────────────
-CREATE TABLE workspaces (
+CREATE TABLE IF NOT EXISTS workspaces (
     id                         UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_name               VARCHAR(255) NOT NULL,
     workspace_token            VARCHAR(255) UNIQUE NOT NULL,      -- API auth token (hashed)
@@ -23,13 +23,13 @@ CREATE TABLE workspaces (
     updated_at                 TIMESTAMPTZ   DEFAULT NOW()
 );
 
-CREATE INDEX idx_workspaces_token   ON workspaces (workspace_token);
-CREATE INDEX idx_workspaces_stripe  ON workspaces (stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_token   ON workspaces (workspace_token);
+CREATE INDEX IF NOT EXISTS idx_workspaces_stripe  ON workspaces (stripe_customer_id);
 
 -- ──────────────────────────────────────────────
 -- INCIDENTS — one row per agent diagnosis/approval cycle
 -- ──────────────────────────────────────────────
-CREATE TABLE incidents (
+CREATE TABLE IF NOT EXISTS incidents (
     id                          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id                UUID        REFERENCES workspaces(id) ON DELETE CASCADE,
     agent_id                    VARCHAR(50) NOT NULL,              -- 'agent_01_cicd_triage' etc.
@@ -47,14 +47,14 @@ CREATE TABLE incidents (
     resolved_at                 TIMESTAMPTZ
 );
 
-CREATE INDEX idx_incidents_workspace ON incidents (workspace_id);
-CREATE INDEX idx_incidents_status    ON incidents (execution_status);
-CREATE INDEX idx_incidents_agent     ON incidents (agent_id);
+CREATE INDEX IF NOT EXISTS idx_incidents_workspace ON incidents (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_incidents_status    ON incidents (execution_status);
+CREATE INDEX IF NOT EXISTS idx_incidents_agent     ON incidents (agent_id);
 
 -- ──────────────────────────────────────────────
 -- INTERNAL AGENT TASKS — cross-agent message bus
 -- ──────────────────────────────────────────────
-CREATE TABLE internal_agent_tasks (
+CREATE TABLE IF NOT EXISTS internal_agent_tasks (
     id                       UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     source_agent             VARCHAR(100) NOT NULL,
     target_agent             VARCHAR(100),
@@ -68,13 +68,13 @@ CREATE TABLE internal_agent_tasks (
     updated_at               TIMESTAMPTZ  DEFAULT NOW()
 );
 
-CREATE INDEX idx_internal_tasks_state  ON internal_agent_tasks (execution_state);
-CREATE INDEX idx_internal_tasks_source ON internal_agent_tasks (source_agent);
+CREATE INDEX IF NOT EXISTS idx_internal_tasks_state  ON internal_agent_tasks (execution_state);
+CREATE INDEX IF NOT EXISTS idx_internal_tasks_source ON internal_agent_tasks (source_agent);
 
 -- ──────────────────────────────────────────────
 -- AUDIT LOG — immutable append-only event trail
 -- ──────────────────────────────────────────────
-CREATE TABLE audit_events (
+CREATE TABLE IF NOT EXISTS audit_events (
     id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID        REFERENCES workspaces(id) ON DELETE SET NULL,
     agent_id     VARCHAR(100),
@@ -86,13 +86,13 @@ CREATE TABLE audit_events (
     created_at   TIMESTAMPTZ  DEFAULT NOW()
 );
 
-CREATE INDEX idx_audit_workspace ON audit_events (workspace_id);
-CREATE INDEX idx_audit_created   ON audit_events (created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_events (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created   ON audit_events (created_at);
 
 -- ──────────────────────────────────────────────
 -- TOKEN USAGE — monthly spend tracking
 -- ──────────────────────────────────────────────
-CREATE TABLE token_usage (
+CREATE TABLE IF NOT EXISTS token_usage (
     id           UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID        REFERENCES workspaces(id) ON DELETE CASCADE,
     incident_id  UUID        REFERENCES incidents(id) ON DELETE SET NULL,
@@ -103,7 +103,7 @@ CREATE TABLE token_usage (
     created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_token_usage_workspace_month ON token_usage (workspace_id, billing_month);
+CREATE INDEX IF NOT EXISTS idx_token_usage_workspace_month ON token_usage (workspace_id, billing_month);
 
 -- ──────────────────────────────────────────────
 -- FUNCTION: auto-update updated_at timestamps
@@ -116,10 +116,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_workspaces_updated_at ON workspaces;
 CREATE TRIGGER trg_workspaces_updated_at
     BEFORE UPDATE ON workspaces
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS trg_internal_tasks_updated_at ON internal_agent_tasks;
 CREATE TRIGGER trg_internal_tasks_updated_at
     BEFORE UPDATE ON internal_agent_tasks
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

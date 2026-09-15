@@ -29,5 +29,6 @@ ALTER TABLE internal_agent_runs ENABLE ROW LEVEL SECURITY;
 -- db_pool with elevated credentials, never a per-user Supabase client, so
 -- there is no anon/authenticated policy to write here. TO service_role is
 -- not optional: a bare USING (true) with no TO clause defaults to PUBLIC.
+DROP POLICY IF EXISTS "internal_agent_runs_service_role" ON internal_agent_runs;
 CREATE POLICY "internal_agent_runs_service_role" ON internal_agent_runs
   FOR ALL TO service_role USING (true) WITH CHECK (true);

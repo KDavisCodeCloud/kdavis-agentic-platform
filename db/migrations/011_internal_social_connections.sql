@@ -22,5 +22,6 @@ ALTER TABLE internal_social_connections ENABLE ROW LEVEL SECURITY;
 -- db_pool with elevated credentials, matching internal_agent_runs' own
 -- convention (db/migrations/008). TO service_role is not optional: a bare
 -- USING (true) with no TO clause defaults to PUBLIC.
+DROP POLICY IF EXISTS "internal_social_connections_service_role" ON internal_social_connections;
 CREATE POLICY "internal_social_connections_service_role" ON internal_social_connections
   FOR ALL TO service_role USING (true) WITH CHECK (true);

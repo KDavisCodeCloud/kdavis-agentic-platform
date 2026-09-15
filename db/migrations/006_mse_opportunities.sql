@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS mse_opportunities (
 );
 
 ALTER TABLE mse_opportunities ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON mse_opportunities;
 CREATE POLICY "service_role_all" ON mse_opportunities FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE TABLE IF NOT EXISTS mse_product_specs (
@@ -42,4 +43,5 @@ CREATE TABLE IF NOT EXISTS mse_product_specs (
 );
 
 ALTER TABLE mse_product_specs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON mse_product_specs;
 CREATE POLICY "service_role_all" ON mse_product_specs FOR ALL TO service_role USING (true) WITH CHECK (true);

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS hitl_corrections (
 CREATE INDEX IF NOT EXISTS idx_hitl_corrections_agent ON hitl_corrections(agent_name);
 
 ALTER TABLE hitl_corrections ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "hitl_corrections_service_role" ON hitl_corrections;
 CREATE POLICY "hitl_corrections_service_role" ON hitl_corrections
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -43,5 +44,6 @@ CREATE TABLE IF NOT EXISTS chat_queries (
 CREATE INDEX IF NOT EXISTS idx_chat_queries_occurred_at ON chat_queries(occurred_at DESC);
 
 ALTER TABLE chat_queries ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "chat_queries_service_role" ON chat_queries;
 CREATE POLICY "chat_queries_service_role" ON chat_queries
   FOR ALL TO service_role USING (true) WITH CHECK (true);

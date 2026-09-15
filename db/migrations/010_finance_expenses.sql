@@ -36,5 +36,6 @@ ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 -- to Postgres via the shared db_pool with elevated credentials, never a
 -- per-user Supabase client, so service_role is the only real caller.
 -- TO service_role is not optional - a bare USING (true) defaults to PUBLIC.
+DROP POLICY IF EXISTS "expenses_service_role" ON expenses;
 CREATE POLICY "expenses_service_role" ON expenses
   FOR ALL TO service_role USING (true) WITH CHECK (true);

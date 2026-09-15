@@ -51,18 +51,22 @@ CREATE INDEX IF NOT EXISTS idx_cloud_audit_items_workspace ON cloud_audit_remedi
 
 ALTER TABLE cloud_audit_submissions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "service_role_all" ON cloud_audit_submissions;
 CREATE POLICY "service_role_all" ON cloud_audit_submissions
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "workspace_read" ON cloud_audit_submissions;
 CREATE POLICY "workspace_read" ON cloud_audit_submissions
   FOR SELECT TO authenticated
   USING (workspace_id = (current_setting('app.workspace_id')::uuid));
 
 ALTER TABLE cloud_audit_remediation_items ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "service_role_all" ON cloud_audit_remediation_items;
 CREATE POLICY "service_role_all" ON cloud_audit_remediation_items
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "workspace_read" ON cloud_audit_remediation_items;
 CREATE POLICY "workspace_read" ON cloud_audit_remediation_items
   FOR SELECT TO authenticated
   USING (workspace_id = (current_setting('app.workspace_id')::uuid));

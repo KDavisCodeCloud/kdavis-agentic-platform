@@ -16,9 +16,11 @@ CREATE TABLE IF NOT EXISTS leads (
 
 ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "service_role_all" ON leads;
 CREATE POLICY "service_role_all" ON leads
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "workspace_read" ON leads;
 CREATE POLICY "workspace_read" ON leads
   FOR SELECT TO authenticated
   USING (tenant_id = (current_setting('app.workspace_id')::uuid));
