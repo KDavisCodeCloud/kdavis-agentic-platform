@@ -713,7 +713,7 @@ round trip" caveat the original plan called out before any code was written.
 passing (was 1320 at the start of this build), same 4 pre-existing
 unrelated failures, zero regressions.
 
-### 15. CRITICAL — migrations 024–028 were never applied to production; real customer signups were broken (2026-09-15, fixed same day)
+### 15. CRITICAL — migrations 024–028 were never applied to production; real customer signups were broken — RESOLVED both repos (2026-09-15/2026-09-16)
 
 Found while live-testing Agent 11's new webhook route: a `500` instead of
 the expected `403` traced to `asyncpg.exceptions.UndefinedColumnError:
@@ -754,17 +754,39 @@ verification workspace created during this test was deleted immediately
 after confirming success — production `workspaces` table has no leftover
 test data from this.
 
-**Still open — the systemic fix, not built in this pass:** nothing
-currently prevents this exact failure mode from recurring the next time a
-migration is written. Needs one of: a migration-runner step added to the
-deploy pipeline (run `db/migrations/*.sql` against `DATABASE_URL` before
-or as part of the app boot, idempotent via each file's own
-`IF NOT EXISTS` guards), or at minimum a hard rule/checklist item that no
-PR touching `db/migrations/` merges without a human confirming the
-migration was actually applied to production. The current state — schema
-changes and application code deploy independently, with nothing enforcing
-they stay in sync — is what let this go undetected through multiple
-merged PRs and deploys.
+**RESOLVED, both halves, though this repo's own half went undocumented
+for a day (same pattern as gap #1 in this file).** `db/migrate.py` was
+actually built the very next day (2026-09-15) — a real
+`schema_migrations` tracking table + `pg_advisory_xact_lock`, wired into
+`api/main.py`'s lifespan, fails closed on any error. Confirmed today
+(2026-09-16) it's genuinely wired in and caught up: 39 migration files on
+disk, 39 rows in `schema_migrations`, zero drift. This entry just never
+got its "RESOLVED" line written at the time — closing that out now.
+
+**The other half of this gap — kdavis-microsaas-engine had no
+equivalent at all — was still open until today (2026-09-16) and bit us
+twice in this session** (`20260914221640_icp_selling_stage.sql` and
+`20260916000045_consulting_infra_icp.sql` both sat committed and
+deployed without ever running against production, caught only by a
+direct `UndefinedColumnError` while applying a third migration by hand).
+Fixed: that repo now has `core/migrate.py`, the same pattern adapted for
+two real differences — a separate `mse_schema_migrations` tracking table
+and a separate advisory-lock constant (the two repos share ONE physical
+Supabase database; this repo's own `schema_migrations` table already
+existed and tracks a completely different migration history), and
+explicit exclusion of a real manual rollback file
+(`20260831000035_dist_phase8_mse_leads_alter_ROLLBACK.sql`) from
+auto-discovery. All 49 pre-existing migrations there were backfilled
+into the new tracking table before this shipped — confirmed live,
+post-deploy, that the runner sees 0 pending and the app's `/health`
+reflects the new commit. Full writeup:
+`knowledge/sops/devops/2026-09-16-mse-migration-runner.md`.
+
+Both repos now fail closed at boot if a migration doesn't apply cleanly
+— the silent-drift failure mode this entire gap was about should not be
+possible in either codebase going forward, for a migration written from
+this point on that follows each repo's own `IF NOT EXISTS`/idempotent
+convention.
 
 ### 16. No error monitoring on Cloud Decoded's own backend — RESOLVED (2026-09-15)
 
