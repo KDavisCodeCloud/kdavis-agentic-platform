@@ -33,6 +33,8 @@ What this module adds that nothing else in the repo checks yet:
     file's own comment -- this check exists specifically so that class
     of silent failure gets caught automatically instead of by accident).
   - Stripe API connectivity -- monthly.
+  - Brevo API connectivity -- monthly (added 2026-09-16 alongside the
+    Systeme.io -> Brevo swap; Systeme.io never had a check here at all).
   - RLS coverage across every public table -- quarterly, extends
     migration 031's own concern (workspaces/incidents/audit_events/
     token_usage had zero RLS until that migration) into an ongoing
@@ -279,6 +281,34 @@ async def check_stripe_connectivity(stripe_api_key: Optional[str]) -> CheckResul
         return CheckResult("stripe", "error", str(exc))
 
 
+async def check_brevo_connectivity(brevo_api_key: Optional[str]) -> CheckResult:
+    """Added 2026-09-16 alongside the Systeme.io -> Brevo swap (see
+    leads/integrations/brevo_client.py) -- Systeme.io never had a
+    connectivity check here at all (it was never a confirmed-working
+    integration in the first place), so this is a net-new check, not a
+    rename of an old one. Same shape as check_stripe_connectivity:
+    "error, key not set" is the expected, honest state until Kelvin
+    signs up for Brevo and sets BREVO_API_KEY -- not a false alarm.
+
+    Calls the Brevo SDK directly rather than going through
+    brevo_client.get_lists() -- that function deliberately swallows
+    ApiError and returns [] on failure (correct for its own callers,
+    which only care "did the list come back", not "did the call
+    succeed"), which would make a real auth failure indistinguishable
+    from "connected, zero lists exist" here. A health check needs the
+    real signal, not the swallowed one."""
+    if not brevo_api_key:
+        return CheckResult("brevo", "error", "BREVO_API_KEY not set")
+    try:
+        from brevo import Brevo
+
+        client = Brevo(api_key=brevo_api_key)
+        result = client.contacts.get_lists(limit=1)
+        return CheckResult("brevo", "ok", f"connected, {len(result.lists or [])} list(s) visible (limit=1 probe)")
+    except Exception as exc:  # noqa: BLE001 -- any SDK/auth error is a real "not connected" signal
+        return CheckResult("brevo", "error", str(exc))
+
+
 async def check_rls_coverage(conn: asyncpg.Connection) -> CheckResult:
     """Extends migration 031's concern (workspaces/incidents/audit_events/
     token_usage had zero RLS until that migration) into an ongoing check:
@@ -322,6 +352,7 @@ async def run_health_sweep(
     database_url: str,
     github_token: Optional[str] = None,
     stripe_api_key: Optional[str] = None,
+    brevo_api_key: Optional[str] = None,
 ) -> HealthReport:
     results: list[CheckResult] = []
 
@@ -342,6 +373,7 @@ async def run_health_sweep(
     if tier in ("monthly", "quarterly"):
         results.append(check_tls_cert_expiry("theclouddecoded.com"))
         results.append(await check_stripe_connectivity(stripe_api_key))
+        results.append(await check_brevo_connectivity(brevo_api_key))
 
     if tier == "quarterly":
         results.extend(gap_report())
@@ -374,6 +406,7 @@ async def main(tier: Tier, report_out: Optional[str] = None) -> HealthReport:
         database_url=database_url,
         github_token=os.getenv("GITHUB_TOKEN"),
         stripe_api_key=os.getenv("STRIPE_SECRET_KEY"),
+        brevo_api_key=os.getenv("BREVO_API_KEY"),
     )
 
     webhook_url = os.getenv("SLACK_OPS_WEBHOOK_URL")

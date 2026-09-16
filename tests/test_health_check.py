@@ -162,6 +162,31 @@ class TestCheckStripeConnectivity:
         assert result.status == "error"
 
 
+class TestCheckBrevoConnectivity:
+    async def test_no_key_is_error(self):
+        result = await hc.check_brevo_connectivity(None)
+        assert result.status == "error"
+        assert "BREVO_API_KEY" in result.detail
+
+    async def test_successful_get_lists_is_ok(self):
+        fake_result = MagicMock(lists=[MagicMock(), MagicMock()])
+        fake_client = MagicMock()
+        fake_client.contacts.get_lists = MagicMock(return_value=fake_result)
+        fake_brevo_module = MagicMock(Brevo=MagicMock(return_value=fake_client))
+        with patch.dict("sys.modules", {"brevo": fake_brevo_module}):
+            result = await hc.check_brevo_connectivity("fake-key")
+        assert result.status == "ok"
+        assert "2 list" in result.detail
+
+    async def test_sdk_error_is_error(self):
+        fake_client = MagicMock()
+        fake_client.contacts.get_lists = MagicMock(side_effect=Exception("invalid key"))
+        fake_brevo_module = MagicMock(Brevo=MagicMock(return_value=fake_client))
+        with patch.dict("sys.modules", {"brevo": fake_brevo_module}):
+            result = await hc.check_brevo_connectivity("bad-key")
+        assert result.status == "error"
+
+
 class TestCheckRlsCoverage:
     async def test_all_protected_is_ok(self):
         conn = AsyncMock()
@@ -223,6 +248,7 @@ class TestRunHealthSweepTierComposition:
              patch("core.health_check.check_github_actions_workflows", new=AsyncMock(return_value=[])), \
              patch("core.health_check.check_tls_cert_expiry", return_value=hc.CheckResult("tls", "ok", "")), \
              patch("core.health_check.check_stripe_connectivity", new=AsyncMock(return_value=hc.CheckResult("stripe", "ok", ""))), \
+             patch("core.health_check.check_brevo_connectivity", new=AsyncMock(return_value=hc.CheckResult("brevo", "ok", ""))), \
              patch("core.health_check.asyncpg.connect", new=AsyncMock(return_value=AsyncMock(close=AsyncMock()))):
             return await hc.run_health_sweep(tier, database_url="postgresql://fake")
 
@@ -231,6 +257,7 @@ class TestRunHealthSweepTierComposition:
         names = {r.name for r in report.results}
         assert not any(n.startswith("tls_cert") for n in names)
         assert "stripe" not in names
+        assert "brevo" not in names
         assert "rls_coverage" not in names
         assert "n8n_workflows" not in names
 
@@ -238,6 +265,7 @@ class TestRunHealthSweepTierComposition:
         report = await self._patched_sweep("monthly")
         names = {r.name for r in report.results}
         assert "stripe" in names
+        assert "brevo" in names
         assert "rls_coverage" not in names
         assert "n8n_workflows" not in names
 
@@ -245,6 +273,7 @@ class TestRunHealthSweepTierComposition:
         report = await self._patched_sweep("quarterly")
         names = {r.name for r in report.results}
         assert "stripe" in names
+        assert "brevo" in names
         assert "rls_coverage" in names
         assert "n8n_workflows" in names
         assert "inbound_email" in names
