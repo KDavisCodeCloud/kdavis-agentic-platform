@@ -80,18 +80,52 @@ at the Lead Pipeline panel.
   the Vercel build since Vercel only sees pushed commits. Separate,
   pre-existing unfinished work — not addressed here.)
 
-## Still open / residual risk
+## Update 2026-09-16 (same day): the flagged residual risk was real
 
-- **Could not verify `MARKETING_API_KEY`'s value matches between Vercel
-  and mse-api's Bearer-auth check** — both sides redact stored secret
-  values (Railway and Vercel both hide "Sensitive"-typed vars on read), so
-  they couldn't be diffed directly. The route's own comment implies this
-  was always meant to be one shared secret across both backends. If the
-  Lead Pipeline / Cold Outreach panels come back with a 401 or 500 (not
-  "Not Found") after this deploy, that mismatch is the next thing to check
-  — compare mse-api's `MARKETING_API_KEY` Railway variable against
-  ceo-dashboard's Vercel one directly in each dashboard's UI (values are
-  visible there even though CLI reads redact them).
+Kelvin confirmed it: after the fix above deployed, the Lead Pipeline and
+Cold Outreach Tracker panels came back with "invalid api key" instead of
+"Not Found." The `MARKETING_API_KEY` mismatch flagged as an open risk
+above was real — Vercel's value and Cloud Decoded's own backend's value
+did not equal mse-api's value.
+
+**Fifth root cause, fixed:** rather than trying to read either side's
+existing (redacted) value, set all three to the one value already
+confirmed live and working on mse-api
+(`d06ac1a5fb1017f4237e628a7d1f6c67d2b2738a5be9c0fe2919852f3f0c7c63`):
+- `mcp__railway__set-variables` on kdavis-agentic-platform's own backend
+  service (`543230c7-...`) — this is the service `api/routes/marketing.py`
+  runs on, and it validates the *same* Vercel `MARKETING_API_KEY` env var
+  via its own `X-API-Key` header check (`require_marketing_api_key`).
+  One Next.js env var, two different backends, two different header
+  conventions (`X-API-Key` for Cloud Decoded, `Authorization: Bearer` for
+  mse-api) — but it has to be the identical secret string on all three
+  sides for either to work.
+- `vercel env rm` + `vercel env add` to replace ceo-dashboard's
+  `MARKETING_API_KEY` with the same value.
+- Forced a fresh Vercel deploy via an empty commit (`git commit
+  --allow-empty`) — Vercel does not apply env var changes to already-built
+  deployments, only to new ones. (First attempt to force this via
+  `vercel deploy --prod --cwd .` from the monorepo root grabbed the wrong
+  Vercel project — this repo has more than one `.vercel/project.json`
+  scope depending on directory — and tried to upload the entire 400MB+
+  monorepo, failing on Vercel's 100MB file-size cap. Aborted; the empty
+  commit was the correct, already-proven path since `git push` was
+  already confirmed to trigger a correctly-scoped ceo-dashboard deploy
+  earlier in this same fix.)
+
+**Verified with real requests, not assumption:** `curl` against Cloud
+Decoded's backend's `/api/v1/marketing/newsletter` (note: routes are
+mounted under `/api/v1`, not bare `/marketing` — a wrong URL path there
+returns a misleading 404 that looks like an auth failure but isn't) with
+a wrong key returns `401`; with the corrected key returns `422` (auth
+passed, then failed on a deliberately empty test body before any real
+newsletter content could generate — Depends()-based header auth resolves
+before Pydantic body validation in FastAPI, so this is a safe way to
+prove auth without triggering the real handler). mse-api's own endpoint
+re-confirmed `200` with the same key, unaffected by any of this.
+
+## Still open / residual risk (superseded — see update above)
+
 - Vercel deploy was verified via its own `*.vercel.app` production URL —
   there's no custom domain alias (e.g. `app.thdstack.com`) pointed at
   ceo-dashboard yet, only the auto-generated one.
