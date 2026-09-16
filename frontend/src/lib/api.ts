@@ -7,6 +7,7 @@ import type {
   DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
   ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput, LinearConnectInput, GithubIssuesConnectInput,
   ServiceNowConnectInput, WorkspaceTokenStatus, RotateWorkspaceTokenResult,
+  IncidentFilters, WorkspaceMembersResponse, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -16,6 +17,8 @@ import {
   mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s, mockSaveLlmKey,
   getMockTicketingStatus, mockConnectJira, mockConnectLinear, mockConnectGithubIssues, mockConnectServiceNow,
   getMockWorkspaceTokenStatus, mockRotateWorkspaceToken,
+  mockAssignIncident, getMockWorkspaceMembers, getMockIncidentComments, mockCreateIncidentComment,
+  mockBulkIncidentAction,
 } from './mock-data'
 
 export const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -91,13 +94,78 @@ async function request<T>(
 
 // ── Incidents ──────────────────────────────────────────────────────────
 
+// 24-gap-closure Phase 2: statusFilter kept as its own positional param
+// for every existing call site (backward compatible); pass a full
+// IncidentFilters object as the third argument for the new resource_id/
+// resource_name/severity/agent_id/date range/assigned_to filters.
 export async function listIncidents(
   token: string,
   statusFilter?: string,
+  filters?: Omit<IncidentFilters, 'status_filter'>,
 ): Promise<Incident[]> {
-  if (MOCK_MODE) return getMockIncidents(statusFilter)
-  const qs = statusFilter ? `?status_filter=${statusFilter}` : ''
+  if (MOCK_MODE) return getMockIncidents({ status_filter: statusFilter, ...filters })
+  const params = new URLSearchParams()
+  if (statusFilter) params.set('status_filter', statusFilter)
+  if (filters?.severity) params.set('severity', filters.severity)
+  if (filters?.agent_id) params.set('agent_id', filters.agent_id)
+  if (filters?.resource_id) params.set('resource_id', filters.resource_id)
+  if (filters?.resource_name) params.set('resource_name', filters.resource_name)
+  if (filters?.date_from) params.set('date_from', filters.date_from)
+  if (filters?.date_to) params.set('date_to', filters.date_to)
+  if (filters?.assigned_to) params.set('assigned_to', filters.assigned_to)
+  const qs = params.toString() ? `?${params.toString()}` : ''
   return request<Incident[]>(`/incidents${qs}`, token)
+}
+
+export async function assignIncident(
+  token: string,
+  incidentId: string,
+  memberId: string | null,
+): Promise<Incident> {
+  if (MOCK_MODE) {
+    const inc = mockAssignIncident(incidentId, memberId)
+    if (!inc) throw new ApiError(404, 'Incident not found')
+    return inc
+  }
+  return request<Incident>(`/incidents/${incidentId}/assign`, token, {
+    method: 'PATCH',
+    body: JSON.stringify({ member_id: memberId }),
+  })
+}
+
+export async function listWorkspaceMembers(token: string): Promise<WorkspaceMembersResponse> {
+  if (MOCK_MODE) return getMockWorkspaceMembers()
+  return request<WorkspaceMembersResponse>('/workspace-members', token)
+}
+
+export async function listIncidentComments(token: string, incidentId: string): Promise<IncidentComment[]> {
+  if (MOCK_MODE) return getMockIncidentComments(incidentId)
+  return request<IncidentComment[]>(`/incidents/${incidentId}/comments`, token)
+}
+
+export async function createIncidentComment(
+  token: string,
+  incidentId: string,
+  body: string,
+): Promise<IncidentComment> {
+  if (MOCK_MODE) return mockCreateIncidentComment(incidentId, body)
+  return request<IncidentComment>(`/incidents/${incidentId}/comments`, token, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
+  })
+}
+
+export async function bulkIncidentAction(
+  token: string,
+  incidentIds: string[],
+  action: BulkIncidentActionType,
+  extra?: { reason?: string; resolution_note?: string },
+): Promise<BulkIncidentActionResponse> {
+  if (MOCK_MODE) return mockBulkIncidentAction(incidentIds, action)
+  return request<BulkIncidentActionResponse>('/incidents/bulk', token, {
+    method: 'POST',
+    body: JSON.stringify({ incident_ids: incidentIds, action, ...extra }),
+  })
 }
 
 export async function getIncident(token: string, incidentId: string): Promise<Incident> {

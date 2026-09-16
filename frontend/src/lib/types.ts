@@ -8,6 +8,10 @@ export type IncidentStatus =
   | 'failed'
   | 'budget_exceeded'
   | 'resolved_manually'
+  // POST /incidents/{id}/reject has set this since before this session --
+  // it had no frontend representation at all until the 24-gap-closure
+  // Phase 2 bulk-dismiss build needed to display its own result.
+  | 'rejected'
 
 export type ImpactLevel = 'low' | 'medium' | 'high'
 
@@ -25,17 +29,79 @@ export interface Incident {
   parsed_error: string
   options: RemediationOption[]
   estimated_duration_seconds: number | null
-  // enriched on the frontend from webhook context
+  // 24-gap-closure Phase 1/2: severity/agent_id/resource_id/resource_name/
+  // created_at/assigned_to are now genuinely returned by GET /incidents
+  // and GET /incidents/{id} -- agent_id/created_at were referenced
+  // throughout the frontend (PipelineTracker.tsx, RemediationCard.tsx)
+  // long before the real API ever sent them; that was a real, silent gap
+  // (always undefined outside MOCK_MODE), not something introduced here.
+  severity?: 'critical' | 'high' | 'medium' | 'low'
   agent_id?: string
+  resource_id?: string
+  resource_name?: string
   cloud_provider?: string
   job_name?: string
   repository?: string
   branch?: string
   created_at?: string
+  assigned_to?: string | null
+  assigned_to_email?: string | null
   // set locally right after a manual resolution — not returned by
   // GET /incidents or GET /incidents/{id} (same convention as
   // custom_solution_input on the pre-existing custom-fix path)
   resolution_note?: string | null
+}
+
+// 24-gap-closure Phase 2 — incident search/filter API. All optional;
+// resource_name is a partial match server-side, everything else exact.
+// assigned_to accepts a real member id or the literal "me" (resolved
+// server-side to the caller's own member session, so the frontend never
+// needs to know its own member id).
+export interface IncidentFilters {
+  status_filter?: IncidentStatus
+  severity?: 'critical' | 'high' | 'medium' | 'low'
+  agent_id?: string
+  resource_id?: string
+  resource_name?: string
+  date_from?: string
+  date_to?: string
+  assigned_to?: string
+}
+
+export interface WorkspaceMember {
+  id: string
+  email: string
+  role: string
+  status: string
+  invited_at: string | null
+  joined_at: string | null
+}
+
+export interface WorkspaceMembersResponse {
+  members: WorkspaceMember[]
+  seats_used: number
+  max_seats: number
+}
+
+export interface IncidentComment {
+  id: string
+  incident_id: string
+  member_id: string | null
+  member_email: string | null
+  body: string
+  created_at: string
+}
+
+export type BulkIncidentActionType = 'dismiss' | 'resolve_manually'
+
+export interface BulkIncidentActionResult {
+  incident_id: string
+  outcome: 'applied' | 'not_found' | 'not_pending'
+}
+
+export interface BulkIncidentActionResponse {
+  action: BulkIncidentActionType
+  results: BulkIncidentActionResult[]
 }
 
 export interface ApprovalRequest {
@@ -124,12 +190,26 @@ export const STATUS_META: Record<
     dot:   'bg-emerald-400',
     bg:    'bg-emerald-400/10 border-emerald-400/30',
   },
+  rejected: {
+    label: 'Dismissed',
+    color: 'text-zinc-400',
+    dot:   'bg-zinc-500',
+    bg:    'bg-zinc-800/50 border-zinc-700',
+  },
 }
 
 export const IMPACT_META: Record<ImpactLevel, { label: string; color: string }> = {
   low:    { label: 'Low Impact',    color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/30' },
   medium: { label: 'Med Impact',    color: 'text-amber-400 bg-amber-400/10 border-amber-400/30' },
   high:   { label: 'High Impact',   color: 'text-red-400 bg-red-400/10 border-red-400/30' },
+}
+
+// 24-gap-closure Phase 1/2 -- incidents.severity display metadata.
+export const SEVERITY_META: Record<'critical' | 'high' | 'medium' | 'low', { label: string; color: string }> = {
+  critical: { label: 'Critical', color: 'text-red-400 bg-red-400/10 border-red-400/30' },
+  high:     { label: 'High',     color: 'text-orange-400 bg-orange-400/10 border-orange-400/30' },
+  medium:   { label: 'Medium',   color: 'text-amber-400 bg-amber-400/10 border-amber-400/30' },
+  low:      { label: 'Low',      color: 'text-zinc-400 bg-zinc-800/50 border-zinc-700' },
 }
 
 // ── Cloud audit remediation plan (mirrors api/routes/audit.py) ─────────────

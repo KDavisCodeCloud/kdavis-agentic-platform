@@ -167,6 +167,50 @@ class IncidentResponse(BaseModel):
     options: list[RemediationOption]
     estimated_duration_seconds: Optional[int] = None
     severity: Optional[str] = None  # critical|high|medium|low -- migration 042
+    # 24-gap-closure Phase 2. agent_id/created_at were referenced throughout
+    # the frontend (PipelineTracker.tsx, RemediationCard.tsx) but never
+    # actually returned by get_incident/list_incidents -- a real pre-existing
+    # gap found while adding the search/filter API, not introduced here.
+    agent_id: Optional[str] = None
+    resource_id: Optional[str] = None
+    resource_name: Optional[str] = None
+    created_at: Optional[str] = None
+    assigned_to: Optional[str] = None
+    assigned_to_email: Optional[str] = None
+
+
+class IncidentAssignRequest(BaseModel):
+    member_id: Optional[str] = None  # None unassigns
+
+
+class IncidentCommentCreateRequest(BaseModel):
+    body: str
+
+
+class IncidentCommentResponse(BaseModel):
+    id: str
+    incident_id: str
+    member_id: Optional[str] = None
+    member_email: Optional[str] = None  # None for a token-authenticated caller
+    body: str
+    created_at: str
+
+
+class BulkIncidentActionRequest(BaseModel):
+    incident_ids: list[str]
+    action: str  # "dismiss" | "resolve_manually"
+    reason: Optional[str] = None            # dismiss
+    resolution_note: Optional[str] = None   # resolve_manually
+
+
+class BulkIncidentActionResult(BaseModel):
+    incident_id: str
+    outcome: str  # "applied" | "not_found" | "not_pending"
+
+
+class BulkIncidentActionResponse(BaseModel):
+    action: str
+    results: list[BulkIncidentActionResult]
 
 
 class ApprovalResponse(BaseModel):

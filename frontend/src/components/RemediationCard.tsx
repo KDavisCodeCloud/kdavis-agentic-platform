@@ -1,13 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck } from 'lucide-react'
+import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { approveIncident, resolveIncidentManually } from '@/lib/api'
-import { cn, fmtDuration } from '@/lib/utils'
-import { IMPACT_META, STATUS_META, type Incident, type RemediationOption } from '@/lib/types'
+import {
+  approveIncident, resolveIncidentManually, assignIncident, listWorkspaceMembers,
+  listIncidentComments, createIncidentComment,
+} from '@/lib/api'
+import { cn, fmtDuration, timeAgo } from '@/lib/utils'
+import { IMPACT_META, SEVERITY_META, STATUS_META, type Incident, type RemediationOption, type WorkspaceMember, type IncidentComment } from '@/lib/types'
 
 // Not a real RemediationOption returned by the agent — a fourth,
 // platform-added entry rendered alongside them. Its id is never sent to
@@ -144,14 +147,159 @@ function ExecutionLog({ incident }: { incident: Incident }) {
   )
 }
 
+// 24-gap-closure Phase 2 — assignment. Fetches the workspace's member
+// list once per mount (not per incident -- the list doesn't change as
+// the operator clicks between incidents) and lets the caller reassign
+// inline. Errors surface as a small inline message, not a blocking one,
+// since assignment is metadata, not the incident's own action flow.
+function AssigneePicker({ incident, token, onAssigned }: {
+  incident: Incident
+  token: string
+  onAssigned: (assignedTo: string | null, assignedToEmail: string | null) => void
+}) {
+  const [members, setMembers] = useState<WorkspaceMember[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState<string | null>(null)
+
+  useEffect(() => {
+    listWorkspaceMembers(token)
+      .then(res => setMembers(res.members))
+      .catch(() => { /* non-fatal -- picker just shows "Unassigned" only */ })
+  }, [token])
+
+  async function handleChange(memberId: string) {
+    setLoading(true)
+    setError(null)
+    try {
+      const updated = await assignIncident(token, incident.incident_id, memberId || null)
+      onAssigned(updated.assigned_to ?? null, updated.assigned_to_email ?? null)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not update assignment')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-zinc-500">Assigned to</span>
+      <select
+        value={incident.assigned_to ?? ''}
+        onChange={(e) => handleChange(e.target.value)}
+        disabled={loading}
+        className="rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200 focus:border-blue-500/50 focus:outline-none disabled:opacity-50"
+      >
+        <option value="">Unassigned</option>
+        {members.map(m => (
+          <option key={m.id} value={m.id}>{m.email}</option>
+        ))}
+      </select>
+      {error && <span className="text-xs text-red-400">{error}</span>}
+    </div>
+  )
+}
+
+// 24-gap-closure Phase 2 — comments thread. Any authenticated caller can
+// read/post (same trust level as viewing the incident itself); a
+// token-authenticated caller's own comments come back with no
+// member_email, shown as "You" here rather than a blank author.
+function CommentsThread({ incidentId, token }: { incidentId: string; token: string }) {
+  const [comments, setComments]   = useState<IncidentComment[]>([])
+  const [draft, setDraft]         = useState('')
+  const [loading, setLoading]     = useState(true)
+  const [posting, setPosting]     = useState(false)
+  const [error, setError]         = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    listIncidentComments(token, incidentId)
+      .then(data => { if (!cancelled) setComments(data) })
+      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load comments') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [incidentId, token])
+
+  async function handleSubmit() {
+    const body = draft.trim()
+    if (!body) return
+    setPosting(true)
+    setError(null)
+    try {
+      const comment = await createIncidentComment(token, incidentId, body)
+      setComments(prev => [...prev, comment])
+      setDraft('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not post comment')
+    } finally {
+      setPosting(false)
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-zinc-800 pt-4">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+        <MessageSquare className="h-3 w-3" />
+        Comments {comments.length > 0 && `(${comments.length})`}
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-3">
+          <Loader2 className="h-4 w-4 animate-spin text-zinc-600" />
+        </div>
+      ) : comments.length === 0 ? (
+        <p className="py-2 text-xs text-zinc-600">No comments yet.</p>
+      ) : (
+        <div className="mb-3 space-y-2 max-h-48 overflow-y-auto">
+          {comments.map(c => (
+            <div key={c.id} className="rounded border border-zinc-800 bg-zinc-950 p-2">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-zinc-300">{c.member_email ?? 'You'}</span>
+                <span className="text-xs text-zinc-600">{timeAgo(c.created_at)}</span>
+              </div>
+              <p className="text-xs leading-relaxed text-zinc-400 whitespace-pre-wrap">{c.body}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p className="mb-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</p>
+      )}
+
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !posting) handleSubmit() }}
+          placeholder="Add a comment..."
+          disabled={posting}
+          className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/50 focus:outline-none disabled:opacity-50"
+        />
+        <Button
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          disabled={posting || !draft.trim()}
+          loading={posting}
+          onClick={handleSubmit}
+        >
+          <Send className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 interface RemediationCardProps {
   incident: Incident
   token: string
   onApproved: (incidentId: string, optionId: string) => void
   onResolvedManually: (incidentId: string, resolutionNote: string | null) => void
+  onAssigned?: (incidentId: string, assignedTo: string | null, assignedToEmail: string | null) => void
 }
 
-export function RemediationCard({ incident, token, onApproved, onResolvedManually }: RemediationCardProps) {
+export function RemediationCard({ incident, token, onApproved, onResolvedManually, onAssigned }: RemediationCardProps) {
   const [selected, setSelected]         = useState<string | null>(null)
   const [customInput, setCustom]        = useState('')
   const [expanded, setExpanded]         = useState<string | null>(null)
@@ -243,11 +391,28 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
           </span>
         </div>
 
-        {incident.agent_id && (
+        {(incident.agent_id || incident.severity) && (
+          <div className="mb-2 flex items-center gap-2">
+            {incident.agent_id && (
+              <Badge variant="default" className="text-xs">
+                {incident.agent_id.replace(/_/g, ' ').replace('agent ', 'Agent ').toUpperCase()}
+              </Badge>
+            )}
+            {incident.severity && (
+              <span className={cn('rounded border px-2 py-0.5 text-xs font-medium', SEVERITY_META[incident.severity].color)}>
+                {SEVERITY_META[incident.severity].label}
+              </span>
+            )}
+          </div>
+        )}
+
+        {onAssigned && (
           <div className="mb-2">
-            <Badge variant="default" className="text-xs">
-              {incident.agent_id.replace(/_/g, ' ').replace('agent ', 'Agent ').toUpperCase()}
-            </Badge>
+            <AssigneePicker
+              incident={incident}
+              token={token}
+              onAssigned={(assignedTo, assignedToEmail) => onAssigned(incident.incident_id, assignedTo, assignedToEmail)}
+            />
           </div>
         )}
 
@@ -480,8 +645,24 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                 </div>
               </>
             )}
+            {incident.status === 'rejected' && (
+              <>
+                <XCircle className="h-10 w-10 text-zinc-500" />
+                <div>
+                  <p className="text-sm font-medium text-zinc-400">Dismissed</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    This remediation was dismissed. No action was executed.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         )}
+
+        {/* Comments thread — 24-gap-closure Phase 2. Always visible,
+            regardless of incident status; a comment thread is a
+            collaborative record, not part of the approve/resolve flow. */}
+        <CommentsThread incidentId={incident.incident_id} token={token} />
       </div>
 
       {/* Footer — approve buttons (pending only, and not while the

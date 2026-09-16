@@ -17,6 +17,12 @@ import type {
   ManualResolutionResponse,
   ServiceNowConnectInput,
   TicketingStatus,
+  WorkspaceMember,
+  WorkspaceMembersResponse,
+  IncidentComment,
+  BulkIncidentActionType,
+  BulkIncidentActionResult,
+  BulkIncidentActionResponse,
 } from './types'
 
 function ago(mins: number): string {
@@ -30,6 +36,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567801',
     status: 'pending_approval',
     agent_id: 'agent_01_cicd_triage',
+    severity: 'high',
     cloud_provider: 'aws',
     repository: 'stackbridge/payments-api',
     branch: 'main',
@@ -69,6 +76,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: 'b2c3d4e5-f6a7-8901-bcde-f12345678902',
     status: 'pending_approval',
     agent_id: 'agent_02_k8s_alert',
+    severity: 'critical',
     cloud_provider: 'azure',
     repository: 'stackbridge/platform-services',
     branch: 'main',
@@ -109,6 +117,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: 'c3d4e5f6-a7b8-9012-cdef-123456789003',
     status: 'pending_approval',
     agent_id: 'agent_05_iam_minimizer',
+    severity: 'medium',
     cloud_provider: 'aws',
     repository: 'stackbridge/infra-iam',
     branch: 'main',
@@ -147,6 +156,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: 'd4e5f6a7-b8c9-0123-defa-234567890104',
     status: 'pending_approval',
     agent_id: 'agent_08_drift_detection',
+    severity: 'critical',
     cloud_provider: 'aws',
     repository: 'stackbridge/terraform-infra',
     branch: 'main',
@@ -185,6 +195,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: 'e5f6a7b8-c9d0-1234-efab-345678901205',
     status: 'executing',
     agent_id: 'agent_03_pr_review',
+    severity: 'low',
     cloud_provider: 'aws',
     repository: 'stackbridge/payments-api',
     branch: 'feat/checkout-v2',
@@ -198,6 +209,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: 'f6a7b8c9-d0e1-2345-fabc-456789012306',
     status: 'executing',
     agent_id: 'agent_10_dependency_patch',
+    severity: 'high',
     cloud_provider: 'aws',
     repository: 'stackbridge/payments-api',
     branch: 'main',
@@ -211,6 +223,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: '07a8b9c0-d1e2-3456-abcd-567890123407',
     status: 'executed',
     agent_id: 'agent_04_migration',
+    severity: 'medium',
     cloud_provider: 'aws',
     repository: 'stackbridge/data-platform',
     branch: 'main',
@@ -233,6 +246,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: '18b9c0d1-e2f3-4567-bcde-678901234508',
     status: 'executed',
     agent_id: 'agent_06_finops',
+    severity: 'low',
     cloud_provider: 'aws',
     repository: 'stackbridge/infra',
     branch: 'main',
@@ -255,6 +269,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: '29c0d1e2-f3a4-5678-cdef-789012345609',
     status: 'executed',
     agent_id: 'agent_07_runbook',
+    severity: 'medium',
     cloud_provider: 'gcp',
     repository: 'stackbridge/ml-platform',
     branch: 'main',
@@ -268,6 +283,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: '3ad1e2f3-a4b5-6789-defa-890123456710',
     status: 'held',
     agent_id: 'agent_09_onboarding_buddy',
+    severity: 'low',
     cloud_provider: 'aws',
     repository: 'stackbridge/platform-services',
     branch: 'main',
@@ -290,6 +306,7 @@ const MOCK_INCIDENTS: Incident[] = [
     incident_id: '4be2f3a4-b5c6-7890-efab-901234567811',
     status: 'failed',
     agent_id: 'agent_01_cicd_triage',
+    severity: 'high',
     cloud_provider: 'gcp',
     repository: 'stackbridge/analytics-pipeline',
     branch: 'release/v2.1',
@@ -309,9 +326,33 @@ function getStore(): Incident[] {
   return _store
 }
 
-export function getMockIncidents(statusFilter?: string): Incident[] {
-  const all = getStore()
-  return statusFilter ? all.filter(i => i.status === statusFilter) : [...all]
+// 24-gap-closure Phase 2: mirrors the real API's filter set. Every field
+// optional; date_from/date_to are accepted but not applied here -- the
+// mock dataset's timestamps are all "just now" (ago(mins)), so a real
+// date-range filter would have nothing meaningful to demonstrate against
+// a handful of fixture rows generated at page-load time.
+export function getMockIncidents(filters?: {
+  status_filter?: string
+  severity?: string
+  agent_id?: string
+  resource_id?: string
+  resource_name?: string
+  assigned_to?: string
+}): Incident[] {
+  let all = [...getStore()]
+  if (filters?.status_filter) all = all.filter(i => i.status === filters.status_filter)
+  if (filters?.severity) all = all.filter(i => i.severity === filters.severity)
+  if (filters?.agent_id) all = all.filter(i => i.agent_id === filters.agent_id)
+  if (filters?.resource_id) all = all.filter(i => i.resource_id === filters.resource_id)
+  if (filters?.resource_name) {
+    const needle = filters.resource_name.toLowerCase()
+    all = all.filter(i => (i.resource_name ?? '').toLowerCase().includes(needle))
+  }
+  if (filters?.assigned_to) {
+    const target = filters.assigned_to === 'me' ? MOCK_MEMBERS[0].id : filters.assigned_to
+    all = all.filter(i => i.assigned_to === target)
+  }
+  return all
 }
 
 export function mockApprove(incidentId: string, optionId: string): void {
@@ -334,6 +375,65 @@ export function mockResolveManually(incidentId: string, resolutionNote?: string)
     resolution_note: note,
     resolved_at: new Date().toISOString(),
   }
+}
+
+// ── 24-gap-closure Phase 2 — assignment, comments, bulk actions ──────
+
+const MOCK_MEMBERS: WorkspaceMember[] = [
+  { id: 'm1a2b3c4-0000-0000-0000-000000000001', email: 'you@acme.com', role: 'admin', status: 'active', invited_at: ago(60 * 24 * 30), joined_at: ago(60 * 24 * 29) },
+  { id: 'm1a2b3c4-0000-0000-0000-000000000002', email: 'ops@acme.com', role: 'approver', status: 'active', invited_at: ago(60 * 24 * 14), joined_at: ago(60 * 24 * 13) },
+  { id: 'm1a2b3c4-0000-0000-0000-000000000003', email: 'reviewer@acme.com', role: 'viewer', status: 'active', invited_at: ago(60 * 24 * 7), joined_at: ago(60 * 24 * 6) },
+]
+
+export function getMockWorkspaceMembers(): WorkspaceMembersResponse {
+  return { members: MOCK_MEMBERS, seats_used: MOCK_MEMBERS.length, max_seats: 15 }
+}
+
+export function mockAssignIncident(incidentId: string, memberId: string | null): Incident | null {
+  const inc = getStore().find(i => i.incident_id === incidentId)
+  if (!inc) return null
+  inc.assigned_to = memberId
+  inc.assigned_to_email = memberId ? MOCK_MEMBERS.find(m => m.id === memberId)?.email ?? null : null
+  return { ...inc }
+}
+
+let _commentStore: Record<string, IncidentComment[]> | null = null
+function getCommentStore(): Record<string, IncidentComment[]> {
+  if (!_commentStore) _commentStore = {}
+  return _commentStore
+}
+
+export function getMockIncidentComments(incidentId: string): IncidentComment[] {
+  return getCommentStore()[incidentId] ?? []
+}
+
+export function mockCreateIncidentComment(incidentId: string, body: string): IncidentComment {
+  const store = getCommentStore()
+  if (!store[incidentId]) store[incidentId] = []
+  const comment: IncidentComment = {
+    id: `mock-comment-${Date.now()}-${store[incidentId].length}`,
+    incident_id: incidentId,
+    member_id: MOCK_MEMBERS[0].id,
+    member_email: MOCK_MEMBERS[0].email,
+    body,
+    created_at: new Date().toISOString(),
+  }
+  store[incidentId].push(comment)
+  return comment
+}
+
+export function mockBulkIncidentAction(
+  incidentIds: string[],
+  action: BulkIncidentActionType,
+): BulkIncidentActionResponse {
+  const results: BulkIncidentActionResult[] = incidentIds.map(id => {
+    const inc = getStore().find(i => i.incident_id === id)
+    if (!inc) return { incident_id: id, outcome: 'not_found' as const }
+    if (inc.status !== 'pending_approval') return { incident_id: id, outcome: 'not_pending' as const }
+    inc.status = action === 'dismiss' ? 'rejected' : 'resolved_manually'
+    return { incident_id: id, outcome: 'applied' as const }
+  })
+  return { action, results }
 }
 
 // ── Cloud Audit Remediation Plan — Mock Data ─────────────────────────

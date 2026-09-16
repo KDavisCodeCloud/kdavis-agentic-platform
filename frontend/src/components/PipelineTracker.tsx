@@ -5,11 +5,18 @@ import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck } from 'lucid
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
+import { SEVERITY_META } from '@/lib/types'
 
 interface PipelineTrackerProps {
   incidents: Incident[]
   onSelect: (incident: Incident) => void
   selectedId: string | null
+  // 24-gap-closure Phase 2 -- bulk select. Only pending_approval incidents
+  // are ever selectable (bulk dismiss/resolve-manually only apply to
+  // that status, same as the single-incident endpoints), so
+  // checkedIds/onToggleCheck are ignored entirely for any other row.
+  checkedIds?: Set<string>
+  onToggleCheck?: (incidentId: string) => void
 }
 
 type PipelineStep = {
@@ -35,11 +42,12 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
     failed:            3,
     budget_exceeded:   2,
     resolved_manually: 4, // resolved outside the platform, same terminal step as executed
+    rejected:          2, // dismissed at the HITL gate, same stopping point as held
   }
 
   const active = activeIndex[status] ?? 2
   // Any terminal status: the active step is done, not spinning
-  const isTerminal = ['executed', 'held', 'budget_exceeded', 'resolved_manually'].includes(status)
+  const isTerminal = ['executed', 'held', 'budget_exceeded', 'resolved_manually', 'rejected'].includes(status)
 
   return steps.map((s, i) => ({
     ...s,
@@ -70,13 +78,16 @@ function StepDot({ status }: { status: PipelineStep['status'] }) {
   )
 }
 
-function IncidentRow({ incident, isSelected, onClick }: {
+function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: {
   incident: Incident
   isSelected: boolean
   onClick: () => void
+  checked?: boolean
+  onToggleCheck?: () => void
 }) {
   const steps = stepsForStatus(incident.status)
   const isPending = incident.status === 'pending_approval'
+  const severityMeta = incident.severity ? SEVERITY_META[incident.severity] : null
 
   return (
     <motion.div
@@ -96,6 +107,16 @@ function IncidentRow({ incident, isSelected, onClick }: {
       {/* Top row */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
+          {isPending && onToggleCheck && (
+            <input
+              type="checkbox"
+              checked={!!checked}
+              onClick={(e) => e.stopPropagation()}
+              onChange={onToggleCheck}
+              className="h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-zinc-600 bg-zinc-900 accent-blue-500"
+              aria-label={`Select incident ${incident.incident_id.slice(0, 8)}`}
+            />
+          )}
           {incident.status === 'pending_approval' && (
             <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400 animate-pulse" />
           )}
@@ -111,7 +132,7 @@ function IncidentRow({ incident, isSelected, onClick }: {
           {incident.status === 'held' && (
             <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-500" />
           )}
-          {incident.status === 'failed' && (
+          {(incident.status === 'failed' || incident.status === 'rejected') && (
             <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
           )}
           <span className="truncate text-xs font-mono text-zinc-400">
@@ -120,11 +141,22 @@ function IncidentRow({ incident, isSelected, onClick }: {
           <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
             {agentLabel(incident.agent_id ?? 'agent_01_cicd_triage')}
           </span>
+          {severityMeta && (
+            <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-xs font-medium', severityMeta.color)}>
+              {severityMeta.label}
+            </span>
+          )}
         </div>
         <span className="shrink-0 text-xs text-zinc-600">
           {incident.created_at ? timeAgo(incident.created_at) : '—'}
         </span>
       </div>
+
+      {incident.assigned_to_email && (
+        <div className="mb-2 text-xs text-zinc-500">
+          Assigned to <span className="text-zinc-400">{incident.assigned_to_email}</span>
+        </div>
+      )}
 
       {/* Repo + branch */}
       {(incident.repository || incident.branch) && (
@@ -164,6 +196,7 @@ function IncidentRow({ incident, isSelected, onClick }: {
             failed:            'Failed',
             budget_exceeded:   'Budget Exceeded',
             resolved_manually: 'Resolved Manually',
+            rejected:          'Dismissed',
           }[incident.status]}
         </span>
       </div>
@@ -171,7 +204,7 @@ function IncidentRow({ incident, isSelected, onClick }: {
   )
 }
 
-export function PipelineTracker({ incidents, onSelect, selectedId }: PipelineTrackerProps) {
+export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, onToggleCheck }: PipelineTrackerProps) {
   const [tick, setTick] = useState(0)
 
   // Update relative timestamps every 30 seconds
@@ -182,7 +215,7 @@ export function PipelineTracker({ incidents, onSelect, selectedId }: PipelineTra
 
   const pending  = incidents.filter(i => i.status === 'pending_approval')
   const active   = incidents.filter(i => i.status === 'executing')
-  const resolved = incidents.filter(i => ['executed', 'resolved_manually', 'held', 'failed', 'budget_exceeded'].includes(i.status))
+  const resolved = incidents.filter(i => ['executed', 'resolved_manually', 'held', 'failed', 'budget_exceeded', 'rejected'].includes(i.status))
 
   if (incidents.length === 0) {
     return (
@@ -212,6 +245,8 @@ export function PipelineTracker({ incidents, onSelect, selectedId }: PipelineTra
                   incident={inc}
                   isSelected={inc.incident_id === selectedId}
                   onClick={() => onSelect(inc)}
+                  checked={checkedIds?.has(inc.incident_id)}
+                  onToggleCheck={onToggleCheck ? () => onToggleCheck(inc.incident_id) : undefined}
                 />
               ))}
             </div>
