@@ -34,6 +34,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_08_drift_detection.tools import DriftTools
 from core.security import shield
+from core.severity import normalize_severity
 
 log = logging.getLogger(__name__)
 
@@ -450,6 +451,7 @@ class DriftWorkflow(BaseAgent):
             remediation_options=state["remediation_options"],
             cloud_provider=state["cloud_provider"],
             tokens_used=state.get("tokens_used", 0),
+            severity=normalize_severity(state.get("drift_severity")),
         )
 
         await self.record_token_usage(

@@ -42,6 +42,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
 from agents.agent_10_dependency_patch.tools import DependencyPatchTools
+from core.severity import severity_from_counts
 
 log = logging.getLogger(__name__)
 
@@ -407,6 +408,7 @@ class DependencyPatchWorkflow(BaseAgent):
             remediation_options=state["remediation_options"],
             cloud_provider=state["cloud_provider"],
             tokens_used=state.get("tokens_used", 0),
+            severity=severity_from_counts(state.get("critical_count", 0), state.get("high_count", 0)),
         )
 
         await self.record_token_usage(

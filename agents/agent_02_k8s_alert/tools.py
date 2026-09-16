@@ -112,6 +112,13 @@ class K8sTools:
         request_val = memory_request or _halve_memory(memory_limit)
         container = container_name or deployment_name
 
+        # Capture current limits/requests BEFORE the patch -- rollback
+        # information for the incidents.before_state column (migration
+        # 042). Best-effort: a failed GET here must never block the real
+        # remediation the operator already approved, so this degrades to
+        # an explicit "capture_failed" marker rather than raising.
+        before_state = await self._capture_container_resources(namespace, deployment_name, container)
+
         patch_body = {
             "spec": {
                 "template": {
@@ -144,10 +151,42 @@ class K8sTools:
                 "namespace": namespace,
                 "new_memory_limit": memory_limit,
                 "new_memory_request": request_val,
+                "before_state": before_state,
             }
 
         log.error("[K8sTools] patch_deployment_memory failed: %d %s", resp.status_code, resp.text[:200])
         raise RuntimeError(f"K8s PATCH error {resp.status_code}: {resp.text[:200]}")
+
+    async def _capture_container_resources(
+        self, namespace: str, deployment_name: str, container_name: str,
+    ) -> dict:
+        """GET the deployment's current resources.limits/requests for the
+        target container, before any mutation. Never raises -- returns a
+        {"capture_failed": ...} marker instead, since this is rollback
+        *information*, not a precondition for the remediation itself."""
+        url = f"{self.k8s_api_url}/apis/apps/v1/namespaces/{namespace}/deployments/{deployment_name}"
+        try:
+            async with httpx.AsyncClient(timeout=30, verify=self._verify) as client:
+                resp = await client.get(
+                    url, headers={"Authorization": f"Bearer {self.k8s_token}"},
+                )
+            if resp.status_code != 200:
+                return {"capture_failed": f"GET returned {resp.status_code}"}
+            containers = (
+                resp.json().get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+            )
+            match = next((c for c in containers if c.get("name") == container_name), None)
+            if match is None:
+                return {"capture_failed": f"container '{container_name}' not found in current spec"}
+            resources = match.get("resources", {})
+            return {
+                "memory_limit": resources.get("limits", {}).get("memory"),
+                "memory_request": resources.get("requests", {}).get("memory"),
+                "cpu_limit": resources.get("limits", {}).get("cpu"),
+                "cpu_request": resources.get("requests", {}).get("cpu"),
+            }
+        except Exception as exc:
+            return {"capture_failed": str(exc)[:200]}
 
     async def apply_hpa(
         self,
@@ -172,6 +211,8 @@ class K8sTools:
             "Authorization": f"Bearer {self.k8s_token}",
             "Content-Type": "application/json",
         }
+
+        before_state = await self._capture_hpa(namespace, deployment_name)
 
         hpa_manifest = {
             "apiVersion": "autoscaling/v2",
@@ -216,6 +257,7 @@ class K8sTools:
                 "namespace": namespace,
                 "min_replicas": min_replicas,
                 "max_replicas": max_replicas,
+                "before_state": before_state,
             }
 
         # 409 = already exists — use replace
@@ -232,9 +274,33 @@ class K8sTools:
                     "namespace": namespace,
                     "min_replicas": min_replicas,
                     "max_replicas": max_replicas,
+                    "before_state": before_state,
                 }
 
         raise RuntimeError(f"K8s HPA error {resp.status_code}: {resp.text[:200]}")
+
+    async def _capture_hpa(self, namespace: str, deployment_name: str) -> dict:
+        """GET the existing HPA for this deployment, if any, before
+        create-or-replace. Never raises -- see _capture_container_resources
+        for the same reasoning."""
+        url = f"{self.k8s_api_url}/apis/autoscaling/v2/namespaces/{namespace}/horizontalpodautoscalers/{deployment_name}"
+        try:
+            async with httpx.AsyncClient(timeout=30, verify=self._verify) as client:
+                resp = await client.get(
+                    url, headers={"Authorization": f"Bearer {self.k8s_token}"},
+                )
+            if resp.status_code == 404:
+                return {"existed": False}
+            if resp.status_code != 200:
+                return {"capture_failed": f"GET returned {resp.status_code}"}
+            spec = resp.json().get("spec", {})
+            return {
+                "existed": True,
+                "min_replicas": spec.get("minReplicas"),
+                "max_replicas": spec.get("maxReplicas"),
+            }
+        except Exception as exc:
+            return {"capture_failed": str(exc)[:200]}
 
     async def rollback_deployment(self, namespace: str, deployment_name: str) -> dict:
         """
@@ -300,6 +366,7 @@ class K8sTools:
                 "deployment": deployment_name,
                 "namespace": namespace,
                 "rolled_back_from_revision": current_revision,
+                "before_state": {"revision": current_revision},
             }
 
         raise RuntimeError(f"K8s rollback error {resp.status_code}: {resp.text[:200]}")

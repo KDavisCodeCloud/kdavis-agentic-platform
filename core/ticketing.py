@@ -121,17 +121,25 @@ def _summary_line(incident_summary: dict) -> str:
 
 # ── Jira (Phase 1) ──────────────────────────────────────────────────────────
 
+_JIRA_PRIORITY_MAP = {
+    "critical": "P1",
+    "high": "P2",
+    "medium": "P3",
+    "low": "P4",
+}
+
+
 def _jira_priority(incident_summary: dict) -> str:
     """
-    Maps incident severity -> Jira priority. GAP: incidents carries no
-    severity concept today (confirmed against db/migrations/001 and 029 --
-    no severity column exists, and execution_status at resolution time is
-    always 'executed' or 'resolved_manually', never a signal of how bad the
-    original incident was). Rather than inventing a fake severity field,
-    every resolved incident defaults to P3 here. Revisit if/when incidents
-    gains a real severity column.
+    Maps incident severity -> Jira priority. Migration 042 (GAPS.md
+    24-gap closure Phase 1) added a real severity column to incidents --
+    this no longer defaults every ticket to P3 uniformly. Falls back to
+    P3 only when severity is genuinely missing (an incident created
+    before this migration, or a caller that hasn't threaded severity
+    through incident_summary yet), matching the same conservative
+    'medium' default used everywhere else severity is unknown.
     """
-    return "P3"
+    return _JIRA_PRIORITY_MAP.get((incident_summary.get("severity") or "").lower(), "P3")
 
 
 def _jira_description_adf(text: str) -> dict:

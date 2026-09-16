@@ -234,6 +234,50 @@ class TestK8sToolsPatchMemory:
         # (We verify via result since the mock doesn't capture the body directly here)
         assert ok_resp.status_code == 200
 
+    async def test_before_state_captures_current_resources(self, tools):
+        """Migration 042, GAPS.md 24-gap closure Phase 1: patch_deployment_memory
+        now GETs the deployment's current resources before mutating, so an
+        operator has real rollback information."""
+        current_deploy = {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [{
+                            "name": "payment-service",
+                            "resources": {
+                                "limits": {"memory": "512Mi", "cpu": "500m"},
+                                "requests": {"memory": "256Mi", "cpu": "250m"},
+                            },
+                        }]
+                    }
+                }
+            }
+        }
+        get_resp = _mock_k8s_resp(200, current_deploy)
+        patch_resp = _mock_k8s_resp(200, {"metadata": {"name": "payment-service"}})
+        mock_cls, ctx = _make_k8s_client_ctx([get_resp, patch_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.patch_deployment_memory("production", "payment-service", "1Gi")
+
+        assert result["before_state"] == {
+            "memory_limit": "512Mi", "memory_request": "256Mi",
+            "cpu_limit": "500m", "cpu_request": "250m",
+        }
+
+    async def test_before_state_capture_failure_does_not_block_patch(self, tools):
+        """A failed capture GET must never block the remediation the
+        operator already approved -- degrades to a marker, never raises."""
+        failed_get_resp = _mock_k8s_resp(500)
+        patch_resp = _mock_k8s_resp(200, {"metadata": {"name": "payment-service"}})
+        mock_cls, ctx = _make_k8s_client_ctx([failed_get_resp, patch_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.patch_deployment_memory("production", "payment-service", "1Gi")
+
+        assert result["status"] == "patched"
+        assert "capture_failed" in result["before_state"]
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # K8sTools — apply_hpa()
@@ -265,14 +309,39 @@ class TestK8sToolsApplyHPA:
             await tools_no_config.apply_hpa("production", "my-app")
 
     async def test_retries_with_put_on_409(self, tools):
+        # Migration 042: apply_hpa now GETs the existing HPA (before_state
+        # capture) before POSTing -- that GET consumes the first queued
+        # response, so it must be listed first here.
+        capture_get_resp = _mock_k8s_resp(404)
         conflict_resp = _mock_k8s_resp(409, {"message": "already exists"})
         ok_resp = _mock_k8s_resp(200, {"metadata": {"name": "payment-service"}})
-        mock_cls, ctx = _make_k8s_client_ctx([conflict_resp, ok_resp])
+        mock_cls, ctx = _make_k8s_client_ctx([capture_get_resp, conflict_resp, ok_resp])
 
         with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
             result = await tools.apply_hpa("production", "payment-service")
 
         assert result["status"] == "replaced"
+
+    async def test_before_state_reflects_no_existing_hpa(self, tools):
+        capture_get_resp = _mock_k8s_resp(404)
+        ok_resp = _mock_k8s_resp(201, {"metadata": {"name": "payment-service"}})
+        mock_cls, ctx = _make_k8s_client_ctx([capture_get_resp, ok_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.apply_hpa("production", "payment-service", 2, 10)
+
+        assert result["before_state"] == {"existed": False}
+
+    async def test_before_state_reflects_existing_hpa_replicas(self, tools):
+        existing_hpa = {"spec": {"minReplicas": 1, "maxReplicas": 5}}
+        capture_get_resp = _mock_k8s_resp(200, existing_hpa)
+        ok_resp = _mock_k8s_resp(200, {"metadata": {"name": "payment-service"}})
+        mock_cls, ctx = _make_k8s_client_ctx([capture_get_resp, ok_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.apply_hpa("production", "payment-service", 2, 10)
+
+        assert result["before_state"] == {"existed": True, "min_replicas": 1, "max_replicas": 5}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -303,6 +372,7 @@ class TestK8sToolsRollback:
 
         assert result["status"] == "rolled_back"
         assert result["rolled_back_from_revision"] == 3
+        assert result["before_state"] == {"revision": 3}
 
     async def test_raises_without_k8s_config(self):
         tools_no_config = K8sTools(k8s_api_url="", k8s_token="")
@@ -486,6 +556,12 @@ class TestK8sIngestPrometheus:
         result = await wf._ingest_node(state)
         assert result["alert_type"] == "OOMKilled"
 
+    async def test_raw_severity_is_none_prometheus_has_no_severity_field(self, mock_db, workspace_id, mock_router, k8s_alertmanager_payload):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id, k8s_alertmanager_payload)
+        result = await wf._ingest_node(state)
+        assert result["raw_severity"] is None
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # K8sAlertWorkflow._ingest_node() — Azure Monitor format
@@ -528,6 +604,14 @@ class TestK8sIngestAzureMonitor:
         state = _base_k8s_state(workspace_id, payload)
         result = await wf._ingest_node(state)
         assert result["deployment_name"] == "payment-service"
+
+    async def test_extracts_raw_severity(self, mock_db, workspace_id, mock_router, k8s_azure_monitor_payload):
+        """Migration 042: essentials.severity used to be dropped after
+        being logged -- now it's captured for hitl_gate to normalize."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id, k8s_azure_monitor_payload)
+        result = await wf._ingest_node(state)
+        assert result["raw_severity"] == "Sev1"
 
 
 class TestK8sIngestUnknownFormat:
@@ -670,3 +754,91 @@ class TestK8sHITLGateNode:
         insert_sql = mock_db.fetchrow.await_args.args[0]
         assert "INSERT INTO incidents" in insert_sql
         assert result == {"incident_id": "11111111-1111-1111-1111-111111111111"}
+
+    async def test_azure_sev0_severity_reaches_create_incident_as_critical(self, mock_db, workspace_id, mock_router):
+        """Migration 042, GAPS.md 24-gap closure Phase 1 -- raw_severity
+        (captured at ingest from Azure Monitor essentials.severity) must
+        be normalized and passed through to hitl.create_incident."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+        state["parsed_error"] = "Pod OOMKilled"
+        state["remediation_options"] = [{"id": "opt_1"}]
+        state["raw_severity"] = "Sev0"
+
+        mock_db.fetchrow.return_value = {"id": uuid4()}
+        mock_db.fetchrow.reset_mock()
+
+        with patch("agents.agent_02_k8s_alert.workflow.interrupt", return_value={"id": "opt_1"}):
+            await wf._hitl_gate_node(state)
+
+        args = mock_db.fetchrow.call_args.args
+        assert "critical" in args
+
+    async def test_missing_raw_severity_defaults_to_medium(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+        state["parsed_error"] = "Pod OOMKilled"
+        state["remediation_options"] = [{"id": "opt_1"}]
+        assert state.get("raw_severity") is None
+
+        mock_db.fetchrow.return_value = {"id": uuid4()}
+        mock_db.fetchrow.reset_mock()
+
+        with patch("agents.agent_02_k8s_alert.workflow.interrupt", return_value={"id": "opt_1"}):
+            await wf._hitl_gate_node(state)
+
+        args = mock_db.fetchrow.call_args.args
+        assert "medium" in args
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# K8sAlertWorkflow._complete_node()
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestK8sCompleteNode:
+    async def test_before_state_from_execution_result_reaches_mark_executed(self, mock_db, workspace_id, mock_router):
+        """Migration 042, GAPS.md 24-gap closure Phase 1: rollback
+        information captured during execute must be persisted, not
+        dropped, when the incident is marked executed."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        incident_id = str(uuid4())
+        state = _base_k8s_state(workspace_id)
+        state["incident_id"] = incident_id
+        state["execution_result"] = {
+            "status": "patched",
+            "before_state": {"memory_limit": "512Mi"},
+        }
+
+        mock_db.fetchrow.return_value = {
+            "workspace_id": workspace_id, "agent_id": "agent_02_k8s_alert",
+            "resource_name": None, "resource_group": None, "metric_name": None,
+            "parsed_error": None, "selected_option_id": None,
+            "resolved_at": None, "cloud_provider": "azure", "severity": "high",
+        }
+        mock_db.fetchrow.reset_mock()
+
+        await wf._complete_node(state)
+
+        mock_db.fetchrow.assert_awaited_once()
+        args = mock_db.fetchrow.call_args.args
+        assert '{"memory_limit": "512Mi"}' in args
+
+    async def test_no_before_state_when_execution_result_has_none(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        incident_id = str(uuid4())
+        state = _base_k8s_state(workspace_id)
+        state["incident_id"] = incident_id
+        state["execution_result"] = {"status": "applied"}  # no before_state key
+
+        mock_db.fetchrow.return_value = {
+            "workspace_id": workspace_id, "agent_id": "agent_02_k8s_alert",
+            "resource_name": None, "resource_group": None, "metric_name": None,
+            "parsed_error": None, "selected_option_id": None,
+            "resolved_at": None, "cloud_provider": "azure", "severity": "medium",
+        }
+        mock_db.fetchrow.reset_mock()
+
+        await wf._complete_node(state)
+
+        args = mock_db.fetchrow.call_args.args
+        assert None in args

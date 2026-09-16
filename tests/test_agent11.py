@@ -667,6 +667,26 @@ class TestHITLGateNode:
         mock_interrupt.assert_called_once()
         assert result["incident_id"] == str(incident_uuid)
 
+    async def test_azure_sev2_normalized_into_medium_severity(self, mock_db, workspace_id, mock_router):
+        """Migration 042, GAPS.md 24-gap closure Phase 1: state["severity"]
+        already holds the raw Azure Monitor value ('Sev2' in the fixture)
+        -- normalize_severity must map it, not pass it through raw."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id)
+        assert state["severity"] == "Sev2"
+        state["parsed_error"] = "High CPU on acme-prod-vm"
+        state["remediation_options"] = [{"id": "opt_1"}]
+
+        mock_db.fetchrow.return_value = {"id": uuid4()}
+        mock_db.fetchrow.reset_mock()
+
+        with patch("agents.agent_11_resource_health.workflow.interrupt", return_value={"id": "opt_1"}):
+            await wf._hitl_gate_node(state)
+
+        args = mock_db.fetchrow.call_args.args
+        assert "medium" in args
+        assert "Sev2" not in args
+
     async def test_creates_failed_incident_when_error_set(self, mock_db, workspace_id, mock_router):
         """Phase 10, scale-readiness build: creates a real
         execution_status='failed' incident instead of skipping entirely."""

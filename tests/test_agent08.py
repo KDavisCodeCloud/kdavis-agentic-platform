@@ -1646,6 +1646,24 @@ class TestHITLGateNode:
         assert "sg-abc123" in raw_log
         assert "CRITICAL" in raw_log
 
+    async def test_drift_severity_normalized_into_severity(self, wf, workspace_id):
+        """Migration 042, GAPS.md 24-gap closure Phase 1: drift_severity
+        ('CRITICAL' in the fixture) is a genuine existing signal."""
+        state = _hitl_state(workspace_id)
+        assert state["drift_severity"] == "CRITICAL"
+        incident_id = str(uuid4())
+
+        mock_hitl = AsyncMock()
+        mock_hitl.create_incident = AsyncMock(return_value=incident_id)
+        wf.hitl = mock_hitl
+
+        with patch.object(wf, "record_token_usage", new=AsyncMock()), \
+             patch("agents.agent_08_drift_detection.workflow.interrupt", return_value={"id": "hold"}):
+            await wf._hitl_gate_node(state)
+
+        call_kwargs = mock_hitl.create_incident.call_args.kwargs
+        assert call_kwargs["severity"] == "critical"
+
     async def test_interrupt_includes_drift_severity_and_count(self, wf, workspace_id):
         state = _hitl_state(workspace_id)
         incident_id = str(uuid4())

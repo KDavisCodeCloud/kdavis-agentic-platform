@@ -31,6 +31,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_02_k8s_alert.tools import K8sTools
 from core.security import shield
+from core.severity import normalize_severity
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class K8sAlertState(TypedDict):
     current_memory_limit: str   # e.g. "512Mi" or "unknown"
     current_cpu_limit: str      # e.g. "500m" or "unknown"
     log_excerpt: str
+    raw_severity: Optional[str]  # Azure Monitor essentials.severity ("Sev0".."Sev4"), or None -- migration 042
 
     # After diagnose
     incident_id: Optional[str]
@@ -164,6 +166,7 @@ class K8sAlertWorkflow(BaseAgent):
         alert_type = "CrashLoopBackOff"
         current_memory_limit = "unknown"
         current_cpu_limit = "unknown"
+        raw_severity = None
 
         # ── Prometheus AlertManager format ──
         if "alerts" in payload:
@@ -222,6 +225,7 @@ class K8sAlertWorkflow(BaseAgent):
                     deployment_name = parts[0] if len(parts) == 3 else pod_name
 
             container_name = custom_props.get("container_name", deployment_name)
+            raw_severity = essentials.get("severity")
 
             log_lines = [
                 f"Alert Rule: {essentials.get('alertRule', 'K8s Alert')}",
@@ -260,6 +264,7 @@ class K8sAlertWorkflow(BaseAgent):
             "current_memory_limit": current_memory_limit,
             "current_cpu_limit": current_cpu_limit,
             "log_excerpt": sanitized.sanitized_text,
+            "raw_severity": raw_severity,
             "tokens_used": 0,
             # incident_id intentionally NOT returned here -- it's pre-seeded
             # in run()'s initial_state (== the LangGraph thread_id) and must
@@ -350,6 +355,7 @@ class K8sAlertWorkflow(BaseAgent):
             cloud_provider=state["cloud_provider"],
             tokens_used=state.get("tokens_used", 0),
             estimated_duration_seconds=state.get("estimated_duration_seconds"),
+            severity=normalize_severity(state.get("raw_severity")),
         )
 
         await self.record_token_usage(
@@ -420,7 +426,9 @@ class K8sAlertWorkflow(BaseAgent):
                     __import__("uuid").UUID(incident_id),
                 )
             else:
-                await self.hitl.mark_executed(incident_id, tokens_used=0)
+                await self.hitl.mark_executed(
+                    incident_id, tokens_used=0, before_state=exec_result.get("before_state"),
+                )
 
         self._write_audit("complete", "done", incident_id=incident_id)
         log.info("[Agent02] Workflow complete for incident %s", incident_id)

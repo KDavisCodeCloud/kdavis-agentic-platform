@@ -166,6 +166,7 @@ class IncidentResponse(BaseModel):
     parsed_error: str
     options: list[RemediationOption]
     estimated_duration_seconds: Optional[int] = None
+    severity: Optional[str] = None  # critical|high|medium|low -- migration 042
 
 
 class ApprovalResponse(BaseModel):

@@ -1213,6 +1213,25 @@ class TestHITLGateNode:
         assert "AppRole" in raw_log or "arn:aws:iam" in raw_log
         assert "HIGH" in raw_log
 
+    async def test_risk_score_normalized_into_severity(self, wf, workspace_id):
+        """Migration 042, GAPS.md 24-gap closure Phase 1: risk_score
+        ('HIGH' in the fixture) is a genuine existing signal -- normalize
+        it into the canonical severity, don't default to 'medium'."""
+        state = _hitl_state(workspace_id)
+        assert state["risk_score"] == "HIGH"
+        incident_id = str(uuid4())
+
+        mock_hitl = AsyncMock()
+        mock_hitl.create_incident = AsyncMock(return_value=incident_id)
+        wf.hitl = mock_hitl
+
+        with patch.object(wf, "record_token_usage", new=AsyncMock()), \
+             patch("agents.agent_05_iam_minimizer.workflow.interrupt", return_value={"id": "hold"}):
+            await wf._hitl_gate_node(state)
+
+        call_kwargs = mock_hitl.create_incident.call_args.kwargs
+        assert call_kwargs["severity"] == "high"
+
     async def test_calls_interrupt_with_risk_score(self, wf, workspace_id):
         state = _hitl_state(workspace_id)
         incident_id = str(uuid4())

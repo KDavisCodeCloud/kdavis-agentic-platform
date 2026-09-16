@@ -151,7 +151,8 @@ async def get_incident(
         row = await conn.fetchrow(
             """
             SELECT id, workspace_id, agent_id, parsed_error, remediation_options,
-                   selected_option_id, execution_status, estimated_duration_seconds, tokens_used
+                   selected_option_id, execution_status, estimated_duration_seconds, tokens_used,
+                   severity
             FROM incidents
             WHERE id = $1 AND workspace_id = $2
             """,
@@ -177,6 +178,7 @@ async def get_incident(
         parsed_error=row["parsed_error"],
         options=options,
         estimated_duration_seconds=row["estimated_duration_seconds"],
+        severity=row["severity"],
     )
 
 
@@ -432,7 +434,7 @@ async def resolve_incident_manually(
         row = await conn.fetchrow(
             """
             SELECT id, agent_id, execution_status, resource_name, resource_group,
-                   metric_name, parsed_error, cloud_provider
+                   metric_name, parsed_error, cloud_provider, severity
             FROM incidents WHERE id = $1 AND workspace_id = $2
             """,
             UUID(incident_id),
@@ -511,6 +513,7 @@ async def resolve_incident_manually(
                 "resolution_note": note,
                 "resolved_at": resolved_at.isoformat(),
                 "cloud_provider": row.get("cloud_provider"),
+                "severity": row.get("severity"),
             },
             resolved_by=workspace.get("member_id"),
         )
@@ -533,11 +536,18 @@ async def list_incidents(
     limit: int = 50,
     offset: int = 0,
 ) -> list[IncidentResponse]:
-    """List incidents for the authenticated workspace, newest first."""
+    """
+    List incidents for the authenticated workspace. Sorted by severity
+    (critical first) then newest-first within a severity tier -- migration
+    042, GAPS.md 24-gap closure Phase 1. The CASE expression's ranking
+    must stay in sync with core/severity.py's SEVERITY_SORT_RANK; there's
+    no cross-language way to share one literal source of truth here, so
+    tests/test_incidents.py pins this exact mapping to catch drift.
+    """
     db = request.app.state.db_pool
 
     query = """
-        SELECT id, parsed_error, remediation_options, execution_status, estimated_duration_seconds
+        SELECT id, parsed_error, remediation_options, execution_status, estimated_duration_seconds, severity
         FROM incidents
         WHERE workspace_id = $1
     """
@@ -547,7 +557,18 @@ async def list_incidents(
         query += " AND execution_status = $2"
         params.append(status_filter)
 
-    query += f" ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
+    query += f"""
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 0
+                WHEN 'high' THEN 1
+                WHEN 'medium' THEN 2
+                WHEN 'low' THEN 3
+                ELSE 4
+            END,
+            created_at DESC
+        LIMIT {limit} OFFSET {offset}
+    """
 
     async with workspace_scoped_connection(db, workspace["id"]) as conn:
         rows = await conn.fetch(query, *params)
@@ -565,6 +586,7 @@ async def list_incidents(
                 parsed_error=row["parsed_error"],
                 options=options,
                 estimated_duration_seconds=row["estimated_duration_seconds"],
+                severity=row["severity"],
             )
         )
     return results

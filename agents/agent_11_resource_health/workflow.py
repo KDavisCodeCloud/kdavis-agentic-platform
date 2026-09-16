@@ -40,6 +40,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_11_resource_health.tools import ResourceHealthTools
 from core.security import shield
+from core.severity import normalize_severity
 
 log = logging.getLogger(__name__)
 
@@ -600,6 +601,7 @@ class ResourceHealthWorkflow(BaseAgent):
             metric_current_value=state.get("metric_current_value"),
             metric_threshold=state.get("metric_threshold"),
             alert_name=state.get("alert_name"),
+            severity=normalize_severity(state.get("severity")),
         )
 
         await self.record_token_usage(

@@ -55,6 +55,7 @@ class TestGetIncidentUsesWorkspaceScope:
                 "execution_status": "pending_approval",
                 "estimated_duration_seconds": 30,
                 "tokens_used": 0,
+                "severity": "medium",
             }
         )
         request = _make_request(conn)
@@ -72,6 +73,33 @@ class TestGetIncidentUsesWorkspaceScope:
         assert set_config_calls[0].args[1] == str(workspace_id)
         assert result.incident_id == str(incident_id)
 
+    async def test_severity_included_in_response(self):
+        """Migration 042, GAPS.md 24-gap closure Phase 1."""
+        workspace_id = uuid4()
+        incident_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            return_value={
+                "id": incident_id,
+                "workspace_id": workspace_id,
+                "agent_id": "agent_08_drift_detection",
+                "parsed_error": "boom",
+                "remediation_options": json.dumps([]),
+                "selected_option_id": None,
+                "execution_status": "pending_approval",
+                "estimated_duration_seconds": 30,
+                "tokens_used": 0,
+                "severity": "critical",
+            }
+        )
+        request = _make_request(conn)
+
+        result = await incidents.get_incident(
+            str(incident_id), request, workspace={"id": workspace_id},
+        )
+
+        assert result.severity == "critical"
+
 
 class TestListIncidentsUsesWorkspaceScope:
     async def test_sets_workspace_session_variable_before_query(self):
@@ -88,3 +116,42 @@ class TestListIncidentsUsesWorkspaceScope:
         ]
         assert len(set_config_calls) == 1
         assert set_config_calls[0].args[1] == str(workspace_id)
+
+    async def test_orders_by_severity_rank_then_created_at_desc(self):
+        """Migration 042, GAPS.md 24-gap closure Phase 1: critical/high
+        incidents must sort ahead of medium/low regardless of creation
+        order. The CASE expression's ranking must stay in sync with
+        core/severity.py's SEVERITY_SORT_RANK -- pinned here explicitly."""
+        from core.severity import SEVERITY_SORT_RANK
+
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[])
+        request = _make_request(conn)
+
+        await incidents.list_incidents(request, workspace={"id": workspace_id})
+
+        fetch_sql = conn.fetch.await_args.args[0]
+        assert "ORDER BY" in fetch_sql
+        assert "CASE severity" in fetch_sql
+        for severity, rank in SEVERITY_SORT_RANK.items():
+            assert f"WHEN '{severity}' THEN {rank}" in fetch_sql
+        assert "created_at DESC" in fetch_sql
+
+    async def test_severity_included_in_each_result(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[
+            {
+                "id": uuid4(), "parsed_error": "boom",
+                "remediation_options": json.dumps([]),
+                "execution_status": "pending_approval",
+                "estimated_duration_seconds": 30,
+                "severity": "low",
+            },
+        ])
+        request = _make_request(conn)
+
+        results = await incidents.list_incidents(request, workspace={"id": workspace_id})
+
+        assert results[0].severity == "low"

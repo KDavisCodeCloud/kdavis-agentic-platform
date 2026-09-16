@@ -83,6 +83,28 @@ class TestCreateJiraTicket:
             with pytest.raises(Exception):
                 await ticketing.create_jira_ticket(config, {"incident_id": "x"}, resolved_by=None)
 
+    @pytest.mark.parametrize(
+        "severity,expected_priority",
+        [
+            ("critical", "P1"),
+            ("high", "P2"),
+            ("medium", "P3"),
+            ("low", "P4"),
+            ("CRITICAL", "P1"),  # case-insensitive
+            (None, "P3"),        # missing severity -- same conservative default as before migration 042
+            ("unrecognized", "P3"),
+        ],
+    )
+    async def test_priority_reflects_incident_severity(self, severity, expected_priority):
+        client, _ = _mock_httpx_client(json_body={"key": "OPS-1"})
+        config = {"instance_url": "https://acme.atlassian.net", "api_token": "t", "project_key": "OPS"}
+        incident_summary = {"incident_id": "x", "severity": severity}
+        with patch("core.ticketing.httpx.AsyncClient", return_value=client):
+            await ticketing.create_jira_ticket(config, incident_summary, resolved_by=None)
+
+        payload = client.post.await_args.kwargs["json"]
+        assert payload["fields"]["priority"] == {"name": expected_priority}
+
 
 class TestCreateLinearTicket:
     def _client_with_responses(self, bodies: list[dict]):

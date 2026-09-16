@@ -1124,6 +1124,26 @@ class TestHITLGateNode:
         assert call_kwargs["agent_id"]    == "agent_10_dependency_patch"
         assert call_kwargs["workspace_id"] == workspace_id
 
+    async def test_vulnerability_counts_derive_severity(self, wf, workspace_id):
+        """Migration 042, GAPS.md 24-gap closure Phase 1: critical_count/
+        high_count (0/1 in the fixture) derive severity via
+        severity_from_counts -- any high with zero critical -> 'high'."""
+        state = _hitl_state(workspace_id)
+        assert state["critical_count"] == 0
+        assert state["high_count"] == 1
+        incident_id = str(uuid4())
+
+        mock_hitl = AsyncMock()
+        mock_hitl.create_incident = AsyncMock(return_value=incident_id)
+        wf.hitl = mock_hitl
+
+        with patch.object(wf, "record_token_usage", new=AsyncMock()), \
+             patch("agents.agent_10_dependency_patch.workflow.interrupt", return_value={"id": "hold"}):
+            await wf._hitl_gate_node(state)
+
+        call_kwargs = mock_hitl.create_incident.call_args.kwargs
+        assert call_kwargs["severity"] == "high"
+
     async def test_raw_log_includes_ecosystem_repo_and_severity_counts(self, wf, workspace_id):
         state       = _hitl_state(workspace_id)
         incident_id = str(uuid4())

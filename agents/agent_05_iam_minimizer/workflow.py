@@ -33,6 +33,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_05_iam_minimizer.tools import IAMMinimizeTools, _summarize_permissions
 from core.security import shield
+from core.severity import normalize_severity
 
 log = logging.getLogger(__name__)
 
@@ -384,6 +385,7 @@ class IAMMinimizeWorkflow(BaseAgent):
             cloud_provider=state["cloud_provider"],
             tokens_used=state.get("tokens_used", 0),
             estimated_duration_seconds=state.get("estimated_duration_seconds"),
+            severity=normalize_severity(state.get("risk_score")),
         )
 
         await self.record_token_usage(

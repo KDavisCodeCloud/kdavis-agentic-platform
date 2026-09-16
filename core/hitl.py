@@ -71,10 +71,18 @@ class HITLGate:
         metric_current_value: Optional[float] = None,
         metric_threshold: Optional[float] = None,
         alert_name: Optional[str] = None,
+        severity: str = "medium",
     ) -> str:
         """
         Persist a new incident in pending_approval state and write to audit log.
         Returns the incident UUID string.
+
+        severity: critical|high|medium|low (migration 042, GAPS.md 24-gap
+        closure Phase 1). Callers derive this via core/severity.py's
+        normalize_severity()/severity_from_counts() from whatever real
+        signal they already have -- defaults to 'medium' here so every
+        pre-existing call site (any agent not yet updated to pass it)
+        keeps behaving exactly as before.
 
         incident_id: pass the same UUID the caller is using as the LangGraph
         checkpoint thread_id (every agent's run() pre-generates one) so the
@@ -112,9 +120,9 @@ class HITLGate:
                     tokens_used, estimated_duration_seconds,
                     resource_id, resource_name, resource_group,
                     metric_name, metric_current_value, metric_threshold,
-                    alert_name, last_seen_at
+                    alert_name, last_seen_at, severity
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                          $11, $12, $13, $14, $15, $16, $17, $18)
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19)
                 ON CONFLICT (id) DO NOTHING
                 RETURNING id
                 """,
@@ -136,6 +144,7 @@ class HITLGate:
                 metric_threshold,
                 alert_name,
                 now,
+                severity,
             )
         else:
             row = await self._db.fetchrow(
@@ -146,9 +155,9 @@ class HITLGate:
                     tokens_used, estimated_duration_seconds,
                     resource_id, resource_name, resource_group,
                     metric_name, metric_current_value, metric_threshold,
-                    alert_name, last_seen_at
+                    alert_name, last_seen_at, severity
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                          $10, $11, $12, $13, $14, $15, $16, $17)
+                          $10, $11, $12, $13, $14, $15, $16, $17, $18)
                 RETURNING id
                 """,
                 workspace_id,
@@ -168,6 +177,7 @@ class HITLGate:
                 metric_threshold,
                 alert_name,
                 now,
+                severity,
             )
         if row is None:
             # ON CONFLICT DO NOTHING fired -- this incident already exists
@@ -315,19 +325,31 @@ class HITLGate:
         self._write_audit_entry("unknown", "hitl_gate", incident_id, action, 0)
         log.info(f"[HITL] Incident {incident_id} -> {new_status} (option={selected_option_id})")
 
-    async def mark_executed(self, incident_id: str, tokens_used: int = 0) -> None:
+    async def mark_executed(
+        self, incident_id: str, tokens_used: int = 0, before_state: Optional[dict] = None,
+    ) -> None:
+        """
+        before_state: rollback information captured at execution time,
+        for a direct cloud API mutation only (migration 042, GAPS.md
+        24-gap closure Phase 1). Only agent_02 (K8s) passes this today --
+        every other agent's execution step opens a PR, already reversible
+        via git revert, confirmed by reading all 11 agents' _execute_node
+        methods before adding this rather than assumed.
+        """
         row = await self._db.fetchrow(
             """
             UPDATE incidents
-            SET execution_status = $1, resolved_at = $2, tokens_used = tokens_used + $3
+            SET execution_status = $1, resolved_at = $2, tokens_used = tokens_used + $3,
+                before_state = COALESCE($5, before_state)
             WHERE id = $4
             RETURNING workspace_id, agent_id, resource_name, resource_group, metric_name,
-                      parsed_error, selected_option_id, resolved_at, cloud_provider
+                      parsed_error, selected_option_id, resolved_at, cloud_provider, severity
             """,
             STATUS_EXECUTED,
             datetime.now(timezone.utc),
             tokens_used,
             UUID(incident_id),
+            json.dumps(before_state) if before_state is not None else None,
         )
         self._write_audit_entry("unknown", "hitl_gate", incident_id, "executed", tokens_used)
         if row is not None:
@@ -462,6 +484,7 @@ class HITLGate:
                 "selected_option_id": row.get("selected_option_id"),
                 "resolved_at": row["resolved_at"].isoformat() if row.get("resolved_at") else None,
                 "cloud_provider": row.get("cloud_provider"),
+                "severity": row.get("severity"),
             }
             schedule_resolution_notification(str(row["workspace_id"]), incident_summary, resolved_by=None)
         except Exception as exc:
