@@ -351,3 +351,119 @@ class TestConnectK8s:
                 workspace={"id": workspace_id},
             )
         mock_verify.assert_awaited_once_with("https://cluster.example.com", "real-token", None)
+
+
+class TestGetConnectionsStatusMemberRole:
+    # Onboarding completeness build, item 4: get_connections_status widened
+    # from get_workspace to get_workspace_or_member -- member_role must
+    # pass through so the frontend knows whether to show the Workspace
+    # Token card's rotate action.
+    async def test_member_role_passed_through_when_present(self):
+        workspace = {"id": uuid4(), "member_role": "viewer"}
+        result = await wc_routes.get_connections_status(workspace=workspace)
+        assert result.member_role == "viewer"
+
+    async def test_member_role_none_for_token_authenticated_caller(self):
+        workspace = {"id": uuid4()}
+        result = await wc_routes.get_connections_status(workspace=workspace)
+        assert result.member_role is None
+
+
+class TestGetWorkspaceTokenStatus:
+    async def test_token_authenticated_caller_always_allowed(self):
+        workspace = {"id": uuid4(), "workspace_token_last4": "ab12", "workspace_token_rotated_at": None}
+        result = await wc_routes.get_workspace_token_status(workspace=workspace)
+        assert result.last4 == "ab12"
+        assert result.rotated_at is None
+
+    async def test_admin_member_allowed(self):
+        workspace = {"id": uuid4(), "member_role": "admin", "workspace_token_last4": "cd34", "workspace_token_rotated_at": None}
+        result = await wc_routes.get_workspace_token_status(workspace=workspace)
+        assert result.last4 == "cd34"
+
+    async def test_viewer_member_rejected(self):
+        workspace = {"id": uuid4(), "member_role": "viewer", "workspace_token_last4": "ef56"}
+        with pytest.raises(HTTPException) as exc:
+            await wc_routes.get_workspace_token_status(workspace=workspace)
+        assert exc.value.status_code == 403
+
+    async def test_approver_member_rejected(self):
+        # Deliberately stricter than incidents.py's _APPROVAL_ROLES
+        # (admin OR approver) -- token rotation is more sensitive than
+        # approving a remediation, admin-only here.
+        workspace = {"id": uuid4(), "member_role": "approver"}
+        with pytest.raises(HTTPException) as exc:
+            await wc_routes.get_workspace_token_status(workspace=workspace)
+        assert exc.value.status_code == 403
+
+    async def test_serializes_rotated_at_to_isoformat(self):
+        from datetime import datetime, timezone
+        rotated = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+        workspace = {"id": uuid4(), "workspace_token_last4": "gh78", "workspace_token_rotated_at": rotated}
+        result = await wc_routes.get_workspace_token_status(workspace=workspace)
+        assert result.rotated_at == rotated.isoformat()
+
+
+class TestRotateWorkspaceTokenSelfServe:
+    async def test_viewer_member_rejected_before_any_db_write(self):
+        request, conn = _make_request()
+        workspace = {"id": uuid4(), "member_role": "viewer"}
+        with pytest.raises(HTTPException) as exc:
+            await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
+        assert exc.value.status_code == 403
+        conn.execute.assert_not_awaited()
+
+    async def test_admin_member_can_rotate(self):
+        from datetime import datetime, timezone
+        rotated = datetime.now(timezone.utc)
+        workspace_id = uuid4()
+        request, conn = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        workspace = {"id": workspace_id, "member_role": "admin"}
+
+        with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()) as mock_audit:
+            result = await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
+
+        assert result.workspace_token.startswith("cd_ws_")
+        assert result.last4 == result.workspace_token[-4:]
+        assert result.rotated_at == rotated.isoformat()
+        conn.fetchrow.assert_awaited_once()
+        mock_audit.assert_awaited_once()
+        assert mock_audit.await_args.kwargs["action"] == "workspace_token_rotated"
+        assert mock_audit.await_args.kwargs["workspace_id"] == str(workspace_id)
+
+    async def test_token_authenticated_caller_always_allowed(self):
+        from datetime import datetime, timezone
+        rotated = datetime.now(timezone.utc)
+        request, conn = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        workspace = {"id": uuid4()}  # no member_role key at all -- token path
+
+        with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()):
+            result = await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
+
+        assert result.workspace_token.startswith("cd_ws_")
+
+    async def test_new_token_is_hashed_before_storage_not_stored_raw(self):
+        from datetime import datetime, timezone
+        rotated = datetime.now(timezone.utc)
+        request, conn = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        workspace = {"id": uuid4()}
+
+        with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()):
+            result = await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
+
+        update_sql, token_hash_arg, last4_arg, workspace_id_arg = conn.fetchrow.await_args.args
+        assert "UPDATE workspaces SET workspace_token" in update_sql
+        assert token_hash_arg != result.workspace_token  # never the raw token
+        assert last4_arg == result.last4
+
+    async def test_each_rotation_generates_a_distinct_token(self):
+        from datetime import datetime, timezone
+        rotated = datetime.now(timezone.utc)
+        request, _ = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        workspace = {"id": uuid4()}
+
+        with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()):
+            first = await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
+            second = await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
+
+        assert first.workspace_token != second.workspace_token

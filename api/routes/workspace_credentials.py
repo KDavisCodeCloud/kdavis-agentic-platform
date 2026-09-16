@@ -31,7 +31,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
+from core.audit import write_audit_event
 from core.github_app import build_install_url, sign_workspace_state, verify_workspace_state
 from core.workspace_credentials import (
     AssumeRoleError,
@@ -129,18 +130,68 @@ class ConnectionsStatusResponse(BaseModel):
     k8s_connected: bool
     llm_configured: bool
     llm_provider: str | None
+    # None for a token-authenticated caller (full-trust, same as every
+    # other route in this file) -- only set for a member-session caller.
+    # Onboarding completeness build, item 4: the frontend needs this to
+    # decide whether to show the Workspace Token card's rotate action.
+    member_role: str | None = None
+
+
+class WorkspaceTokenStatusResponse(BaseModel):
+    last4: str | None
+    rotated_at: str | None
+
+
+class RotateWorkspaceTokenResponse(BaseModel):
+    workspace_token: str
+    last4: str
+    rotated_at: str
+
+
+# Onboarding completeness build, item 4. Deliberately admin-only (not
+# admin-or-approver like incidents.py's _APPROVAL_ROLES) -- rotating the
+# one credential that authenticates every other request this workspace
+# makes is more sensitive than approving a remediation. A token-
+# authenticated caller (no member_role at all) is always permitted, same
+# full-trust model every other route in this file already has.
+_TOKEN_ADMIN_ROLES = frozenset({"admin"})
+
+
+def _caller_is_workspace_admin(workspace: dict) -> bool:
+    member_role = workspace.get("member_role")
+    if member_role is None:
+        return True
+    return member_role in _TOKEN_ADMIN_ROLES
+
+
+def _generate_raw_workspace_token() -> str:
+    # Same shape as api/routes/internal_workspaces.py's _generate_raw_token
+    # (cd_ws_ prefix + secrets.token_urlsafe(32)) -- not imported from there
+    # since that module's helper is private to it; duplicating one line is
+    # simpler and safer than reaching into another route file's underscore-
+    # prefixed internals.
+    return f"cd_ws_{secrets.token_urlsafe(32)}"
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/status", response_model=ConnectionsStatusResponse)
 async def get_connections_status(
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> ConnectionsStatusResponse:
     """
-    Read-only connection state for the Connections settings page. get_workspace
-    (api/middleware/auth.py) already selects every *_verified_at column used
-    here, so this needs no extra DB query.
+    Read-only connection state for the Connections settings page.
+
+    Widened from get_workspace to get_workspace_or_member as part of the
+    onboarding completeness build (item 4): this was the ONLY entry point
+    into ConnectionsPanel.tsx, and it accepted only the raw workspace
+    token -- a logged-in member (Phase A/B/C's Supabase-session dashboard
+    login) got a 401 the moment they opened Connections at all, before
+    this fix. One more instance of GAPS.md #22's own flagged follow-up
+    ("rolling get_workspace_or_member out further is mechanical... not
+    done blind across every route") -- necessary here because item 4's
+    self-serve token UI has to actually be reachable by a logged-in admin,
+    not just a raw-token holder.
 
     github_via_legacy_pat: true only when GitHub access is still the retired
     PAT path with no App installation on top of it -- surfaced so the
@@ -158,6 +209,80 @@ async def get_connections_status(
         k8s_connected=bool(workspace.get("k8s_verified_at")),
         llm_configured=bool(workspace.get("encrypted_llm_key")),
         llm_provider=workspace.get("llm_provider"),
+        member_role=workspace.get("member_role"),
+    )
+
+
+@router.get("/token", response_model=WorkspaceTokenStatusResponse)
+async def get_workspace_token_status(
+    workspace: dict = Depends(get_workspace_or_member),
+) -> WorkspaceTokenStatusResponse:
+    """
+    Onboarding completeness build, item 4. There is no raw token to
+    "reveal" here -- workspaces.workspace_token stores only a SHA-256
+    hash (see db/migrations/040_workspace_token_display_metadata.sql's
+    own comment), the same one-way property as a password. This returns
+    the masked-display hint (last4, set only at issuance/rotation time)
+    and when the current token was last rotated, nothing more.
+    """
+    if not _caller_is_workspace_admin(workspace):
+        raise HTTPException(status_code=403, detail="Only a workspace admin can view token details")
+
+    rotated_at = workspace.get("workspace_token_rotated_at")
+    return WorkspaceTokenStatusResponse(
+        last4=workspace.get("workspace_token_last4"),
+        rotated_at=rotated_at.isoformat() if rotated_at else None,
+    )
+
+
+@router.post("/token/rotate", response_model=RotateWorkspaceTokenResponse)
+async def rotate_workspace_token_self_serve(
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> RotateWorkspaceTokenResponse:
+    """
+    Onboarding completeness build, item 4 -- self-serve equivalent of
+    api/routes/internal_workspaces.py's admin-only rotate-token (that one
+    stays THD-team-only, gated by get_internal_user; this is the
+    customer-facing path, gated by workspace-admin role). The old token
+    stops matching the moment this commits -- there is no server-side
+    grace window in this codebase today (that's a separate, not-yet-built
+    phase); this response's caller is expected to show the 72-hour
+    inbound-webhook grace-window notice as UI copy describing the
+    intended policy, not as a claim about enforced behavior.
+
+    Returns the new raw token exactly once, same "shown once" contract as
+    every other token-issuing endpoint in this codebase.
+    """
+    if not _caller_is_workspace_admin(workspace):
+        raise HTTPException(status_code=403, detail="Only a workspace admin can rotate the workspace token")
+
+    raw_token = _generate_raw_workspace_token()
+    token_hash = _hash_token(raw_token)
+    last4 = raw_token[-4:]
+
+    async with request.app.state.db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "UPDATE workspaces SET workspace_token = $1, workspace_token_last4 = $2, "
+            "workspace_token_rotated_at = NOW(), updated_at = NOW() "
+            "WHERE id = $3 RETURNING workspace_token_rotated_at",
+            token_hash,
+            last4,
+            workspace["id"],
+        )
+
+    await write_audit_event(
+        workspace_id=str(workspace["id"]),
+        action="workspace_token_rotated",
+        status="success",
+        metadata={"member_role": workspace.get("member_role") or "token"},
+    )
+
+    log.info("[WorkspaceCredentials] Workspace=%s rotated its own token", workspace["id"])
+    return RotateWorkspaceTokenResponse(
+        workspace_token=raw_token,
+        last4=last4,
+        rotated_at=row["workspace_token_rotated_at"].isoformat(),
     )
 
 

@@ -26,7 +26,10 @@ free trial period before the first charge.
 You only need to connect what the agents you're using actually touch.
 Starter ships with CI/CD Triage, Kubernetes Alerts, and PR Review — most
 teams start with GitHub (or Azure DevOps) and, if using the Kubernetes
-agent, a cluster connection.
+agent, a cluster connection **and** the separate alert-source webhook
+below (the cluster connection lets agents read/act on your cluster; the
+webhook is what actually delivers alerts to us in the first place — you
+need both for the Kubernetes Alert agent to do anything).
 
 ### GitHub (recommended path)
 
@@ -81,6 +84,43 @@ your own Anthropic or OpenAI key — for cost control, compliance, or
 model preference — save it from the dashboard. Your key is encrypted at
 rest and decrypted only for the duration of the specific call that needs
 it.
+
+### Alert sources (Kubernetes and general cloud resource health)
+
+Separate from the credential connections above -- this registers a
+push-driven webhook so alerts show up automatically the moment your
+cloud provider fires them, no polling needed. Register once from
+Connections → the relevant card's "How to set this up" panel, which
+pre-fills your real webhook URL.
+
+**Azure Monitor (AKS pod alerts or general resource health -- Agent 02 /
+Agent 11):**
+1. Register the resource providers first, on the subscription:
+   `Microsoft.Insights` and `Microsoft.AlertsManagement`. An
+   unregistered provider is the most common reason a freshly-created
+   Action Group's webhook silently never fires.
+2. Create an Action Group, then add an action of type **Webhook — not
+   "Secure Webhook."** Secure Webhook requires an Azure AD handshake we
+   don't implement.
+3. Turn the **Common Alert Schema** toggle ON for the webhook action.
+   This isn't optional — the legacy schema is a different payload shape
+   and is silently dropped, not an error, so it's easy to miss.
+4. Paste your workspace's webhook URL (shown in Connections, already
+   includes your token).
+5. Test it: in the Azure Portal, open the Action Group → **Test action
+   group** → sample type **Metric alert**.
+
+**AWS CloudWatch / SNS (Agent 11):**
+Subscribe your workspace's webhook URL as an HTTPS endpoint on an SNS
+topic that your CloudWatch Alarms (or GuardDuty findings via
+EventBridge → SNS) publish to. The subscription confirms automatically
+— nothing further needed on your side. Every alert's signature is
+verified against AWS's own signing certificate before it's trusted.
+
+**Prometheus Alertmanager / Grafana unified alerting (Agent 02):**
+Register the same webhook URL as a `webhook_configs` receiver
+(Alertmanager) or webhook contact point (Grafana) — both are detected
+automatically.
 
 ## 5. Watch the first triage happen
 

@@ -42,7 +42,8 @@ _WORKSPACE_SELECT_COLUMNS = (
     "encrypted_github_webhook_secret, aws_role_arn, aws_external_id, "
     "aws_role_verified_at, azure_tenant_id, azure_client_id, "
     "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at, "
-    "azure_devops_pat_verified_at, k8s_verified_at"
+    "azure_devops_pat_verified_at, k8s_verified_at, "
+    "workspace_token_last4, workspace_token_rotated_at"
 )
 
 # 'pending_payment' -- the default status for every newly-created workspace

@@ -217,6 +217,24 @@ export interface ConnectionsStatus {
   k8s_connected: boolean
   llm_configured: boolean
   llm_provider: string | null
+  // null for a token-authenticated caller (full trust); set only for a
+  // logged-in member session. Onboarding completeness build, item 4.
+  member_role: string | null
+}
+
+// Onboarding completeness build, item 4. last4/rotated_at are display
+// hints only -- workspaces.workspace_token stores a one-way hash, so
+// there is no raw token to "reveal" after issuance. See
+// db/migrations/040_workspace_token_display_metadata.sql.
+export interface WorkspaceTokenStatus {
+  last4: string | null
+  rotated_at: string | null
+}
+
+export interface RotateWorkspaceTokenResult {
+  workspace_token: string
+  last4: string
+  rotated_at: string
 }
 
 // Ticketing integrations (Jira/Linear/GitHub Issues/ServiceNow) -- fires on

@@ -6,16 +6,45 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle, Key, AlertTriangle, Ticket } from 'lucide-react'
+import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle, Key, AlertTriangle, Ticket, ChevronDown, Siren, KeyRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CodeBlock } from '@/components/ui/code-block'
 import { cn } from '@/lib/utils'
 import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
   connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear, connectGithubIssues,
-  connectServiceNow,
+  connectServiceNow, getWorkspaceTokenStatus, rotateWorkspaceToken, isMemberSessionToken, API_URL,
 } from '@/lib/api'
-import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus } from '@/lib/types'
+import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus, WorkspaceTokenStatus } from '@/lib/types'
+
+// Onboarding completeness build, item 3: the real webhook URL a customer
+// pastes into Azure/AWS/GitHub/Azure DevOps. Only ever shown with a real
+// embedded token when this session actually holds the raw workspace
+// token (isMemberSessionToken(token) === false) -- a logged-in member
+// session never has the raw token (it's a one-way hash server-side, see
+// db/migrations/040_workspace_token_display_metadata.sql), so it gets a
+// placeholder instead of a fabricated value.
+function webhookUrl(path: string, token: string): string {
+  const tokenParam = isMemberSessionToken(token) ? '<your-workspace-token>' : token
+  return `${API_URL}/api/v1/webhooks/${path}?token=${tokenParam}`
+}
+
+function ExpandableInstructions({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-2 rounded border border-zinc-800">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-zinc-300 hover:text-zinc-100"
+      >
+        <span>{title}</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-zinc-500 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && <div className="border-t border-zinc-800 px-3 py-3">{children}</div>}
+    </div>
+  )
+}
 
 // Connects a workspace's real credentials to the core platform's own
 // Agents 01 (CI/CD), 02 (K8s Alert), 05 (IAM), 06 (FinOps), 08 (Drift) --
@@ -142,6 +171,11 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [llmApiKey, setLlmApiKey] = useState('')
   const [llmBusy, setLlmBusy] = useState(false)
 
+  // Workspace token (onboarding completeness build, item 4)
+  const [tokenStatus, setTokenStatus] = useState<WorkspaceTokenStatus | null>(null)
+  const [tokenBusy, setTokenBusy] = useState(false)
+  const [rotatedToken, setRotatedToken] = useState<string | null>(null)
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -152,6 +186,19 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       ])
       setStatus(connections)
       setTicketingStatus(ticketing)
+
+      // Token status is admin-only server-side (403 for viewer/approver
+      // member sessions) -- fail silently here rather than surfacing the
+      // panel-wide error banner for what's really just "this section
+      // isn't for your role."
+      if (connections.member_role === null || connections.member_role === 'admin') {
+        try {
+          setTokenStatus(await getWorkspaceTokenStatus(token))
+        } catch {
+          setTokenStatus(null)
+        }
+      }
+
       if (
         ticketing.channel?.channel_type === 'jira' ||
         ticketing.channel?.channel_type === 'linear' ||
@@ -332,6 +379,20 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
     }
   }
 
+  async function handleRotateToken() {
+    setTokenBusy(true)
+    setError(null)
+    try {
+      const result = await rotateWorkspaceToken(token)
+      setRotatedToken(result.workspace_token)
+      setTokenStatus({ last4: result.last4, rotated_at: result.rotated_at })
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not rotate the workspace token')
+    } finally {
+      setTokenBusy(false)
+    }
+  }
+
   async function handleSaveLlmKey() {
     setLlmBusy(true)
     setError(null)
@@ -402,6 +463,19 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                 ? 'Reinstall / manage on GitHub'
                 : 'Install the Cloud Decoded GitHub App'}
           </Button>
+          {status.github_via_legacy_pat && (
+            <ExpandableInstructions title="How to set this up (legacy PAT webhook)">
+              <div className="space-y-2 text-xs text-zinc-400">
+                <p>Register a webhook in your repository&apos;s Settings → Webhooks:</p>
+                <ul className="list-disc space-y-1 pl-4">
+                  <li>Content type: <code className="text-zinc-300">application/json</code></li>
+                  <li>Events: <strong className="text-zinc-300">Workflow runs</strong> (for CI/CD triage) and, if using PR review, <strong className="text-zinc-300">Pull requests</strong></li>
+                  <li>Secret: the webhook secret shown when you first connected — register it as the webhook&apos;s secret so signatures verify</li>
+                </ul>
+                <CodeBlock label="Webhook URL" code={webhookUrl('github', token)} />
+              </div>
+            </ExpandableInstructions>
+          )}
         </SectionCard>
 
         <SectionCard
@@ -532,6 +606,16 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
               </Button>
             </div>
           </div>
+          <ExpandableInstructions title="How to set this up (service hook)">
+            <div className="space-y-2 text-xs text-zinc-400">
+              <p>In Azure DevOps: Project Settings → Service hooks → Create subscription → Web Hooks.</p>
+              <ul className="list-disc space-y-1 pl-4">
+                <li>Trigger: <strong className="text-zinc-300">Build completed</strong>, with filter Status = Failed</li>
+                <li>Basic authentication password: the webhook secret shown above when you first connected</li>
+              </ul>
+              <CodeBlock label="Webhook URL" code={webhookUrl('azure-devops', token)} />
+            </div>
+          </ExpandableInstructions>
         </SectionCard>
 
         <SectionCard
@@ -571,6 +655,68 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
             >
               {status.k8s_connected ? 'Update' : 'Verify'}
             </Button>
+          </div>
+          <ExpandableInstructions title="How to send K8s alerts here (Agent 02)">
+            <div className="space-y-2 text-xs text-zinc-400">
+              <p>Separate from the cluster connection above -- this is the alert-source
+              registration so Agent 02 gets pod-failure alerts pushed in as they happen.</p>
+              <p className="font-medium text-zinc-300">Prometheus Alertmanager (alertmanager.yml):</p>
+              <CodeBlock label="alertmanager.yml" code={`receivers:\n  - name: cloud-decoded\n    webhook_configs:\n      - url: ${webhookUrl('aks-alert', token)}`} />
+              <p className="font-medium text-zinc-300">Or as an Azure Monitor Action Group webhook action</p>
+              <p>(same Common Alert Schema requirements as the Alert Ingestion section below -- register
+              Microsoft.Insights + Microsoft.AlertsManagement first, use a plain Webhook action, turn
+              Common Alert Schema ON):</p>
+              <CodeBlock label="Webhook URL" code={webhookUrl('aks-alert', token)} />
+            </div>
+          </ExpandableInstructions>
+        </SectionCard>
+
+        <SectionCard
+          icon={Siren}
+          title="Alert Ingestion"
+          description="General cloud-resource health/security alerts for Agent 11 -- any resource, not just Kubernetes. Register once; every alert from a connected source shows up automatically."
+          connected={false}
+        >
+          <div className="space-y-3">
+            <CodeBlock label="Webhook URL (Azure Action Group / AWS SNS subscription / Alertmanager / Grafana)" code={webhookUrl('resource-health-alert', token)} />
+
+            <ExpandableInstructions title="How to set this up — Azure Monitor">
+              <div className="space-y-2 text-xs text-zinc-400">
+                <p className="text-amber-300">Live-verified setup path (see agents/agent_11_resource_health/sop.md for the full trace) --
+                the two most common reasons this silently never fires are both covered below.</p>
+                <ol className="list-decimal space-y-2 pl-4">
+                  <li>
+                    <strong className="text-zinc-300">Register the resource providers first</strong>, on the subscription:
+                    <CodeBlock code={`az provider register --namespace Microsoft.Insights\naz provider register --namespace Microsoft.AlertsManagement`} />
+                    Wait for both to report <code>Registered</code> (<code>az provider show --namespace Microsoft.Insights --query registrationState</code>) before continuing.
+                  </li>
+                  <li>
+                    <strong className="text-zinc-300">Create the Action Group</strong>, then add an action of type <strong className="text-zinc-300">Webhook — not &quot;Secure Webhook&quot;</strong>.
+                    Secure Webhook requires an Azure AD handshake this backend doesn&apos;t implement.
+                  </li>
+                  <li>
+                    <strong className="text-zinc-300">Turn the &quot;Common Alert Schema&quot; toggle ON</strong> for the webhook action. Not optional —
+                    the legacy schema is a different payload shape and is silently dropped (no error), so this is easy to miss.
+                  </li>
+                  <li>Paste the webhook URL above (already includes your token).</li>
+                  <li>
+                    <strong className="text-zinc-300">Test it</strong>: Action Group → Test action group → sample type Metric alert. If Azure reports
+                    403 Forbidden, check for a stray space or line-break pasted into the token value.
+                  </li>
+                </ol>
+              </div>
+            </ExpandableInstructions>
+
+            <ExpandableInstructions title="How to set this up — AWS (SNS / CloudWatch)">
+              <div className="space-y-2 text-xs text-zinc-400">
+                <p>Subscribe the URL above as an HTTPS endpoint on an SNS topic that your CloudWatch Alarms
+                (or GuardDuty findings via EventBridge → SNS) publish to:</p>
+                <CodeBlock code={`aws sns subscribe \\\n  --topic-arn arn:aws:sns:us-east-1:123456789012:cloud-decoded-alerts \\\n  --protocol https \\\n  --notification-endpoint "${webhookUrl('resource-health-alert', token)}"`} />
+                <p>AWS sends a SubscriptionConfirmation once, immediately after this — confirmed automatically,
+                nothing further needed on your side. Every Notification&apos;s signature is verified against
+                AWS&apos;s own signing certificate before it&apos;s trusted.</p>
+              </div>
+            </ExpandableInstructions>
           </div>
         </SectionCard>
 
@@ -794,6 +940,43 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
             </div>
           </div>
         </SectionCard>
+
+        {(status.member_role === null || status.member_role === 'admin') && (
+          <SectionCard
+            icon={KeyRound}
+            title="Workspace Token"
+            description="Authenticates every request this workspace makes. There is no way to view the token after it was issued -- only rotate it for a new one."
+            connected={!!tokenStatus}
+          >
+            {rotatedToken ? (
+              <div className="space-y-2">
+                <p className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                  Save this token now — it won&apos;t be shown again. The old token stopped working immediately;
+                  it does <strong>not</strong> stay valid for a grace period today.
+                </p>
+                <CodeBlock label="New workspace token" code={rotatedToken} />
+                <p className="text-xs text-zinc-500">Update every alert source and webhook registered above with this
+                new token before they&apos;ll work again -- GitHub/Azure DevOps webhooks, Azure Action Groups, and
+                any AWS SNS subscription all include the token in their URL.</p>
+                <Button size="sm" onClick={() => setRotatedToken(null)}>Done</Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="font-mono text-xs text-zinc-400">
+                  {tokenStatus?.last4 ? `cd_ws_••••••••${tokenStatus.last4}` : 'cd_ws_•••••••• (no hint available yet -- rotate to get one)'}
+                </p>
+                {tokenStatus?.rotated_at && (
+                  <p className="text-[11px] text-zinc-600">
+                    Last rotated {new Date(tokenStatus.rotated_at).toLocaleDateString()}
+                  </p>
+                )}
+                <Button size="sm" variant="warning" disabled={tokenBusy} loading={tokenBusy} onClick={handleRotateToken}>
+                  Rotate token
+                </Button>
+              </div>
+            )}
+          </SectionCard>
+        )}
       </div>
     </div>
   )

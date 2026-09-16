@@ -85,6 +85,74 @@ def welcome_email_html(company_name: str) -> str:
 </div>"""
 
 
+def onboarding_day2_checklist_html(company_name: str) -> str:
+    """
+    Onboarding completeness build, item 5. Sent ~2 days after checkout
+    ONLY if core/onboarding_sequence.py's real signal says this workspace
+    hasn't connected anything yet -- see that module's own docstring for
+    exactly what "connected anything" means today (a stand-in for the
+    real 5/5 setup checklist field, which doesn't exist in the schema
+    yet as of this build).
+    """
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#1a1a1a">
+  <h1 style="font-size:20px">Still time to connect your stack, {company_name}</h1>
+  <p>Your Cloud Decoded trial is running, but we haven't seen a repo or cloud
+  account connected yet. Nothing runs until at least one is connected.</p>
+  <p><a href="https://theclouddecoded.com/dashboard?tab=connections"
+        style="display:inline-block;background:#2f6fe6;color:#fff;padding:10px 18px;
+               border-radius:8px;text-decoration:none;font-weight:600">
+    Connect your stack →</a></p>
+  <p style="font-size:13px;color:#666">Most teams start with GitHub (or Azure DevOps) --
+  it takes about two minutes and needs no code changes.</p>
+</div>"""
+
+
+def onboarding_day5_setup_help_html(company_name: str) -> str:
+    """
+    Onboarding completeness build, item 5. Sent ~5 days after checkout
+    ONLY if core/onboarding_sequence.py's real signal says no alert
+    source has ever actually delivered a webhook to this workspace (a
+    real alert_ingestion_log row, not a self-report). Inlines the exact,
+    live-verified Azure/AWS setup steps from
+    agents/agent_11_resource_health/sop.md rather than a generic
+    "check your webhook config" nudge.
+    """
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a">
+  <h1 style="font-size:20px">{company_name}, let's get an alert source connected</h1>
+  <p>You've connected a system, but we haven't received a real alert yet --
+  that's usually a webhook registration step, not a Cloud Decoded problem. Here's
+  exactly how to wire it up:</p>
+
+  <h2 style="font-size:15px;margin-top:20px">Azure Monitor</h2>
+  <ol style="font-size:13px;color:#333;padding-left:20px">
+    <li>Register the resource providers first: <code>Microsoft.Insights</code> and
+    <code>Microsoft.AlertsManagement</code>. An unregistered provider is the most
+    common reason a fresh Action Group's webhook silently never fires.</li>
+    <li>Create an Action Group with an action of type <strong>Webhook</strong> --
+    not "Secure Webhook" (that requires an Azure AD handshake we don't implement).</li>
+    <li>Turn the <strong>Common Alert Schema</strong> toggle ON. This isn't optional --
+    the legacy schema is silently dropped, not an error.</li>
+    <li>Use your workspace's webhook URL from Connections (includes the
+    <code>/api/v1</code> prefix and your token).</li>
+    <li>Test it: Action Group → Test action group → Metric alert sample.</li>
+  </ol>
+
+  <h2 style="font-size:15px;margin-top:20px">AWS CloudWatch / SNS</h2>
+  <p style="font-size:13px;color:#333">Subscribe your workspace's webhook URL as an
+  HTTPS endpoint on an SNS topic that your CloudWatch Alarms publish to. The
+  subscription confirms automatically -- nothing further needed on your side.</p>
+
+  <p><a href="https://theclouddecoded.com/dashboard?tab=connections"
+        style="display:inline-block;background:#2f6fe6;color:#fff;padding:10px 18px;
+               border-radius:8px;text-decoration:none;font-weight:600">
+    Get your webhook URL →</a></p>
+  <p style="font-size:13px;color:#666">Reply to this email if you'd like a hand setting
+  this up -- happy to help directly.</p>
+</div>"""
+
+
 def enterprise_alert_html(company_name: str, workspace_id: str, contact_email: str | None) -> str:
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#1a1a1a">

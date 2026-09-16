@@ -611,10 +611,24 @@ let _connectionsStatus: ConnectionsStatus = {
   k8s_connected: false,
   llm_configured: false,
   llm_provider: null,
+  member_role: null,
 }
 
 export function getMockConnectionsStatus(): ConnectionsStatus {
   return _connectionsStatus
+}
+
+// Onboarding completeness build, item 4.
+let _mockWorkspaceToken = { last4: 'aZ9k', rotated_at: new Date().toISOString() }
+
+export function getMockWorkspaceTokenStatus(): { last4: string | null; rotated_at: string | null } {
+  return _mockWorkspaceToken
+}
+
+export function mockRotateWorkspaceToken(): { workspace_token: string; last4: string; rotated_at: string } {
+  const raw = `cd_ws_demo_${Math.random().toString(36).slice(2, 10)}`
+  _mockWorkspaceToken = { last4: raw.slice(-4), rotated_at: new Date().toISOString() }
+  return { workspace_token: raw, ..._mockWorkspaceToken }
 }
 
 export function mockGetGithubAppInstallUrl(): { install_url: string } {

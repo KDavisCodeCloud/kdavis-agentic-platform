@@ -221,10 +221,21 @@ async def lifespan(app: FastAPI):
     # processes to run this same loop without duplicating deletes.
     app.state.retention_task = asyncio.create_task(_retention_loop(app.state.db_pool))
 
+    # Onboarding completeness build, item 5: periodic day-2/day-5
+    # onboarding email check (core/onboarding_sequence.py). Same
+    # in-process periodic-task pattern as retention above -- no separate
+    # cron service exists to host this elsewhere. Checked every 6h (not
+    # 24h like retention) so each email lands within a few hours of its
+    # target day regardless of what hour a workspace happened to check
+    # out at; pg_try_advisory_xact_lock (a distinct lock id from
+    # retention's) keeps all 4 --workers processes from double-sending.
+    app.state.onboarding_task = asyncio.create_task(_onboarding_sequence_loop(app.state.db_pool))
+
     yield
 
     # Shutdown
     app.state.retention_task.cancel()
+    app.state.onboarding_task.cancel()
     await app.state.db_pool.close()
     await lg_conn.close()
     log.info("[API] Shutdown complete")
@@ -244,6 +255,22 @@ async def _retention_loop(pool) -> None:
         except Exception:
             log.exception("[Retention] Cleanup pass failed — will retry next cycle")
         await asyncio.sleep(_RETENTION_INTERVAL_SECONDS)
+
+
+_ONBOARDING_SEQUENCE_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+async def _onboarding_sequence_loop(pool) -> None:
+    from core.onboarding_sequence import run_onboarding_sequence_check
+
+    while True:
+        try:
+            await run_onboarding_sequence_check(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[Onboarding] Sequence check failed — will retry next cycle")
+        await asyncio.sleep(_ONBOARDING_SEQUENCE_INTERVAL_SECONDS)
 
 
 # ──────────────────────────────────────────────

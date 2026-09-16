@@ -6,7 +6,7 @@ import type {
   AgentConnectionStatus, FinOpsDashboardData, ComplianceScanResult, ComplianceReportData,
   DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
   ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput, LinearConnectInput, GithubIssuesConnectInput,
-  ServiceNowConnectInput,
+  ServiceNowConnectInput, WorkspaceTokenStatus, RotateWorkspaceTokenResult,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -15,9 +15,10 @@ import {
   getMockConnectionsStatus, mockSetupAwsRole, mockConnectAwsRole, mockConnectAzure,
   mockConnectAzureDevOps, mockGetGithubAppInstallUrl, mockConnectK8s, mockSaveLlmKey,
   getMockTicketingStatus, mockConnectJira, mockConnectLinear, mockConnectGithubIssues, mockConnectServiceNow,
+  getMockWorkspaceTokenStatus, mockRotateWorkspaceToken,
 } from './mock-data'
 
-const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
+export const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
 export class ApiError extends Error {
@@ -56,7 +57,7 @@ function redirectToBilling() {
 // app/login/page.tsx for where a member session token is produced.
 const _WORKSPACE_TOKEN_PREFIX = 'cd_ws_'
 
-function isMemberSessionToken(token: string): boolean {
+export function isMemberSessionToken(token: string): boolean {
   return !!token && !token.startsWith(_WORKSPACE_TOKEN_PREFIX)
 }
 
@@ -690,6 +691,17 @@ export async function getComplianceReport(token: string): Promise<ComplianceRepo
 export async function getConnectionsStatus(token: string): Promise<ConnectionsStatus> {
   if (MOCK_MODE) return getMockConnectionsStatus()
   return request<ConnectionsStatus>('/workspace/credentials/status', token)
+}
+
+// Onboarding completeness build, item 4 -- self-serve token view/rotate.
+export async function getWorkspaceTokenStatus(token: string): Promise<WorkspaceTokenStatus> {
+  if (MOCK_MODE) return getMockWorkspaceTokenStatus()
+  return request<WorkspaceTokenStatus>('/workspace/credentials/token', token)
+}
+
+export async function rotateWorkspaceToken(token: string): Promise<RotateWorkspaceTokenResult> {
+  if (MOCK_MODE) return mockRotateWorkspaceToken()
+  return request<RotateWorkspaceTokenResult>('/workspace/credentials/token/rotate', token, { method: 'POST' })
 }
 
 // Item 4 GitHub App migration -- PATCH /workspace/credentials/github is
