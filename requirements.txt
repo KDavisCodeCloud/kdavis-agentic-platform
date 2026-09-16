@@ -21,6 +21,9 @@ langchain-core>=0.2.43,<0.4.0
 # HTTP client
 httpx==0.27.2
 
+# Email (Brevo, replaces Systeme.io — see leads/integrations/brevo_client.py)
+brevo-python==5.0.2
+
 # Data validation
 pydantic==2.9.2
 pydantic-settings==2.5.2

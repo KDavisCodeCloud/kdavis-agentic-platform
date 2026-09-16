@@ -118,24 +118,18 @@ timezone changes), plus manual dispatch
 
 ## email-sequence-deploy.yml
 
-**Trigger:** manual dispatch only — you trigger it yourself after
-approving an email sequence in the dashboard HITL queue
-
-**What it does:**
-1. Takes `product_id` (required) and `sequence_id` (optional — defaults
-   to the latest approved sequence for that product) as inputs
-2. Reads the approved sequence from the Supabase `email_sequences` /
-   `email_sequence_steps` tables
-3. Calls the Systeme.io API to create or update the sequence and tag
-4. Confirms the deployment back to the dashboard
+**Status as of 2026-09-16: no-op.** This workflow originally pushed an
+approved sequence to Systeme.io as a new campaign via API. Systeme.io
+is no longer this platform's email provider (Brevo replaced it — see
+docs/ENV_SETUP.md), and Brevo has no equivalent "create this sequence"
+API call at all — Brevo automations are built once, by hand, per
+product, in the Brevo UI, and the only API-driven step left is per-
+signup contact enrollment (leads/capture/signup_handler.py), not a
+one-time deploy action. Running this workflow now just prints an
+explanation and takes no action — see the workflow file's own header
+comment for the full reasoning.
 
 **You see it in:** Actions tab → `email-sequence-deploy.yml` → manual runs
-**You interact with it:** after approving a sequence in the dashboard,
-go to Actions → `email-sequence-deploy.yml` → **Run workflow** →
-fill in `product_id`
-
-**Required repo secrets:** `SYSTEME_IO_API_KEY`, `SUPABASE_URL`,
-`SUPABASE_KEY`, `DASHBOARD_WEBHOOK_URL`, `DASHBOARD_WEBHOOK_TOKEN`
 
 ---
 

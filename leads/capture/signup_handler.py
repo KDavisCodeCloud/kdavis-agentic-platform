@@ -12,7 +12,9 @@ signup_handler — processes both capture points described in CLAUDE.md's
 Lead Capture section: the above-fold "Start free trial" CTA and the
 lightweight email-only capture form. Writes to Supabase `leads`,
 best-effort notifies visitor_capture_agent, and syncs the contact to
-Systeme.io with the right tag + nurture sequence for the signup type.
+Brevo (leads/integrations/brevo_client.py, replaces Systeme.io as of
+2026-09-16 — Kelvin's directive, "not using systeme.io. using brevo for
+emails.") with a LEAD_STAGE attribute reflecting the signup type.
 
 trial_handler.py builds on top of this — it calls process_signup() with
 signup_type="trial" first, then layers the Stripe subscription on top.
@@ -31,7 +33,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from leads.integrations import slack
-from leads.integrations.systeme_io import SystemeIOClient
+from leads.integrations.brevo_client import ConfigurationError, create_or_update_contact
 
 log = logging.getLogger(__name__)
 
@@ -210,25 +212,42 @@ def _notify_visitor_capture_agent(lead: dict, webhook_url: Optional[str], http_c
         return f"visitor_capture_agent webhook failed: {exc}"
 
 
-def _sync_to_systeme(payload: SignupPayload, systeme_client: Optional[SystemeIOClient]) -> Optional[str]:
+def _sync_to_brevo(payload: SignupPayload, brevo_client: Optional[Any]) -> Optional[str]:
     """Best-effort CRM sync — same failure philosophy as the webhook
-    notify above. A Systeme.io outage must not block signup."""
-    if systeme_client is None:
+    notify above. A Brevo outage (or BREVO_API_KEY not configured) must
+    not block signup. LEAD_STAGE replaces the old Systeme.io tag
+    ("product_{id}_trial_active"/"_interested") as a Brevo custom
+    contact attribute — Brevo's automation triggers key off attribute
+    values or list membership, not freeform tags; see
+    leads/integrations/brevo_client.py's module docstring."""
+    if brevo_client is None:
         return None
-    tag = f"product_{payload.product_id}_{'trial_active' if payload.signup_type == 'trial' else 'interested'}"
+    stage = "trial_active" if payload.signup_type == "trial" else "interested"
     try:
-        systeme_client.create_contact(payload.email, tags=[tag], fields={"first_name": payload.first_name} if payload.first_name else None)
+        result = create_or_update_contact(
+            email=payload.email,
+            first_name=payload.first_name or "",
+            last_name="",
+            attributes={"PRODUCT_ID": payload.product_id, "LEAD_STAGE": stage},
+            brevo_client=brevo_client,
+        )
+        if not result.success:
+            log.warning("Brevo sync failed for %s: %s", payload.email, result.error)
+            return f"Brevo sync failed: {result.error}"
         return None
+    except ConfigurationError as exc:
+        log.warning("Brevo sync skipped for %s: %s", payload.email, exc)
+        return f"Brevo sync skipped: {exc}"
     except Exception as exc:  # noqa: BLE001
-        log.warning("Systeme.io sync failed for %s: %s", payload.email, exc)
-        return f"Systeme.io sync failed: {exc}"
+        log.warning("Brevo sync failed for %s: %s", payload.email, exc)
+        return f"Brevo sync failed: {exc}"
 
 
 def process_signup(
     data: dict,
     *,
     supabase_client: Optional[Any] = None,
-    systeme_client: Optional[SystemeIOClient] = None,
+    brevo_client: Optional[Any] = None,
     visitor_capture_webhook_url: Optional[str] = None,
     http_client: Optional[Any] = None,
 ) -> dict:
@@ -239,7 +258,7 @@ def process_signup(
     warnings = []
     for warning in (
         _notify_visitor_capture_agent(lead, visitor_capture_webhook_url, http_client),
-        _sync_to_systeme(payload, systeme_client),
+        _sync_to_brevo(payload, brevo_client),
     ):
         if warning:
             warnings.append(warning)

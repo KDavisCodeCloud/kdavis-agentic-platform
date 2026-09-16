@@ -44,7 +44,7 @@ class IRSCategory(str, Enum):
 _CATEGORY_KEYWORDS: dict[IRSCategory, tuple[str, ...]] = {
     IRSCategory.SOFTWARE_SUBSCRIPTIONS: (
         "supabase", "github", "vercel", "aws", "amazon web services", "anthropic",
-        "openai", "stripe", "systeme.io", "systeme", "notion", "figma", "slack",
+        "openai", "stripe", "brevo", "systeme.io", "systeme", "notion", "figma", "slack",
         "zoom", "adobe", "google workspace", "microsoft 365", "dropbox", "domain",
         "namecheap", "godaddy", "cloudflare", "hosting", "saas", "subscription",
         "api", "software",

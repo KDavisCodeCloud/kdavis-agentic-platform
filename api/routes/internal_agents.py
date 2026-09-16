@@ -570,7 +570,7 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
                 pages_viewed=int(payload.get("pages_viewed", 0)),
             )
             # enrich_fn/tag_fn intentionally omitted (None) — no company-size
-            # enrichment or Systeme.io tagging integration is wired here yet;
+            # enrichment or Brevo CRM sync integration is wired here yet;
             # real, honest partial functionality (scoring + decision card),
             # not a fake enrichment result.
             result = VisitorCaptureAgent().process_incoming_lead(lead)

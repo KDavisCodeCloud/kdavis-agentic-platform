@@ -1,7 +1,9 @@
 """
 tests/test_leads_capture.py
 Tests for leads/capture/{signup_handler,trial_handler}.py and
-leads/integrations/{systeme_io,slack,webhook_receiver}.py.
+leads/integrations/{slack,webhook_receiver}.py. Brevo client coverage
+(leads/integrations/brevo_client.py, replaces systeme_io.py as of
+2026-09-16) lives in tests/test_brevo_client.py, not here.
 
 What this file validates:
   - signup_handler validates payloads and rejects bad input with
@@ -11,22 +13,21 @@ What this file validates:
     surfaced instead)
   - trial_handler reuses process_signup, creates a Stripe customer +
     trial subscription, and requires an explicit stripe_price_id
-  - SystemeIOClient and SlackClient build correct requests and raise
-    on API-level failures
+  - SlackClient builds correct requests and raises on API-level failures
   - webhook_receiver verifies the shared secret and dispatches by
     event type, updating the matching lead
 
-All clients are injected mocks — no real Supabase/Stripe/Systeme.io/
+All clients are injected mocks — no real Supabase/Stripe/Brevo/
 Slack/network calls happen in this suite.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from leads.capture.signup_handler import process_signup, validate_signup_payload
 from leads.capture.trial_handler import process_trial_start
-from leads.integrations.systeme_io import SystemeIOClient, SystemeIOError
+from leads.integrations.brevo_client import BrevoContactResult
 from leads.integrations.slack import SlackClient, SlackAPIError
 from leads.integrations import webhook_receiver
 
@@ -108,14 +109,29 @@ class TestProcessSignup:
         assert insert_call["signup_type"] == "email_only"
         assert result["warnings"] == []
 
-    def test_systeme_failure_produces_warning_not_exception(self):
+    def test_brevo_failure_produces_warning_not_exception(self):
         supabase = _supabase_client_stub()
-        systeme = MagicMock()
-        systeme.create_contact.side_effect = SystemeIOError("boom")
+        # Any non-None brevo_client satisfies _sync_to_brevo's "configured"
+        # guard; the actual Brevo SDK call is intercepted below via
+        # create_or_update_contact itself, same pattern as
+        # kdavis-microsaas-engine's own mkt_o3 tests.
+        with patch(
+            "leads.capture.signup_handler.create_or_update_contact",
+            return_value=BrevoContactResult(success=False, error="boom"),
+        ):
+            result = process_signup(
+                {"email": "jane@example.com", "product_id": "p"},
+                supabase_client=supabase, brevo_client=MagicMock(),
+            )
 
-        result = process_signup({"email": "jane@example.com", "product_id": "p"}, supabase_client=supabase, systeme_client=systeme)
+        assert any("Brevo" in w for w in result["warnings"])
 
-        assert any("Systeme.io" in w for w in result["warnings"])
+    def test_brevo_not_configured_produces_no_warning_when_no_client_passed(self):
+        # Default behavior, unchanged from the old Systeme.io wiring:
+        # brevo_client=None (the default) means "don't sync" -- not an error.
+        supabase = _supabase_client_stub()
+        result = process_signup({"email": "jane@example.com", "product_id": "p"}, supabase_client=supabase)
+        assert result["warnings"] == []
 
     def test_webhook_failure_produces_warning_not_exception(self):
         supabase = _supabase_client_stub()
@@ -131,19 +147,28 @@ class TestProcessSignup:
 
         assert any("webhook" in w for w in result["warnings"])
 
-    def test_trial_tag_differs_from_email_only_tag(self):
+    def test_trial_lead_stage_differs_from_email_only_lead_stage(self):
         supabase = _supabase_client_stub()
-        systeme = MagicMock()
 
-        process_signup({"email": "a@example.com", "product_id": "p", "signup_type": "trial"}, supabase_client=supabase, systeme_client=systeme)
-        trial_tag = systeme.create_contact.call_args.kwargs["tags"][0]
+        with patch(
+            "leads.capture.signup_handler.create_or_update_contact",
+            return_value=BrevoContactResult(success=True, contact_id=1),
+        ) as mock_sync:
+            process_signup(
+                {"email": "a@example.com", "product_id": "p", "signup_type": "trial"},
+                supabase_client=supabase, brevo_client=MagicMock(),
+            )
+            trial_stage = mock_sync.call_args.kwargs["attributes"]["LEAD_STAGE"]
 
-        systeme.reset_mock()
-        process_signup({"email": "b@example.com", "product_id": "p", "signup_type": "email_only"}, supabase_client=supabase, systeme_client=systeme)
-        email_only_tag = systeme.create_contact.call_args.kwargs["tags"][0]
+            mock_sync.reset_mock()
+            process_signup(
+                {"email": "b@example.com", "product_id": "p", "signup_type": "email_only"},
+                supabase_client=supabase, brevo_client=MagicMock(),
+            )
+            email_only_stage = mock_sync.call_args.kwargs["attributes"]["LEAD_STAGE"]
 
-        assert trial_tag == "product_p_trial_active"
-        assert email_only_tag == "product_p_interested"
+        assert trial_stage == "trial_active"
+        assert email_only_stage == "interested"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -186,35 +211,6 @@ class TestProcessTrialStart:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SystemeIOClient
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestSystemeIOClient:
-    def test_create_contact_tags_after_creation(self):
-        http = MagicMock()
-        http.request.side_effect = [
-            FakeResponse(200, {"id": "contact_1"}),
-            FakeResponse(200, {}),
-        ]
-        client = SystemeIOClient(api_key="key", client=http)
-
-        contact = client.create_contact("jane@example.com", tags=["product_p_interested"])
-
-        assert contact["id"] == "contact_1"
-        assert http.request.call_count == 2
-        tag_call = http.request.call_args_list[1]
-        assert tag_call.args[1] == "/contacts/contact_1/tags"
-
-    def test_error_status_raises(self):
-        http = MagicMock()
-        http.request.return_value = FakeResponse(500, {"error": "boom"})
-        client = SystemeIOClient(api_key="key", client=http)
-
-        with pytest.raises(SystemeIOError):
-            client.get_sequence_stats("seq_1")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # SlackClient
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -249,33 +245,46 @@ class TestSlackClient:
 
 class TestWebhookReceiver:
     def test_no_secret_configured_accepts(self, monkeypatch):
-        monkeypatch.delenv("SYSTEME_WEBHOOK_SECRET", raising=False)
+        monkeypatch.delenv("BREVO_WEBHOOK_SECRET", raising=False)
         assert webhook_receiver.verify_webhook_secret(None) is True
 
     def test_secret_mismatch_rejected(self, monkeypatch):
-        monkeypatch.setenv("SYSTEME_WEBHOOK_SECRET", "correct-secret")
+        monkeypatch.setenv("BREVO_WEBHOOK_SECRET", "correct-secret")
         assert webhook_receiver.verify_webhook_secret("wrong") is False
         assert webhook_receiver.verify_webhook_secret("correct-secret") is True
 
     def test_handle_webhook_raises_on_bad_secret(self, monkeypatch):
-        monkeypatch.setenv("SYSTEME_WEBHOOK_SECRET", "correct-secret")
+        monkeypatch.setenv("BREVO_WEBHOOK_SECRET", "correct-secret")
         with pytest.raises(PermissionError):
-            webhook_receiver.handle_webhook({"event": "contact.created", "data": {}}, secret_header="wrong")
+            webhook_receiver.handle_webhook({"event": "contact_updated", "data": {}}, secret_header="wrong")
 
-    def test_contact_created_updates_lead(self, monkeypatch):
-        monkeypatch.delenv("SYSTEME_WEBHOOK_SECRET", raising=False)
+    def test_contact_updated_updates_lead(self, monkeypatch):
+        monkeypatch.delenv("BREVO_WEBHOOK_SECRET", raising=False)
         supabase = _supabase_client_stub()
 
         result = webhook_receiver.handle_webhook(
-            {"event": "contact.created", "data": {"email": "jane@example.com", "id": "contact_9", "product_id": "p"}},
+            {"event": "contact_updated", "data": {"email": "jane@example.com", "id": "contact_9", "product_id": "p"}},
             supabase_client=supabase,
         )
 
         assert result["status"] == "processed"
         update_call = supabase.table.return_value.update.call_args[0][0]
-        assert update_call == {"systeme_contact_id": "contact_9"}
+        assert update_call == {"brevo_contact_id": "contact_9"}
+
+    def test_unsubscribed_marks_lead_churned(self, monkeypatch):
+        monkeypatch.delenv("BREVO_WEBHOOK_SECRET", raising=False)
+        supabase = _supabase_client_stub()
+
+        result = webhook_receiver.handle_webhook(
+            {"event": "unsubscribed", "data": {"email": "jane@example.com", "product_id": "p"}},
+            supabase_client=supabase,
+        )
+
+        assert result["status"] == "processed"
+        update_call = supabase.table.return_value.update.call_args[0][0]
+        assert update_call == {"stage": "churned"}
 
     def test_unrecognized_event_ignored(self, monkeypatch):
-        monkeypatch.delenv("SYSTEME_WEBHOOK_SECRET", raising=False)
+        monkeypatch.delenv("BREVO_WEBHOOK_SECRET", raising=False)
         result = webhook_receiver.handle_webhook({"event": "something.new", "data": {}})
         assert result["status"] == "ignored"

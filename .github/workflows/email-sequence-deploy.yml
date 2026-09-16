@@ -1,18 +1,43 @@
 name: Email Sequence Deploy
 
-# Deploys an approved email nurture sequence to Systeme.io.
-# Trigger: manual dispatch, run after approving a sequence in the
-# dashboard HITL queue.
+# Historical note (2026-09-16): this workflow's original job — push an
+# approved email_sequences row to Systeme.io as a new campaign/sequence
+# via API — no longer has an equivalent action under Brevo (Kelvin's
+# directive: "not using systeme.io. using brevo for emails."). Brevo has
+# no API for creating a sequence/campaign container either (that's part
+# of why kdavis-microsaas-engine dropped Systeme.io first, in an earlier
+# session, confirmed via direct API testing — see leads/integrations/
+# brevo_client.py's module docstring). Brevo's automation is built once,
+# by hand, per product, in the Brevo UI, triggered by a contact being
+# added to that product's list or having an attribute set — there is no
+# "deploy this sequence" API call for this workflow to make anymore.
+#
+# What a real Brevo-era equivalent of "activate this approved sequence"
+# would actually need to do: nothing to Brevo itself (the automation
+# already exists, built by hand) — just mark the email_sequences row
+# 'deployed' and, going forward, ensure `leads/integrations/brevo_client.
+# create_or_update_contact` is called with this product's real Brevo
+# list_id whenever a matching lead reaches the trigger condition. That's
+# a per-signup code path (see leads/capture/signup_handler.py), not a
+# one-time deploy action — so this workflow, as a manually-triggered
+# "push a sequence live" button, has no real job to do anymore.
+#
+# Left in place (not deleted) since Kelvin may still want a manual
+# "mark this sequence deployed" action for record-keeping — the step
+# below is intentionally a clear, honest no-op rather than a broken
+# `python -m leads.integrations.systeme_io deploy-sequence` call (that
+# module and CLI entry point are both gone). Replace this with a real
+# action if/when there's an actual per-sequence Brevo step to trigger.
 
 on:
   workflow_dispatch:
     inputs:
       product_id:
-        description: "Product ID whose approved sequence should deploy (see config/products.yaml)"
+        description: "Product ID whose approved sequence would have deployed (see config/products.yaml)"
         required: true
         type: string
       sequence_id:
-        description: "email_sequences.id to deploy (optional — defaults to latest approved for product_id)"
+        description: "email_sequences.id (optional — defaults to latest approved for product_id)"
         required: false
         type: string
 
@@ -21,57 +46,12 @@ permissions:
 
 jobs:
   deploy-sequence:
-    name: Push approved sequence to Systeme.io
+    name: No-op — see workflow file header for why Systeme.io's deploy step has no Brevo equivalent
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies
+      - name: Explain why this is a no-op now
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Deploy sequence to Systeme.io
-        id: deploy
-        env:
-          SYSTEME_IO_API_KEY: ${{ secrets.SYSTEME_IO_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          PRODUCT_ID: ${{ inputs.product_id }}
-          SEQUENCE_ID: ${{ inputs.sequence_id }}
-        run: |
-          python -m leads.integrations.systeme_io deploy-sequence \
-            --product-id "$PRODUCT_ID" \
-            ${SEQUENCE_ID:+--sequence-id "$SEQUENCE_ID"}
-
-      - name: Confirm deployment back to dashboard
-        if: success()
-        run: |
-          curl -sf -X POST "${{ secrets.DASHBOARD_WEBHOOK_URL }}/events" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.DASHBOARD_WEBHOOK_TOKEN }}" \
-            -d "{
-              \"event\": \"email_sequence_deployed\",
-              \"product_id\": \"${{ inputs.product_id }}\",
-              \"sequence_id\": \"${{ inputs.sequence_id }}\",
-              \"actor\": \"${{ github.actor }}\"
-            }"
-
-      - name: Notify dashboard on failure
-        if: failure()
-        run: |
-          curl -sf -X POST "${{ secrets.DASHBOARD_WEBHOOK_URL }}/events" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.DASHBOARD_WEBHOOK_TOKEN }}" \
-            -d "{
-              \"event\": \"email_sequence_deploy_failed\",
-              \"product_id\": \"${{ inputs.product_id }}\",
-              \"sequence_id\": \"${{ inputs.sequence_id }}\"
-            }"
+          echo "This workflow's original job (push an approved sequence to Systeme.io) has no equivalent under Brevo."
+          echo "Brevo automations are built once, by hand, per product, in the Brevo UI — see this file's header comment."
+          echo "product_id=${{ inputs.product_id }} sequence_id=${{ inputs.sequence_id }} — no action taken."

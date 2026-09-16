@@ -2,44 +2,37 @@
 
 ## Before First Build Session
 
-### Systeme.io
-1. Log into systeme.io
-2. Go to Settings → Automations → Tags
-3. Create the following tags exactly:
-   - cd-cold-seq-1
-   - cd-trial-onboard
-   - cd-trial-convert
-   - cd-churn-save
-   - cd-expansion
-   - mse-cold-seq-1
-   - mse-trial-onboard
-   - mse-trial-convert
-   - mse-churn-save
-   - mse-expansion
-4. Copy each tag ID from systeme.io
-5. Paste into .env next to the matching variable
+### Brevo (replaces Systeme.io, 2026-09-16)
+Systeme.io is no longer used anywhere in this platform — its public API
+never actually exposed a campaigns/sequences endpoint (confirmed 404 on
+every plausible path, both here and independently in the sibling
+kdavis-microsaas-engine repo). Brevo replaces it for all contact sync
+and nurture-sequence automation. See leads/integrations/brevo_client.py's
+module docstring for the full integration shape.
 
-### Systeme.io API Key
-1. Go to Settings → Public API keys
-2. Click Generate new key
-3. Leave expiration empty (permanent)
-4. Copy key into SYSTEME_API_KEY in .env
+1. Log into Brevo (app.brevo.com)
+2. Go to Contacts → Settings → Contact Attributes and create two custom
+   attributes: `PRODUCT_ID` (text) and `LEAD_STAGE` (text) — these are
+   what this codebase writes on every contact sync
+   (leads/capture/signup_handler.py's `_sync_to_brevo`), replacing the
+   old per-stage Systeme.io tags
+3. Go to Settings → SMTP & API → API Keys, generate a new key
+4. Copy the key into `BREVO_API_KEY` in .env
+5. (Optional, per product that wants Brevo-driven nurture automation)
+   Create a contact list for that product in Brevo, then build the
+   nurture automation by hand in Brevo's UI, triggered off contact
+   attribute values or list membership — Brevo has no API for creating
+   the automation/sequence itself, only for adding/updating contacts and
+   list membership. There is nothing to configure in .env per product —
+   unlike the old Systeme.io tag-ID-per-stage model, Brevo automations
+   key off the `LEAD_STAGE`/`PRODUCT_ID` attribute values directly.
+6. (Optional) Set `BREVO_WEBHOOK_SECRET` in .env and configure a webhook
+   in Brevo pointing at this platform's webhook receiver
+   (leads/integrations/webhook_receiver.py) if you want unsubscribe/
+   contact-update events reconciled back onto the `leads` table.
 
 ### Apollo
 1. Log into apollo.io
 2. Go to Settings → Integrations → API
 3. Generate API key
 4. Copy into APOLLO_API_KEY in .env
-
-### Adding New MSE Products
-When a new MSE product launches add 5 new tags
-to systeme.io and 5 new variables to .env:
-  SYSTEME_TAG_{PRODUCT_CODE}_COLD_SEQ_1=
-  SYSTEME_TAG_{PRODUCT_CODE}_TRIAL_ONBOARD=
-  SYSTEME_TAG_{PRODUCT_CODE}_TRIAL_CONVERT=
-  SYSTEME_TAG_{PRODUCT_CODE}_CHURN_SAVE=
-  SYSTEME_TAG_{PRODUCT_CODE}_EXPANSION=
-
-Then add a row to the campaigns table in Supabase
-for each new tag. MKT-12 handles all enrollment
-from that point forward automatically.

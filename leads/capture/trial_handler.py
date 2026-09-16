@@ -14,7 +14,7 @@ lead-writing/CRM-sync logic, then creates the Stripe customer and
 14-day trial subscription and writes stripe_customer_id back onto the
 lead row.
 
-Unlike the visitor_capture webhook / Systeme.io sync in signup_handler
+Unlike the visitor_capture webhook / Brevo sync in signup_handler
 (best-effort, never blocks signup), a Stripe failure here IS fatal —
 a trial that silently didn't get a subscription is a real defect the
 caller must see, so this raises rather than swallowing the error.
@@ -35,8 +35,6 @@ from leads.capture.signup_handler import (
     process_signup,
     validate_signup_payload,
 )
-from leads.integrations.systeme_io import SystemeIOClient
-
 log = logging.getLogger(__name__)
 
 DEFAULT_TRIAL_DAYS = 14
@@ -81,7 +79,7 @@ def process_trial_start(
     stripe_price_id: str,
     trial_days: int = DEFAULT_TRIAL_DAYS,
     supabase_client: Optional[Any] = None,
-    systeme_client: Optional[SystemeIOClient] = None,
+    brevo_client: Optional[Any] = None,
     visitor_capture_webhook_url: Optional[str] = None,
     http_client: Optional[Any] = None,
     stripe_module: Optional[Any] = None,
@@ -96,7 +94,7 @@ def process_trial_start(
     signup_result = process_signup(
         trial_data,
         supabase_client=supabase_client,
-        systeme_client=systeme_client,
+        brevo_client=brevo_client,
         visitor_capture_webhook_url=visitor_capture_webhook_url,
         http_client=http_client,
     )

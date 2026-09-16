@@ -9,7 +9,7 @@ Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
 Lead capture and nurture pipeline: anonymous visitor tracking, signup /
-trial processing, and the CRM (Systeme.io) + Slack integrations that
+trial processing, and the CRM (Brevo) + Slack integrations that
 route captured leads onward. HTTP route wiring (api/routes/leads.py)
 and the visitor_capture_agent that consumes these webhooks are out of
 scope here — this package exposes plain, testable processing functions

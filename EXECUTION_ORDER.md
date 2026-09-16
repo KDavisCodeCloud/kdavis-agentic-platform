@@ -83,8 +83,8 @@ CLAUDE CODE (Week 2):
   1. leads/capture/pixel.js — visitor tracking, anonymous sessions only
   2. leads/capture/signup_handler.py — processes /signup/[product] forms
   3. leads/capture/trial_handler.py — processes trial starts
-  4. leads/integrations/systeme_io.py — Systeme.io API wrapper
-  5. leads/integrations/webhook_receiver.py — receives Systeme.io webhooks
+  4. leads/integrations/brevo_client.py — Brevo API wrapper (replaces systeme_io.py, 2026-09-16)
+  5. leads/integrations/webhook_receiver.py — receives Brevo webhooks
   6. Supabase tables: leads, visitor_sessions, email_sequences,
      email_sequence_steps (add to schema, apply RLS)
   7. email_sequence_agent.py — drafts nurture sequences for HITL approval

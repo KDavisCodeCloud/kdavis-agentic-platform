@@ -14,16 +14,15 @@ dashboard decision card (high intent) or lets the nurture sequence run
 automatically (everything else). Per CLAUDE.md's Lead Capture section.
 
 Triggered in production by leads/capture/signup_handler.py and
-trial_handler.py on every new row — neither exists in this repo yet
-(the `leads/` package is Session 10 PM, not this session), so
-process_incoming_lead() takes an IncomingLead value directly rather than
-a webhook payload.
+trial_handler.py on every new row — process_incoming_lead() takes an
+IncomingLead value directly rather than a webhook payload.
 
-Enrichment (company domain -> size estimate, LinkedIn lookup) and
-Systeme.io tagging both require real external API calls this repo has no
-client for yet (leads/integrations/systeme_io.py also doesn't exist).
-Both are injected callables here, defaulting to no-ops, so scoring and
-routing are fully testable today and real wiring later is additive.
+Enrichment (company domain -> size estimate, LinkedIn lookup) and CRM
+sync (leads/integrations/brevo_client.py — Brevo, not Systeme.io as of
+2026-09-16) both require real external API calls not wired into this
+agent directly. Both are injected callables here, defaulting to no-ops,
+so scoring and routing are fully testable today and real wiring later
+is additive.
 """
 
 from dataclasses import dataclass, field

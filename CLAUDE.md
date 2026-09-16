@@ -166,8 +166,8 @@ kdavis-agentic-platform/
 │   │   ├── signup_handler.py         # Processes signup form submissions per product
 │   │   └── trial_handler.py          # Processes trial starts, writes to leads table
 │   └── integrations/
-│       ├── systeme_io.py             # Systeme.io API wrapper: contacts, tags, sequences
-│       └── webhook_receiver.py       # Receives Systeme.io webhooks back into platform
+│       ├── brevo_client.py           # Brevo API wrapper: contacts, list membership (replaces systeme_io.py, 2026-09-16)
+│       └── webhook_receiver.py       # Receives Brevo webhooks back into platform
 ├── cicd/
 │   ├── PIPELINE.md                   # CI/CD workflow documentation
 │   └── release_workflow.md           # How to apply new releases, rollback procedure
@@ -1044,6 +1044,22 @@ Update it whenever a new workflow is added.
 ---
 
 ## LEAD CAPTURE AND EMAIL NURTURE SYSTEM
+
+**PROVIDER CORRECTION (2026-09-16, supersedes every "Systeme.io" mention
+in this section below):** Kelvin's directive — "not using systeme.io.
+using brevo for emails." — this platform's email/nurture provider is
+Brevo, not Systeme.io. `leads/integrations/systeme_io.py` has been
+deleted; `leads/integrations/brevo_client.py` replaces it. Every
+"Systeme.io" reference below (tags, contact sync, the
+`email-sequence-deploy.yml` workflow) describes the original,
+never-fully-built plan and is kept here as the historical build-order
+narrative, same as this file's own CURRENT STATUS footer explains for
+other superseded sections — read docs/ENV_SETUP.md and
+leads/integrations/brevo_client.py's module docstring for what's
+actually true today, not the Systeme.io-specific mechanics narrated
+below. The structural shape (visitor tracking -> email opt-in -> trial
+signup -> nurture sequence, HITL approval before anything sends) is
+unchanged; only the provider and its tag-vs-attribute mechanics differ.
 
 Every landing page collects three types of data:
 1. Anonymous visitor behavior (everyone who lands on the page)
