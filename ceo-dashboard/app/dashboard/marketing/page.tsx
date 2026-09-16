@@ -7,9 +7,16 @@ import { MSEContentReview } from "@/components/ui/MSEContentReview";
 import { LeadPipelinePanel } from "@/components/ui/LeadPipelinePanel";
 import { OutreachTracker } from "@/components/ui/OutreachTracker";
 
+// Cold Outreach (added 2026-09-16): job-posting-signal scraper +
+// per-ICP LinkedIn DM sequences (MKT-O1/MKT-O2, kdavis-microsaas-engine)
+// -- was "Cold Email"/"Not yet built" until today; it's LinkedIn DMs, not
+// email (the ICP config specifies LinkedIn as the channel, not email --
+// see mse_icp_configs). Triggered via the Lead Pipeline panel's "Run Lead
+// Finder Now" / "Send Due Sequences Now" buttons above, or the weekly/
+// hourly n8n crons those buttons manually fall back for.
 const MARKETING_AGENTS = [
   { name: "LinkedIn Content",   status: "active",   lastRun: "2026-08-12", output: "MKT-LI1 — normally ~12 posts/mo, 16-post batch this run" },
-  { name: "Cold Email",         status: "pending",  lastRun: null, output: "Not yet built" },
+  { name: "Cold Outreach",      status: "active",   lastRun: null, output: "MKT-O1/O2 — job-posting scraper + LinkedIn DM sequences, per-ICP. Trigger above in Lead Pipeline." },
   { name: "Conversion Tracker", status: "pending",  lastRun: null, output: "Not yet built" },
 ];
 

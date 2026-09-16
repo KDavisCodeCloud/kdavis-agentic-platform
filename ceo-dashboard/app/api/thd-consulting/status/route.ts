@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 
-// Feeds the manual "Run Lead Pipeline Now" product picker (the n8n-outage
-// fallback) -- proxies to api/routers/leads.py's GET /marketing/leads/icp-products
-// on the microsaas-engine backend, same MARKETING_API_KEY shared-secret
-// pattern as app/api/linkedin-queue/generate/route.ts.
+// Proxies to GET /thd-consulting/scrape/status[?run_id=] -- omit run_id
+// for the most recent run (feeds the "Last run timestamp and lead count
+// returned" status indicator without the client needing to have kept an
+// id around across a page reload).
 // Fixed 2026-09-16: this was reading NEXT_PUBLIC_API_URL (Cloud Decoded's
 // own backend var) despite every comment in this file saying "microsaas-engine
 // backend" -- .env.example has always declared a separate NEXT_PUBLIC_MSE_API_URL
@@ -13,18 +13,22 @@ import { requireRole } from "@/lib/api-auth";
 // Decoded's backend, which has no /marketing/leads or /thd-consulting routes at all.
 const API_BASE = process.env.NEXT_PUBLIC_MSE_API_URL ?? "http://localhost:8000";
 
-export async function GET() {
-  const auth = await requireRole(["admin", "marketing"]);
+export async function GET(request: NextRequest) {
+  const auth = await requireRole(["admin"]);
   if (!auth.ok) return NextResponse.json({ detail: auth.error }, { status: auth.status });
+
+  const { searchParams } = new URL(request.url);
+  const runId = searchParams.get("run_id");
 
   const apiKey = process.env.MARKETING_API_KEY;
   if (!apiKey) {
     return NextResponse.json({ detail: "MARKETING_API_KEY is not configured on this deployment" }, { status: 500 });
   }
 
+  const qs = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/marketing/leads/icp-products`, {
+    res = await fetch(`${API_BASE}/thd-consulting/scrape/status${qs}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       cache: "no-store",
     });
@@ -37,7 +41,7 @@ export async function GET() {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    return NextResponse.json({ detail: data.detail ?? `Fetching ICP products failed: ${res.status}` }, { status: res.status });
+    return NextResponse.json({ detail: data.detail ?? `Fetching scrape status failed: ${res.status}` }, { status: res.status });
   }
   return NextResponse.json(data);
 }
