@@ -53,6 +53,19 @@ def test_build_image_prompt_includes_scene_and_matching_layout():
     assert "must show people" not in prompt.lower()
 
 
+def test_build_image_prompt_always_includes_kelvins_real_appearance():
+    # 2026-09-15: a generated image depicted the post's first-person narrator
+    # as a generic white male -- every prompt must carry Kelvin's real
+    # physical description as defense-in-depth, regardless of scene content.
+    prompt = sig.build_image_prompt("A developer scrolling Reddit.", "STORY")
+    assert sig.KELVIN_PHYSICAL_DESCRIPTION in prompt
+    assert "Black/African American" in prompt
+
+
+def test_scene_extraction_prompt_instructs_kelvins_real_appearance():
+    assert sig.KELVIN_PHYSICAL_DESCRIPTION in sig.SCENE_EXTRACTION_SYSTEM_PROMPT
+
+
 def test_check_relevance_parses_yes():
     client = MagicMock()
     client.messages.create.return_value = _claude_text_response("YES. The image shows the exact CI/CD pipeline described.")

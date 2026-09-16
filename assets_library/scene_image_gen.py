@@ -71,17 +71,35 @@ MODEL = "claude-sonnet-4-6"
 
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
-SCENE_EXTRACTION_SYSTEM_PROMPT = """You read an approved LinkedIn post and describe the single visual \
+# Kelvin's real physical description (added 2026-09-15, after a generated
+# image depicted the post's first-person narrator as a generic white male --
+# every LinkedIn post in this pipeline is written in Kelvin's own first-person
+# voice, so any "developer"/"builder"/"engineer"/"I" figure in a scene IS him,
+# never a generic stand-in). Single source of truth -- referenced from both
+# the scene-extraction prompt (below) and build_image_prompt's standing
+# directive, so it can't drift between the two call sites.
+KELVIN_PHYSICAL_DESCRIPTION = (
+    "a Black/African American man, late 30s to 40 years old, short hair with some grey at the "
+    "temples, a short, neatly trimmed beard/goatee"
+)
+
+SCENE_EXTRACTION_SYSTEM_PROMPT = f"""You read an approved LinkedIn post and describe the single visual \
 scene that would most specifically and accurately represent it as an image, plus classify its shape.
 
 Respond with ONLY a JSON object matching this exact shape:
-{"scene_description": str, "scene_type": "CONTRAST" | "MOMENT" | "STORY" | "TECHNICAL"}
+{{"scene_description": str, "scene_type": "CONTRAST" | "MOMENT" | "STORY" | "TECHNICAL"}}
 
 scene_description: 2-3 sentences. Who or what is shown, what is happening, what tension or \
 contrast exists (if any), what the setting is. Ground every detail in THIS post's actual, \
 specific content -- names of real tools/services/products it mentions, the real problem it \
 describes. Never invent a person, company, number, or outcome the post does not state. Never \
 use any human name other than "Kelvin Davis" if a person appears in the scene.
+
+Every post here is written in Kelvin's own first-person voice. If the scene includes a person \
+representing the post's narrator/builder -- "I", "a developer", "a solo engineer", "a builder", \
+or any unnamed figure clearly standing in for the person writing the post -- that person IS \
+Kelvin Davis. Describe him explicitly in the scene_description as: {KELVIN_PHYSICAL_DESCRIPTION}. \
+Never depict him as any other ethnicity, age range, or appearance.
 
 scene_type:
 - CONTRAST: the post sets up a before/after, right/wrong, vendor-claim-vs-reality, or \
@@ -132,6 +150,9 @@ Style: professional and credible. Editorial illustration quality similar to HBR 
 for narrative or human scenes; clean and precisely labeled for technical content. Warm, \
 trustworthy lighting and color. Clean composition, no clutter.
 
+If this scene includes a person representing Kelvin Davis (the post's narrator/builder), render \
+him as: {kelvin_description}. Do not depict him as any other ethnicity, age range, or appearance.
+
 Small text "Kelvin Davis" in a bottom corner if space allows.
 
 Do not produce: generic stock-photo cliches, meaningless abstract art, gradient blobs, or a vague \
@@ -173,6 +194,7 @@ def build_image_prompt(scene_description: str, scene_type: str) -> str:
     return _IMAGE_PROMPT_TEMPLATE.format(
         scene_description=scene_description,
         layout_instruction=_LAYOUT_INSTRUCTIONS[scene_type],
+        kelvin_description=KELVIN_PHYSICAL_DESCRIPTION,
     )
 
 

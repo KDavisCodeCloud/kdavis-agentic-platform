@@ -198,6 +198,12 @@ const MONITOR_DOMAINS = [
   },
 ]
 
+// Flip to true once a real demo video/interactive walkthrough is embedded
+// (see the DEMO EMBED section below for the iframe swap-in point).
+// While false, that section shows a "COMING SOON" overlay instead of the
+// placeholder poster/play-button.
+const DEMO_VIDEO_READY = false
+
 export default function LandingPage() {
   return (
     <>
@@ -939,10 +945,18 @@ export default function LandingPage() {
         >
           <div style={{ position: 'relative', zIndex: 2, maxWidth: 1000, margin: '0 auto', textAlign: 'center' }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginBottom: 22 }}>
-              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '.12em', color: 'rgba(159,194,255,.9)', border: '1px solid rgba(120,160,255,.32)', borderRadius: 5, padding: '4px 9px' }}>
-                WALKTHROUGH
-              </span>
-              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.4)' }}>runtime 3:48</span>
+              {DEMO_VIDEO_READY ? (
+                <>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '.12em', color: 'rgba(159,194,255,.9)', border: '1px solid rgba(120,160,255,.32)', borderRadius: 5, padding: '4px 9px' }}>
+                    WALKTHROUGH
+                  </span>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.4)' }}>runtime 3:48</span>
+                </>
+              ) : (
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '.12em', color: '#f5a623', border: '1px solid rgba(245,166,35,.45)', borderRadius: 5, padding: '4px 9px', background: 'rgba(245,166,35,.08)' }}>
+                  COMING SOON
+                </span>
+              )}
             </div>
             <h2 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 40, lineHeight: 1.1, letterSpacing: '-.025em', color: '#fff', margin: '0 0 14px' }}>
               Watch it run, start to approval.
@@ -972,14 +986,38 @@ export default function LandingPage() {
                     <span style={{ flex: 1, height: 1, background: 'repeating-linear-gradient(90deg,rgba(245,166,35,.6) 0 5px,transparent 5px 10px)', margin: '0 10px' }} />
                     <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: '#3fd17a' }}>RESOLVE</span>
                   </div>
-                  <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-                    <div style={{ width: 78, height: 78, borderRadius: '50%', background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 18px 50px -10px rgba(61,125,255,.8),0 0 0 10px rgba(90,150,255,.1)' }}>
-                      <span style={{ width: 0, height: 0, borderLeft: '22px solid #fff', borderTop: '13px solid transparent', borderBottom: '13px solid transparent', marginLeft: 6 }} />
+                  {DEMO_VIDEO_READY && (
+                    <div style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                      <div style={{ width: 78, height: 78, borderRadius: '50%', background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 18px 50px -10px rgba(61,125,255,.8),0 0 0 10px rgba(90,150,255,.1)' }}>
+                        <span style={{ width: 0, height: 0, borderLeft: '22px solid #fff', borderTop: '13px solid transparent', borderBottom: '13px solid transparent', marginLeft: 6 }} />
+                      </div>
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '.08em', color: 'rgba(232,236,242,.55)' }}>
+                        PLAY WALKTHROUGH · 3:48
+                      </span>
                     </div>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, letterSpacing: '.08em', color: 'rgba(232,236,242,.55)' }}>
-                      PLAY WALKTHROUGH · 3:48
-                    </span>
-                  </div>
+                  )}
+                  {!DEMO_VIDEO_READY && (
+                    <div
+                      style={{
+                        position: 'absolute', inset: 0, zIndex: 3, display: 'flex', flexDirection: 'column',
+                        alignItems: 'center', justifyContent: 'center', gap: 10,
+                        background: 'rgba(7,9,16,.72)', backdropFilter: 'blur(2px)',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: 'clamp(28px,5vw,44px)',
+                          letterSpacing: '.02em', color: '#fff', textTransform: 'uppercase', textAlign: 'center',
+                          textShadow: '0 0 40px rgba(245,166,35,.35)',
+                        }}
+                      >
+                        Coming Soon
+                      </span>
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, letterSpacing: '.06em', color: 'rgba(232,236,242,.6)' }}>
+                        Full walkthrough video in production
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
