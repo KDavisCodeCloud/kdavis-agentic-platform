@@ -220,6 +220,49 @@ function QualitySweepResultView({ result }: { result: QualitySweepResult }) {
   );
 }
 
+interface PlatformHealthCheckResult {
+  tier: "weekly" | "monthly" | "quarterly";
+  generated_at: string;
+  overall_status: "ok" | "degraded" | "error";
+  results: { name: string; status: "ok" | "degraded" | "error" | "not_implemented"; detail: string }[];
+}
+
+const HEALTH_STATUS_COLOR: Record<string, string> = {
+  ok: "#6fce8f",
+  degraded: "#e8963f",
+  error: "#e05d5d",
+  not_implemented: "#5b6673",
+};
+
+/** core/health_check.py's own report shape (2026-09-16) -- only shows rows
+ * that need attention plus the not_implemented gap list, same "don't make
+ * an all-green wall of text" rule as format_slack_message uses server-side. */
+function PlatformHealthCheckResultView({ result }: { result: PlatformHealthCheckResult }) {
+  const attention = result.results.filter((r) => r.status !== "ok");
+  const okCount = result.results.length - attention.length;
+  return (
+    <div className="rounded-[10px] p-3.5" style={{ backgroundColor: "#10151b", border: "1px solid #1c222b" }}>
+      <div className="flex items-center gap-4 mb-2.5">
+        <span className="text-[11px] font-mono font-semibold" style={{ color: HEALTH_STATUS_COLOR[result.overall_status] }}>
+          {result.overall_status.toUpperCase()}
+        </span>
+        <span className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
+          {okCount}/{result.results.length} checks passed clean
+        </span>
+      </div>
+      {attention.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {attention.map((row, i) => (
+            <p key={i} className="text-[11px] font-mono" style={{ color: "#9aa2ab" }}>
+              <span style={{ color: HEALTH_STATUS_COLOR[row.status] }}>{row.name}</span> — {row.detail}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SystemHealthPanel() {
   const [runs, setRuns] = useState<InternalAgentRunSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -276,6 +319,13 @@ export function SystemHealthPanel() {
           label="Run Code Quality Sweep Now"
           payload={{ full_sweep: true }}
           renderResult={(result) => <QualitySweepResultView result={result} />}
+          onComplete={loadRuns}
+        />
+        <HealthCheckTrigger<PlatformHealthCheckResult>
+          agentId="platform_health_check"
+          label="Run Full Platform Health Check Now"
+          payload={{ tier: "weekly" }}
+          renderResult={(result) => <PlatformHealthCheckResultView result={result} />}
           onComplete={loadRuns}
         />
       </div>

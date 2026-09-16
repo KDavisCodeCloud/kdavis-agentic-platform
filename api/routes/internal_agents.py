@@ -103,9 +103,10 @@ class InternalAgentRunResponse(BaseModel):
 _KNOWN_INTERNAL_AGENTS = {
     "accounting_agent", "chat_router_agent", "code_quality_agent",
     "content_agent", "email_sequence_agent", "finance_assistant_agent",
-    "gap_detector_agent", "onboarding_agent", "portfolio_monitor",
-    "release_notes_agent", "research_agent", "revenue_intelligence_agent",
-    "sop_agent", "tax_agent", "visitor_capture_agent", "wealth_agent",
+    "gap_detector_agent", "onboarding_agent", "platform_health_check",
+    "portfolio_monitor", "release_notes_agent", "research_agent",
+    "revenue_intelligence_agent", "sop_agent", "tax_agent",
+    "visitor_capture_agent", "wealth_agent",
 }
 
 # Agents with a real dispatch branch below. See module docstring for why
@@ -130,6 +131,7 @@ _WIRABLE_AGENTS = {
     "tax_agent",
     "wealth_agent",
     "finance_assistant_agent",
+    "platform_health_check",
 }
 
 _NOT_WIRED_REASONS = {
@@ -381,6 +383,41 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
                 result = EmailSequenceAgent(llm_call=_llm_call_sync).draft_all_sequences(
                     research=research, product_id=product_id
                 )
+
+                # Persist into email_sequences/email_sequence_steps (migration 039)
+                # so the dashboard's HITL panel can list/approve these individually --
+                # before this, the only record was this run's own internal_agent_runs.
+                # result blob (still written below, unchanged), which nothing could
+                # review or approve against. 2026-09-16 marketing-loop audit gap.
+                sequence_ids: dict[str, str] = {}
+                async with db.acquire() as conn:
+                    for sequence_name, sequence in result["sequences"].items():
+                        seq_row = await conn.fetchrow(
+                            """
+                            INSERT INTO email_sequences
+                                (product_id, sequence_name, niche, max_words, research_run_id)
+                            VALUES ($1, $2, $3, $4, $5)
+                            RETURNING id
+                            """,
+                            product_id, sequence_name, result["niche"], sequence["max_words"],
+                            UUID(str(research_run_id)),
+                        )
+                        sequence_id = seq_row["id"]
+                        sequence_ids[sequence_name] = str(sequence_id)
+
+                        for email in sequence["emails"]:
+                            await conn.execute(
+                                """
+                                INSERT INTO email_sequence_steps
+                                    (sequence_id, day, theme, subject, body, cta,
+                                     word_count, meets_word_limit, buzzword_flags)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+                                """,
+                                sequence_id, email["day"], email["theme"], email["subject"],
+                                email["body"], email["cta"], email["word_count"],
+                                email["meets_word_limit"], json.dumps(email["buzzword_flags"]),
+                            )
+                result["sequence_ids"] = sequence_ids
 
         elif agent_id == "sop_agent":
             from agents.internal.sop_agent import SOPAgent
@@ -787,6 +824,31 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
                 "source": "cash_flow_monitor",
                 "available_surplus": summary.available_surplus,
             })
+
+        elif agent_id == "platform_health_check":
+            # The dashboard "button" for core/health_check.py (2026-09-16,
+            # Kelvin's weekly/monthly/quarterly health-sweep request) --
+            # fires the same sweep the cron workflows run, on demand,
+            # through the exact HealthCheckTrigger pattern
+            # SystemHealthPanel.tsx already uses for gap_detector_agent/
+            # code_quality_agent. Opens its own DB connection (same
+            # self-contained-connection reasoning as core/notifications.py)
+            # rather than reusing `db` above, since run_health_sweep is
+            # also called standalone from the cron workflows with no
+            # app.state.db_pool available there.
+            from core.health_check import run_health_sweep
+
+            tier = payload.get("tier", "weekly")
+            if tier not in ("weekly", "monthly", "quarterly"):
+                raise ValueError(f"payload.tier must be 'weekly', 'monthly', or 'quarterly', got {tier!r}")
+
+            report = await run_health_sweep(
+                tier=tier,
+                database_url=os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"),
+                github_token=os.getenv("GITHUB_TOKEN"),
+                stripe_api_key=os.getenv("STRIPE_SECRET_KEY"),
+            )
+            result = report.to_dict()
 
         else:
             # Unreachable: run_internal_agent already gates on _WIRABLE_AGENTS.

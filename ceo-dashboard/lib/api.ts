@@ -9,9 +9,10 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const INTERNAL_AGENT_IDS = new Set([
   "accounting_agent", "chat_router_agent", "code_quality_agent",
   "content_agent", "email_sequence_agent", "finance_assistant_agent",
-  "gap_detector_agent", "onboarding_agent", "portfolio_monitor",
-  "release_notes_agent", "research_agent", "revenue_intelligence_agent",
-  "sop_agent", "tax_agent", "visitor_capture_agent", "wealth_agent",
+  "gap_detector_agent", "onboarding_agent", "platform_health_check",
+  "portfolio_monitor", "release_notes_agent", "research_agent",
+  "revenue_intelligence_agent", "sop_agent", "tax_agent",
+  "visitor_capture_agent", "wealth_agent",
 ]);
 
 function isInternalAgent(agentId: string): boolean {

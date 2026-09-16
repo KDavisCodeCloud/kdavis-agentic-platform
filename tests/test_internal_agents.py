@@ -22,6 +22,7 @@ Runs with pytest-asyncio + unittest.mock — no live Supabase/DB needed.
 """
 
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -541,12 +542,26 @@ _FAKE_RESEARCH = {
 def _make_app_with_research_row(status="executed", result=None):
     """Like _make_app_with_db but also configures conn.fetchrow for the
     research_run_id lookup content_agent/email_sequence_agent's dispatch
-    branch does before the final status-update conn.execute call."""
+    branch does before the final status-update conn.execute call. The
+    FIRST fetchrow call is that research-row lookup; every call after
+    that is email_sequence_agent's own "INSERT INTO email_sequences ...
+    RETURNING id" (migration 039 persistence, one per sequence) -- needs
+    a distinct return shape ({"id": ...}, not the research row shape),
+    so this returns a fresh fake id for every call after the first."""
     app, conn = _make_app_with_db()
-    conn.fetchrow = AsyncMock(return_value={
+    research_row = {
         "status": status,
         "result": json.dumps(result if result is not None else {"research": _FAKE_RESEARCH, "hitl_card": {}}),
-    })
+    }
+
+    def _fetchrow_side_effect(*args, **kwargs):
+        if not _fetchrow_side_effect.called:
+            _fetchrow_side_effect.called = True
+            return research_row
+        return {"id": uuid4()}
+
+    _fetchrow_side_effect.called = False
+    conn.fetchrow = AsyncMock(side_effect=_fetchrow_side_effect)
     return app, conn
 
 
@@ -607,6 +622,33 @@ class TestEmailSequenceAgentDispatch:
         assert "status = 'executed'" in sql
         result = json.loads(params[0])
         assert "sequences" in result
+        # migration 039 persistence -- one email_sequences row id per sequence
+        assert set(result["sequence_ids"]) == {"trial_nurture", "email_only_nurture", "post_churn_winback"}
+
+    async def test_success_persists_sequences_and_steps_to_dedicated_tables(self):
+        app, conn = _make_app_with_research_row()
+        with patch.object(internal_agents, "_llm_call_sync", return_value="stub"):
+            await internal_agents._execute_internal_agent(
+                app, str(uuid4()), "email_sequence_agent",
+                {"research_run_id": str(uuid4()), "product_id": "freight-audit"},
+            )
+
+        insert_sequence_calls = [
+            c for c in conn.fetchrow.await_args_list
+            if c.args and "INSERT INTO email_sequences" in c.args[0]
+        ]
+        assert len(insert_sequence_calls) == 3  # trial_nurture, email_only_nurture, post_churn_winback
+        for call in insert_sequence_calls:
+            sql, product_id, sequence_name, niche, max_words, research_run_id = call.args
+            assert product_id == "freight-audit"
+            assert sequence_name in ("trial_nurture", "email_only_nurture", "post_churn_winback")
+
+        insert_step_calls = [
+            c for c in conn.execute.await_args_list
+            if c.args and "INSERT INTO email_sequence_steps" in c.args[0]
+        ]
+        # 14 (trial) + 5 (email-only) + 4 (post-churn) = 23 emails total
+        assert len(insert_step_calls) == 23
 
     async def test_missing_product_id_writes_failed(self):
         app, conn = _make_app_with_research_row()
@@ -807,3 +849,46 @@ class TestFinanceAssistantAgentDispatch:
         sql, *params = conn.execute.await_args.args
         assert "status = 'failed'" in sql
         assert "tax_reserve_status" in params[0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# platform_health_check — the dashboard "button" for core/health_check.py
+# (2026-09-16). run_health_sweep opens its own DB connection (same
+# self-contained-connection reasoning as core/notifications.py), so it's
+# mocked here rather than exercised against _make_app_with_db's fake pool.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestPlatformHealthCheckDispatch:
+    async def test_default_tier_is_weekly(self):
+        app, conn = _make_app_with_db()
+        fake_report = SimpleNamespace(to_dict=lambda: {"tier": "weekly", "overall_status": "ok", "results": []})
+
+        with patch("core.health_check.run_health_sweep", new=AsyncMock(return_value=fake_report)) as mock_sweep, \
+             patch.dict(os.environ, {"DATABASE_URL": "postgresql://fake"}):
+            await internal_agents._execute_internal_agent(app, str(uuid4()), "platform_health_check", {})
+
+        assert mock_sweep.await_args.kwargs["tier"] == "weekly"
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'executed'" in sql
+        assert json.loads(params[0])["tier"] == "weekly"
+
+    async def test_explicit_tier_passed_through(self):
+        app, conn = _make_app_with_db()
+        fake_report = SimpleNamespace(to_dict=lambda: {"tier": "quarterly", "overall_status": "ok", "results": []})
+
+        with patch("core.health_check.run_health_sweep", new=AsyncMock(return_value=fake_report)) as mock_sweep, \
+             patch.dict(os.environ, {"DATABASE_URL": "postgresql://fake"}):
+            await internal_agents._execute_internal_agent(
+                app, str(uuid4()), "platform_health_check", {"tier": "quarterly"}
+            )
+
+        assert mock_sweep.await_args.kwargs["tier"] == "quarterly"
+
+    async def test_invalid_tier_writes_failed(self):
+        app, conn = _make_app_with_db()
+        await internal_agents._execute_internal_agent(
+            app, str(uuid4()), "platform_health_check", {"tier": "daily"}
+        )
+        sql, *params = conn.execute.await_args.args
+        assert "status = 'failed'" in sql
+        assert "weekly" in params[0]

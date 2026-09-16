@@ -1,0 +1,57 @@
+name: Quarterly Platform Health Check
+
+# Kelvin's 2026-09-16 request -- quarterly tier, the deepest sweep. Adds,
+# on top of everything weekly + monthly already cover: row-level-security
+# coverage across every public table (extends migration 031's own
+# concern into an ongoing check), and the explicit gap report listing
+# what this platform still can't health-check because it doesn't exist
+# yet (n8n, inbound email receiving, cost-spend trending, dependency/CVE
+# scanning) -- surfaced quarterly, not every week, so it nags without
+# becoming wallpaper. See core/health_check.py's module docstring for
+# the full cadence design and reasoning.
+#
+# Runs the 1st of January/April/July/October at the same 12:00 UTC slot
+# as the other two tiers.
+
+on:
+  schedule:
+    - cron: "0 12 1 1,4,7,10 *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  quarterly-health-check:
+    name: Quarterly health sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run quarterly health sweep
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m core.health_check --tier quarterly --report-out quarterly_health_report.json
+
+      - name: Upload JSON report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quarterly-health-report
+          path: quarterly_health_report.json
+          if-no-files-found: ignore

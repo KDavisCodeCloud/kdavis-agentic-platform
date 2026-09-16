@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRole } from "@/lib/api-auth";
+import { triggerImageGeneration } from "@/lib/trigger-image-generation";
 
 const VALID_STATUSES = new Set(["pending_review", "approved", "rejected", "published"]);
 
 // Replaces FastAPI's PATCH /internal/marketing/linkedin-queue/{queue_id} —
 // see app/api/linkedin-queue/route.ts for why this moved off the
-// never-deployed backend.
+// never-deployed backend. That backend IS deployed now (Railway), and its
+// image-generation-on-approval logic (api/routes/internal_marketing.py's
+// _generate_and_gate_image_for_approved_row) needs this route to call it
+// explicitly the moment status becomes 'approved' -- this route's own
+// Supabase write is the only place that transition happens, and nothing on
+// the backend side can otherwise observe it. See lib/trigger-image-generation.ts.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRole(["admin", "marketing"]);
   if (!auth.ok) return NextResponse.json({ detail: auth.error }, { status: auth.status });
@@ -51,6 +57,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   if (error || !data) {
     return NextResponse.json({ detail: "Row not found, or already published (immutable)" }, { status: 409 });
+  }
+
+  if (status === "approved") {
+    // Fire-and-forget from this route's perspective (the FastAPI side
+    // schedules its own background task and returns almost immediately) --
+    // a slow/unreachable backend must never block or fail this approval,
+    // which already succeeded in Supabase. Logged, not surfaced to the UI.
+    await triggerImageGeneration([id]);
   }
 
   return NextResponse.json(data);

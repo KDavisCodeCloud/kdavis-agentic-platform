@@ -84,12 +84,13 @@ from pathlib import Path
 
 import httpx
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from api.middleware.internal_auth import get_internal_user
+from api.routes.marketing import require_marketing_api_key
 
 log = logging.getLogger(__name__)
 
@@ -687,6 +688,73 @@ async def _generate_and_gate_image_for_approved_row(conn, queue_id: str) -> None
             json.dumps(image_brief), result["scene_description"], queue_id,
         )
         log.info("[InternalMarketing] Queue row %s: image generated and attached (%s)", queue_id, result["scene_type"])
+
+
+async def _generate_images_in_background(db_pool, queue_ids: list[str]) -> None:
+    """Sequential, one row at a time -- same accepted tradeoff as
+    batch_approve_linkedin_queue's own loop (avoids concurrent Gemini rate-
+    limit issues; this is a low-volume owner tool, not a high-throughput
+    service). One row's failure never stops the rest."""
+    for queue_id in queue_ids:
+        try:
+            async with db_pool.acquire() as conn:
+                await _generate_and_gate_image_for_approved_row(conn, queue_id)
+        except Exception as exc:  # noqa: BLE001 -- one row's failure must never stop the rest
+            log.error("[InternalMarketing] Background image generation failed for %s: %s", queue_id, exc)
+
+
+class GenerateImagesRequest(BaseModel):
+    queue_ids: list[str]
+
+
+@router.post("/linkedin-queue/generate-images")
+async def generate_linkedin_queue_images(
+    body: GenerateImagesRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _: None = Depends(require_marketing_api_key),
+) -> dict:
+    """
+    Fired by ceo-dashboard's own Next.js API routes (app/api/linkedin-queue/
+    [id]/route.ts and .../batch-approve/route.ts) immediately after THEY flip
+    a row's status to 'approved' via a direct Supabase write.
+
+    Found 2026-09-16: those Next.js routes talk to Supabase directly and
+    never call this router's own PATCH /linkedin-queue/{id} or POST
+    /linkedin-queue/batch-approve at all (a 2026-07-24 comment in that
+    Next.js code explains why: this backend was not yet deployed anywhere
+    reachable at the time those routes were written). This backend IS live
+    on Railway now, but the dashboard's approve buttons still never call it
+    -- meaning _generate_and_gate_image_for_approved_row, wired into this
+    same file's PATCH/batch-approve endpoints earlier the same day, was
+    dead code in production the whole time. This endpoint is the fix: a
+    narrow, server-to-server bridge the Next.js routes call right after
+    their own Supabase write, gated by the shared X-API-Key
+    (MARKETING_API_KEY) this repo already uses for exactly this kind of
+    Next.js-to-FastAPI call (see api/routes/marketing.py's linkedin-on-demand
+    route for the precedent), not get_internal_user (no Supabase session JWT
+    exists in that server-to-server context).
+
+    Runs every row as a background task and returns immediately --
+    scheduling a 12-post batch's worth of sequential Gemini+Claude calls
+    inline here would block the Next.js caller (and risk a serverless
+    function timeout) for minutes. The dashboard shows each row as
+    'approved' right away (that already happened, via Supabase, before this
+    endpoint was even called); the image lands a short time later, or the
+    row reverts to 'pending_review' with hitl_notes if the relevance gate
+    fails twice -- same as the synchronous PATCH/batch-approve path.
+
+    Does not itself flip anything to 'approved' -- assumes the caller
+    already did that. _generate_and_gate_image_for_approved_row's own WHERE
+    status = 'approved' guards are what make this safe to call for a row
+    that isn't (or is no longer) actually approved: it's simply a no-op for
+    that row rather than an error.
+    """
+    if not body.queue_ids:
+        raise HTTPException(status_code=400, detail="queue_ids must be a non-empty list")
+    db = request.app.state.db_pool
+    background_tasks.add_task(_generate_images_in_background, db, body.queue_ids)
+    return {"queued": len(body.queue_ids)}
 
 
 class QueueRowUpdate(BaseModel):

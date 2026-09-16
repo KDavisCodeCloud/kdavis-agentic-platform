@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireRole } from "@/lib/api-auth";
+import { triggerImageGeneration } from "@/lib/trigger-image-generation";
 
 // Replaces FastAPI's POST /internal/marketing/linkedin-queue/batch-approve —
 // see app/api/linkedin-queue/route.ts for why this moved off the
@@ -9,6 +10,11 @@ import { requireRole } from "@/lib/api-auth";
 // cron (unrelated to this dashboard, runs via GitHub Actions directly
 // against Postgres) does the actual publishing later, on each row's own
 // scheduled_for date.
+//
+// Also triggers image generation for every row this approves (see
+// lib/trigger-image-generation.ts) — same 2026-09-16 fix as the single-row
+// PATCH route, needed here too since this is a second, independent place
+// rows become 'approved' without ever calling the FastAPI backend.
 export async function POST(request: NextRequest) {
   const auth = await requireRole(["admin", "marketing"]);
   if (!auth.ok) return NextResponse.json({ detail: auth.error }, { status: auth.status });
@@ -32,5 +38,6 @@ export async function POST(request: NextRequest) {
   }
 
   const approvedIds = (data ?? []).map((r) => r.id);
+  await triggerImageGeneration(approvedIds);
   return NextResponse.json({ batch_month: batchMonth, approved_count: approvedIds.length, approved_ids: approvedIds });
 }

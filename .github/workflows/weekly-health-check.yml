@@ -1,0 +1,69 @@
+name: Weekly Platform Health Check
+
+# Kelvin's 2026-09-16 request: a script that checks the health of the
+# whole platform, alerting him weekly/monthly/quarterly plus a button he
+# can fire on demand. This is the weekly tier -- fast/cheap checks only
+# (service health endpoints, agent activity, GitHub Actions workflow
+# status). See core/health_check.py's module docstring for the full
+# cadence design and exactly what is/isn't checked yet.
+#
+# The "on demand" button lives in ceo-dashboard's SystemHealthPanel
+# (fires the same core/health_check.run_health_sweep via the
+# platform_health_check internal-agent dispatch, not this workflow) --
+# workflow_dispatch here is the secondary, GitHub-Actions-tab way to fire
+# it, matching weekly-sweep.yml's own convention.
+#
+# NOTE: GitHub Actions cron runs in UTC. 12:00 UTC is 7:00am Central
+# Standard Time (UTC-5) -- one hour after weekly-sweep.yml's own 11:00
+# UTC slot, so the two don't compete for runner capacity or land in the
+# same digest window. Adjust both together if the operating timezone
+# changes or during daylight saving time.
+#
+# Requires the DATABASE_URL, STRIPE_SECRET_KEY, and SLACK_OPS_WEBHOOK_URL
+# repo secrets. GITHUB_TOKEN is GitHub's own built-in Actions token, no
+# secret to add. If SLACK_OPS_WEBHOOK_URL isn't set yet, the sweep still
+# runs and uploads its JSON report as an artifact -- it just has nowhere
+# to alert to (core/health_check.py logs a warning rather than failing).
+
+on:
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  weekly-health-check:
+    name: Weekly health sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run weekly health sweep
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m core.health_check --tier weekly --report-out weekly_health_report.json
+
+      - name: Upload JSON report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-health-report
+          path: weekly_health_report.json
+          if-no-files-found: ignore

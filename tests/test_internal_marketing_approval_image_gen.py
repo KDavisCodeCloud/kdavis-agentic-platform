@@ -6,6 +6,14 @@ flips to 'approved' -- never before, per Kelvin's directive that a
 generated image must only ever be built from post text a human has
 already approved.
 
+Also covers the 2026-09-16 follow-up fix: ceo-dashboard's actual Next.js
+API routes (app/api/linkedin-queue/[id]/route.ts and .../batch-approve/
+route.ts) never call this router's PATCH/batch-approve endpoints at all
+-- they write straight to Supabase -- which meant everything above was
+dead code in production. generate_linkedin_queue_images is the bridge
+those Next.js routes now call directly, server-to-server, after their own
+Supabase write.
+
 Route handlers are called directly (no HTTP TestClient harness exists
 in this repo yet) against a fake request.app.state.db_pool, same
 pattern as tests/test_internal_marketing_publish.py.
@@ -19,12 +27,16 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import BackgroundTasks, HTTPException
 
 from api.routes.internal_marketing import (
     BatchApproveRequest,
+    GenerateImagesRequest,
     QueueRowUpdate,
     _generate_and_gate_image_for_approved_row,
+    _generate_images_in_background,
     batch_approve_linkedin_queue,
+    generate_linkedin_queue_images,
     update_linkedin_queue_row,
 )
 
@@ -207,3 +219,64 @@ async def test_batch_approve_runs_image_gen_per_row_and_splits_reverted_from_app
     assert mock_helper.call_count == 2
     assert result["approved_ids"] == ["q-1"]
     assert result["reverted_to_review_ids"] == ["q-2"]
+
+
+# ── _generate_images_in_background ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_background_helper_processes_each_id_sequentially():
+    conn = AsyncMock()
+    pool = _FakePool(conn)
+
+    with patch("api.routes.internal_marketing._generate_and_gate_image_for_approved_row", new=AsyncMock()) as mock_helper:
+        await _generate_images_in_background(pool, ["q-1", "q-2", "q-3"])
+
+    assert mock_helper.call_count == 3
+    called_ids = [call.args[1] for call in mock_helper.await_args_list]
+    assert called_ids == ["q-1", "q-2", "q-3"]
+
+
+@pytest.mark.asyncio
+async def test_background_helper_one_failure_does_not_stop_the_rest():
+    conn = AsyncMock()
+    pool = _FakePool(conn)
+
+    with patch(
+        "api.routes.internal_marketing._generate_and_gate_image_for_approved_row",
+        new=AsyncMock(side_effect=[RuntimeError("boom"), None]),
+    ) as mock_helper:
+        await _generate_images_in_background(pool, ["q-bad", "q-ok"])
+
+    assert mock_helper.call_count == 2
+
+
+# ── generate_linkedin_queue_images endpoint (the Next.js bridge) ─────────
+
+@pytest.mark.asyncio
+async def test_generate_images_endpoint_schedules_background_task_and_returns_immediately():
+    conn = AsyncMock()
+    request = _fake_request(conn)
+    background_tasks = MagicMock(spec=BackgroundTasks)
+
+    result = await generate_linkedin_queue_images(
+        GenerateImagesRequest(queue_ids=["q-1", "q-2"]), request, background_tasks,
+    )
+
+    assert result == {"queued": 2}
+    background_tasks.add_task.assert_called_once()
+    task_fn, task_pool, task_ids = background_tasks.add_task.call_args.args
+    assert task_fn is _generate_images_in_background
+    assert task_ids == ["q-1", "q-2"]
+
+
+@pytest.mark.asyncio
+async def test_generate_images_endpoint_rejects_empty_list():
+    conn = AsyncMock()
+    request = _fake_request(conn)
+    background_tasks = MagicMock(spec=BackgroundTasks)
+
+    with pytest.raises(HTTPException) as exc:
+        await generate_linkedin_queue_images(GenerateImagesRequest(queue_ids=[]), request, background_tasks)
+
+    assert exc.value.status_code == 400
+    background_tasks.add_task.assert_not_called()

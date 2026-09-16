@@ -1,0 +1,56 @@
+name: Monthly Platform Health Check
+
+# Kelvin's 2026-09-16 request -- monthly tier. Adds slower-moving checks
+# on top of everything the weekly tier already covers: TLS certificate
+# expiry (a 30-day warning window means this only needs to run monthly to
+# still catch it in time) and Stripe API connectivity. See
+# core/health_check.py's module docstring for the full cadence design.
+#
+# Runs the first Monday of each month at the same 12:00 UTC slot as the
+# weekly check (cron has no native "first Monday" syntax -- "1-7 * 1"
+# with a day-of-week filter isn't supported either, so this uses the 1st
+# of the month directly regardless of weekday, which is simpler and
+# close enough for a monthly-cadence check).
+
+on:
+  schedule:
+    - cron: "0 12 1 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  monthly-health-check:
+    name: Monthly health sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run monthly health sweep
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m core.health_check --tier monthly --report-out monthly_health_report.json
+
+      - name: Upload JSON report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-health-report
+          path: monthly_health_report.json
+          if-no-files-found: ignore
