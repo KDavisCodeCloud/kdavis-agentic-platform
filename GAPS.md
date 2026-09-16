@@ -1404,3 +1404,46 @@ event loop) is swallowed and never raises back into a caller.
 Security page and security-questionnaire-response.md updated in the
 same push to reflect that audit logging is now genuinely backed by the
 DB table with full per-tenant queryability.
+
+### 29. Every MSE product's ICP config except Cloud Decoded's has empty `locations`/`search_templates` -- "Run Lead Finder Now" silently returns zero leads for all of them (2026-09-16)
+
+Found while adding a real, working ICP config for Cloud Decoded (Kelvin's
+request: "the cloud decoded product needs a lead finder also. needs to
+be added to the lead pipeline" — see kdavis-microsaas-engine migration
+`20260916000046_cloud_decoded_icp.sql`). Queried every existing
+`mse_icp_configs` row directly: `ada-title-ii`, `bible-devotional`,
+`decodedsix`, and `small-portfolio-hub` all have `locations: []` and
+`search_templates: []`. `agents/marketing/mkt_lead_finder.py`'s
+`find_leads()` loops `for location in locations: ...` — an empty list
+means the loop body never runs, so `run_lead_finder_for_product()`
+(the real production entry point behind `POST /marketing/leads/find`,
+i.e. the ceo-dashboard "Run Lead Finder Now" button) returns 0 leads,
+every time, for every one of these products. Nobody has hit an error —
+it just quietly does nothing.
+
+`thdagentic-consulting`'s ICP config (added 2026-09-16, same session as
+the consulting cold-outreach build) also has `locations: []`, but that
+one has a real reason: its intended lead source is
+`find_job_posting_signals()`/`run_job_posting_signal_finder()` (Google
+Custom Search against job postings, not the standard people-search
+path), which never reads `locations` the same way. The problem: **that
+job-posting-signal finder has no wired trigger anywhere** —
+`POST /marketing/leads/find` (`api/routers/leads.py`) always calls the
+standard `run_lead_finder_for_product`, never
+`run_job_posting_signal_finder`. So clicking "Run Lead Finder Now" with
+consulting selected also silently returns 0 leads, for a second,
+different reason than the other four products.
+
+Not fixed here — out of scope for the Cloud Decoded ICP request, and
+per this file's own rule, a gap like this gets surfaced, not built
+mid-session. Two separate follow-ups, either of which needs Kelvin's
+go-ahead before building:
+1. Fill in real `locations`/`search_templates`/`job_titles` for
+   `ada-title-ii`, `bible-devotional`, `decodedsix`, `small-portfolio-hub`
+   (each needs its own real ICP — this isn't a one-size template).
+2. Either wire a real trigger for `run_job_posting_signal_finder()`
+   (a new endpoint, or branch `POST /marketing/leads/find` on
+   `lead_source`/a per-product flag), or explicitly document that
+   consulting's lead generation is Google-CSE-job-posting-signal-only
+   and the "Run Lead Finder Now" button should be disabled/relabeled
+   for that product until #1 above is decided.
