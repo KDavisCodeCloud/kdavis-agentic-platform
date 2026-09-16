@@ -8,12 +8,37 @@ Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
-MKT-LI1 — LinkedIn Personal Brand Agent v2.5.
+MKT-LI1 — LinkedIn Personal Brand Agent v2.6.
 
 Builds Kelvin as the authority — his personal brand is the warm
 distribution channel for every product launch. Distinct from product
 marketing (MKT-V1). Full spec: knowledge/Marketing/Marketing-Engine-Agent-Specs.md.
 System prompt: knowledge/Marketing/MKT-LI1-System-Prompt-v2.md.
+
+v2.6 (2026-09-15, closing line replaces CTA ROTATION): every post now ends
+with one of two code-enforced closing lines (_apply_closing_line) instead
+of the model choosing its own ask — CTA_CLOSING_LINE ("Link in the
+comments.") for Pillar 4 evergreen posts and Product Launch Posts;
+WORKING_WITH_ME_CLOSING_LINE ("If you or your team is interested in
+working with me, link is in the description.") for every other post
+type (Pillars 1/2/3/5, Builder Posts, Mention-only Posts). Replaces the
+old CTA ROTATION system entirely ("Comment [KEYWORD] if you want the
+full breakdown" for technical posts, no CTA for personal/philosophy
+posts) — Kelvin's directive: he wants every post to carry a link path,
+and the comment-keyword engagement pattern gone completely, on both
+technical and product posts. The code strips any lingering "Comment
+[KEYWORD]"/"DM me"/"follow along" pattern the model still produces
+despite the prompt instruction not to (same code-enforce-don't-just-ask
+pattern as the URL append below). generate_product_launch_post also
+stopped putting the URL in the post body (LinkedIn deprioritizes
+outbound in-body links) — the URL now lives in the queued row's notes
+for Kelvin to paste as the first comment at publish time.
+HITL_TIER_RULES updated: WORKING_WITH_ME_CLOSING_LINE is a structural
+constant on every non-Pillar-4 post now, not a per-post editorial CTA
+decision, so it does not by itself escalate a post to Tier 3.
+mkt_10_compliance_guard.py's PLATFORM_PROHIBITED_PHRASES also dropped
+"link in comments" for LinkedIn — it was banned as generic engagement
+bait before this directive made it the mandatory CTA line.
 
 v2.5 (2026-09-15, image pipeline sequencing fix): this agent no longer
 drafts image_description or attaches any image at draft/queue time.
@@ -212,6 +237,51 @@ POST_WEEKDAYS = [1, 2, 3]  # Tue, Wed, Thu (Monday=0) — same cadence feel as t
 POST_HOUR_ET = 9
 _ET = ZoneInfo("America/New_York")
 
+# Mandatory closing lines (Kelvin's directive, 2026-09-15) — replaces the old
+# CTA ROTATION system entirely ("Comment [KEYWORD] if you want the full
+# breakdown" for technical posts, "no CTA" for personal/philosophy posts).
+# CTA_CLOSING_LINE: Pillar 4 evergreen posts and Product Launch Posts only —
+#   these are about a specific product/signup, so the ask points there.
+# WORKING_WITH_ME_CLOSING_LINE: every other post type (Pillars 1/2/3/5,
+#   Builder Posts, Mention-only Posts) — these build Kelvin's personal
+#   authority, so the ask is about him, not a product.
+# Every post now ends with one of these two lines, no exceptions — "so I can
+# always link a website to the post" was the explicit reason given. This is
+# a structural constant, not a per-post editorial CTA decision, which is why
+# HITL_TIER_RULES below does NOT treat WORKING_WITH_ME_CLOSING_LINE as the
+# kind of "CTA" that escalates a post to Tier 3 — only an actual product
+# mention/pricing reference (i.e. Pillar 4, which always carries
+# CTA_CLOSING_LINE) still does that.
+CTA_CLOSING_LINE = "Link in the comments."
+WORKING_WITH_ME_CLOSING_LINE = "If you or your team is interested in working with me, link is in the description."
+
+# Old-style engagement-bait closings this replaces -- stripped if the model
+# still produces one despite VOICE_SYSTEM_PROMPT/BUILDER_POST_SYSTEM_PROMPT/
+# etc. now explicitly forbidding it, same "code-enforce, don't just ask
+# nicely" pattern as generate_product_launch_post's URL-append below. Matches
+# a whole sentence (from start-of-string or the character after a prior
+# '.'/newline, up to the next '.'/newline) containing a comment-keyword
+# prompt ("Comment DECODED if...", "...comment HITL and..."), a DM/comment
+# ask, or a "follow along" ask.
+_OLD_CTA_CLAUSE_RE = re.compile(
+    r"(?:^|(?<=[.\n]))[ \t]*[^.\n]*\b(?:comment\s+['\"]?[A-Za-z]+['\"]?\b"
+    r"|drop a comment or dm me|follow along if you want)[^.\n]*[.\n]?",
+    re.IGNORECASE,
+)
+
+
+def _apply_closing_line(post_copy: str, is_cta_post: bool) -> str:
+    """Strips any old-style engagement-bait closing the model still
+    produced, then appends the one mandatory closing line for this post's
+    category if it isn't already present verbatim. Idempotent — safe to
+    call on text that already ends with the right line."""
+    text = _OLD_CTA_CLAUSE_RE.sub("", post_copy).rstrip()
+    closing = CTA_CLOSING_LINE if is_cta_post else WORKING_WITH_ME_CLOSING_LINE
+    if closing not in text:
+        text = f"{text}\n\n{closing}"
+    return text
+
+
 VOICE_SYSTEM_PROMPT = """You are MKT-LI1, the LinkedIn content generation agent for Kelvin Davis,
 founder of THD Agentic Systems LLC and the Decoded Empire portfolio. Your sole function
 is to draft LinkedIn posts that build Kelvin's personal brand as a cloud and AI
@@ -352,13 +422,15 @@ the same thing over and over with no immediate result and staying ready anyway. 
 rewires how you think about time. Whatever happens at the end of this, I'll be able to
 look in the mirror and say I tried and I didn't quit.
 
-## CTA ROTATION
+## CLOSING LINE — code-enforced, do not write your own
 
-For high-value technical posts: "Comment [KEYWORD] if you want the full breakdown" —
-captures intent without a hard sell.
-For product-adjacent posts: one soft mention of what's being built as the natural
-resolution of the problem discussed.
-For personal/philosophy posts: no CTA. Let it land.
+Never write a closing CTA, ask, or engagement line of any kind — no "Comment [KEYWORD]",
+no "DM me", no "drop a comment", no "follow along if you want more", no question to the
+reader as a hook for engagement. End post_copy at the natural end of REQUIRED POST
+STRUCTURE step 4 (SOFT PLUG) with no trailing ask. The system appends the correct
+closing line automatically after you return post_copy — Pillar 4 posts get "Link in the
+comments.", every other pillar gets "If you or your team is interested in working with
+me, link is in the description." Writing your own closing here just gets stripped.
 
 ## REAL-TIME SIGNAL POSTS
 
@@ -394,9 +466,14 @@ WHAT to write about, not HOW to write it.
 
 HITL TIERS:
 Tier 2 (wife can approve): Pillars 1 and 2 with no product mention; all Pillar 3 posts;
-  purely educational or personal posts with no CTA.
-Tier 3 (Kelvin must approve): any product mention or CTA; pricing/revenue/MRR references;
-  responses to named competitors or market events; all Pillar 4; any MKT-10 flagged post.
+  purely educational or personal posts. Every post's own "If you or your team is
+  interested in working with me..." closing line is a structural constant applied to
+  every non-Pillar-4 post (see CLOSING LINE above) — it does NOT count as the kind of
+  product/pricing CTA that escalates a post to Tier 3.
+Tier 3 (Kelvin must approve): any product mention; pricing/revenue/MRR references;
+  responses to named competitors or market events; all Pillar 4 (always carries the
+  "Link in the comments." closing, pointing at a real product/signup); any MKT-10
+  flagged post.
 
 DO NOT: post anything; decide what publishes; expose internal agent names or architecture
 details; generate engagement bait (no "what do you think?", no "share if you agree");
@@ -482,9 +559,11 @@ Same four-beat architecture as Kelvin's other posts, sourced entirely from the n
    made and why — grounded only in the notes.
 3. MACRO/PERSONAL CONNECTION — What this session's work says about building solo, under real constraints
    — still grounded in the notes' own content, never invented context.
-4. CLOSE — Never a product pitch. Either end with nothing further, or exactly one soft, genuine question
-   to the reader (e.g. "Anyone else hit this building solo?"). No CTA driving to a product, a link, or a
-   comment-this-keyword prompt.
+4. CLOSE — Never a product pitch, and never write your own closing CTA/ask/comment-keyword prompt — the
+   system appends "If you or your team is interested in working with me, link is in the description."
+   automatically after your post_copy. End at the natural end of beat 3, optionally with exactly one soft,
+   genuine question to the reader (e.g. "Anyone else hit this building solo?") if it fits — nothing that
+   drives to a product, a link, or a comment-this-keyword prompt.
 
 Respond with ONLY a JSON object matching this exact shape:
 {
@@ -515,8 +594,10 @@ NEVER sound like:
 2. WHO IT'S FOR — specific. Never "businesses" or "teams" generically — name the actual role or person
    given below.
 3. WHAT IT DOES — one to three sentences max, outcome-focused. Never a feature list.
-4. THE DOOR — a direct call to action that includes the URL given below verbatim. No apology for the
-   pitch, no soft plug, no "check it out if you're curious" hedging.
+4. THE DOOR — a direct call to action with real urgency and conviction. No apology for the pitch, no soft
+   plug, no "check it out if you're curious" hedging. Do NOT include the URL or write your own closing
+   line — the system appends "Link in the comments." automatically after your post_copy; end THE DOOR at
+   the conviction, not a link.
 
 Respond with ONLY a JSON object matching this exact shape:
 {
@@ -557,8 +638,9 @@ Same four-beat architecture as Kelvin's other posts:
 2. TECHNICAL DEPTH — Proof of expertise, grounded in real architecture or a real build decision.
 3. MACRO/PERSONAL CONNECTION — Zooms out to the broader reality. This product may be named here, in
    passing, as part of the story ("building X alongside this right now") — never as the point of the post.
-4. CLOSE — No CTA for this product, ever. Either end with nothing further, or the generic engagement
-   pattern ("Comment [KEYWORD] if you want the full breakdown") for the post's actual (non-product) topic.
+4. CLOSE — No CTA for this product, ever, and never write your own closing line — the system appends
+   "If you or your team is interested in working with me, link is in the description." automatically
+   after your post_copy. End at the natural end of beat 3.
 
 Respond with ONLY a JSON object matching this exact shape:
 {
@@ -787,6 +869,10 @@ def run_li1_brand_agent(
             if compliance["revised_content"]:
                 post["post_copy"] = compliance["revised_content"]
 
+            # Mandatory closing line (2026-09-15 directive) -- before format_post so the
+            # appended sentence gets the same one-sentence-per-line treatment as the rest.
+            post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"))
+
             if post["format"] == "text_post":
                 # No image yet -- see this file's v2.5 changelog entry. credit_line/is_original
                 # are always None/False here since there is nothing to credit until
@@ -898,6 +984,10 @@ def generate_on_demand_posts(
             if compliance["revised_content"]:
                 post["post_copy"] = compliance["revised_content"]
 
+            # Mandatory closing line (2026-09-15 directive) -- before format_post so the
+            # appended sentence gets the same one-sentence-per-line treatment as the rest.
+            post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"))
+
             if post["format"] == "text_post":
                 # No image yet -- see this file's v2.5 changelog entry. credit_line/is_original
                 # are always None/False here since there is nothing to credit until
@@ -967,6 +1057,7 @@ def generate_builder_post(
     compliance = run_compliance_guard(post_copy, platform="linkedin", product_id=MARKETING_PRODUCT_ID)
     if compliance["revised_content"]:
         post_copy = compliance["revised_content"]
+    post_copy = _apply_closing_line(post_copy, is_cta_post=False)
 
     hitl_tier = 2
     post = {
@@ -1035,18 +1126,28 @@ def generate_product_launch_post(
     if compliance["revised_content"]:
         post_copy = compliance["revised_content"]
 
-    # THE DOOR (structure step 4) is a hard requirement, not a suggestion
-    # — if the model paraphrased or dropped the literal URL, append it
-    # rather than silently ship a launch post with no way to reach the product.
-    if url not in post_copy:
-        post_copy = post_copy.rstrip() + f"\n\n{url}"
+    # 2026-09-15 directive: THE DOOR no longer puts the URL in the post body
+    # (LinkedIn's own algorithm deprioritizes outbound links in-body) --
+    # post_copy always closes with "Link in the comments." instead
+    # (_apply_closing_line also strips it if the model still wrote the URL
+    # in despite the prompt instruction not to). The real url is carried in
+    # `notes` so Kelvin has it in front of him to paste as the first comment
+    # at publish time -- it was never optional information, just moved out
+    # of the post body.
+    post_copy = _apply_closing_line(post_copy, is_cta_post=True)
+    if url in post_copy:
+        post_copy = post_copy.replace(url, "").rstrip()
+        post_copy = _apply_closing_line(post_copy, is_cta_post=True)
+
+    notes = parsed.get("notes", "")
+    notes = (notes + " | " if notes else "") + f"Comment link (paste at publish time): {url}"
 
     post = {
         "post_copy": post_copy,
         "hook_variants": parsed.get("hook_variants", []) or [],
         "format": "text_post",
         "topic": f"Product Launch: {product_name}",
-        "notes": parsed.get("notes", ""),
+        "notes": notes,
     }
     if compliance["flags"]:
         post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
@@ -1193,6 +1294,12 @@ def generate_product_content(
     # what the model actually did — code-enforced, not just requested.
     if url and url in post_copy:
         post_copy = post_copy.replace(url, "").rstrip()
+
+    # Mandatory closing line (2026-09-15 directive) -- a mention-only post is
+    # never about the warming-stage product's own CTA/link (that's the "no
+    # URL" rule above, untouched), but it still gets the same personal-brand
+    # closing every non-Pillar-4 post gets, pointing at Kelvin, not the product.
+    post_copy = _apply_closing_line(post_copy, is_cta_post=False)
 
     post = {
         "post_copy": post_copy,

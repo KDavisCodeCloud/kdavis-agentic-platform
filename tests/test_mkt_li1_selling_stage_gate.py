@@ -220,13 +220,14 @@ class TestGenerateProductContentWarmingStage:
 
 class TestGenerateProductContentActiveStage:
     def test_active_stage_generates_explicit_cta_via_launch_post(self):
+        # 2026-09-15 directive: the URL lives in notes now, not the post
+        # body -- post_copy closes with the standard "Link in the comments." line.
         fake_db = _fake_supabase_with_stage("active")
         payload = {
             "post_copy": (
                 "Buyer's agents lose deals to showings nobody followed up on.\n\n"
                 "Built for independent buyer's agents juggling more showings than they can personally track.\n\n"
-                "Showing Signal watches every showing and fires the right follow-up automatically.\n\n"
-                f"It's live: {PRODUCT_KWARGS['url']}"
+                "Showing Signal watches every showing and fires the right follow-up automatically."
             ),
             "hook_variants": ["a", "b", "c"],
             "notes": "",
@@ -242,20 +243,22 @@ class TestGenerateProductContentActiveStage:
             result = li1.generate_product_content(supabase_client=fake_db, **PRODUCT_KWARGS)
 
         assert result is not None
-        assert PRODUCT_KWARGS["url"] in result["post_copy"]
+        assert PRODUCT_KWARGS["url"] not in result["post_copy"]
+        assert result["post_copy"].endswith(li1.CTA_CLOSING_LINE)
+        assert PRODUCT_KWARGS["url"] in result["notes"]
         assert result["hitl_tier"] == 3
         assert mock_queue.call_args.kwargs["tier"] == 3
         # Routed through the real, unchanged launch-post system prompt --
         # not the mention-only one.
         assert fake_client.messages.create.call_args.kwargs["system"] == li1.PRODUCT_LAUNCH_SYSTEM_PROMPT
 
-    def test_active_stage_appends_url_if_model_drops_it(self):
-        """generate_product_content delegates to the existing, unchanged
-        generate_product_launch_post for 'active' -- this is the same
-        THE-DOOR guarantee that function already had, proven still wired
-        through the new entry point."""
+    def test_active_stage_strips_url_and_closes_with_cta_line_if_model_includes_it(self):
+        """generate_product_content delegates to the existing
+        generate_product_launch_post for 'active' -- proven still wired
+        through the new entry point, including the 2026-09-15 URL-out-of-
+        body change."""
         fake_db = _fake_supabase_with_stage("active")
-        payload = {"post_copy": "Built for solo agents. Go check it out.", "hook_variants": [], "notes": ""}
+        payload = {"post_copy": f"Built for solo agents. {PRODUCT_KWARGS['url']}", "hook_variants": [], "notes": ""}
         fake_client = MagicMock()
         fake_client.messages.create.return_value = _fake_response(payload)
 
@@ -266,7 +269,9 @@ class TestGenerateProductContentActiveStage:
              patch.object(li1, "emit_event"):
             result = li1.generate_product_content(supabase_client=fake_db, **PRODUCT_KWARGS)
 
-        assert PRODUCT_KWARGS["url"] in result["post_copy"]
+        assert PRODUCT_KWARGS["url"] not in result["post_copy"]
+        assert result["post_copy"].endswith(li1.CTA_CLOSING_LINE)
+        assert PRODUCT_KWARGS["url"] in result["notes"]
 
 
 class TestGenerateProductContentDoesNotTouchEvergreenPoolOrPillar5:

@@ -62,8 +62,10 @@ def test_builder_post_uses_only_details_from_session_notes():
     assert "success" not in post["post_copy"].lower()
     assert "shipped to production" not in post["post_copy"].lower()
 
-    # Never a product pitch in the close -- soft question only.
-    assert post["post_copy"].strip().endswith("Anyone else hit this building solo?")
+    # Never a product pitch in the close -- soft question, then the
+    # mandatory 2026-09-15 closing line (Builder Post is never a CTA post).
+    assert "Anyone else hit this building solo?" in post["post_copy"]
+    assert post["post_copy"].strip().endswith(li1.WORKING_WITH_ME_CLOSING_LINE)
     assert post["hitl_tier"] == 2
     assert post["id"] == "queued-1"
 
@@ -121,14 +123,16 @@ def test_builder_post_mkt10_flag_escalates_to_tier_3():
 
 # ── generate_product_launch_post ─────────────────────────────────────
 
-def test_product_launch_post_contains_url_audience_no_feature_list():
+def test_product_launch_post_contains_audience_no_feature_list_no_inline_url():
+    # 2026-09-15 directive: the URL no longer goes in the post body -- it's
+    # carried in notes for Kelvin to paste as the first comment at publish
+    # time, and post_copy always closes with "Link in the comments." instead.
     payload = {
         "post_copy": (
             "Buyer's agents lose deals to showings nobody followed up on.\n\n"
             "Built for independent buyer's agents juggling more showings than they can personally track.\n\n"
             "Showing Signal watches every showing and fires the right follow-up automatically, so nothing "
-            "falls through after an open house.\n\n"
-            "It's live: https://showingsignal.thdstack.com"
+            "falls through after an open house."
         ),
         "hook_variants": ["a", "b", "c"],
         "notes": "",
@@ -149,7 +153,9 @@ def test_product_launch_post_contains_url_audience_no_feature_list():
             url="https://showingsignal.thdstack.com",
         )
 
-    assert "https://showingsignal.thdstack.com" in post["post_copy"]
+    assert "https://showingsignal.thdstack.com" not in post["post_copy"]
+    assert post["post_copy"].endswith(li1.CTA_CLOSING_LINE)
+    assert "https://showingsignal.thdstack.com" in post["notes"]
     assert "buyer's agents" in post["post_copy"].lower()
 
     feature_list_markers = ["here are 3 reasons", "features:", "\n- ", "\n* "]
@@ -161,10 +167,10 @@ def test_product_launch_post_contains_url_audience_no_feature_list():
     assert mock_queue.call_args.kwargs["tier"] == 3
 
 
-def test_product_launch_post_appends_url_if_model_drops_it():
-    # Model paraphrased and never included the literal URL -- THE DOOR
-    # step is a hard requirement, not a suggestion.
-    payload = {"post_copy": "Built for solo agents. Go check it out.", "hook_variants": [], "notes": ""}
+def test_product_launch_post_strips_url_and_closes_with_cta_line_if_model_includes_it():
+    # Model included the literal URL anyway despite the prompt instruction
+    # not to -- code strips it and appends the standard CTA line regardless.
+    payload = {"post_copy": "Built for solo agents. https://showingsignal.thdstack.com", "hook_variants": [], "notes": ""}
     fake_client = MagicMock()
     fake_client.messages.create.return_value = _fake_response(payload)
 
@@ -178,7 +184,9 @@ def test_product_launch_post_appends_url_if_model_drops_it():
             outcome="o", url="https://showingsignal.thdstack.com",
         )
 
-    assert "https://showingsignal.thdstack.com" in post["post_copy"]
+    assert "https://showingsignal.thdstack.com" not in post["post_copy"]
+    assert post["post_copy"].endswith(li1.CTA_CLOSING_LINE)
+    assert "https://showingsignal.thdstack.com" in post["notes"]
 
 
 def test_product_launch_post_never_uses_evergreen_batch_pool(monkeypatch):

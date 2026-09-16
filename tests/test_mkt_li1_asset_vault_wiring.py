@@ -91,7 +91,13 @@ def test_carousel_format_also_queues_with_null_image_brief():
 
     assert posts[0]["format"] == "document_carousel"
     assert posts[0]["image_brief"] is None
-    assert "\n\n" not in posts[0]["post_copy"]  # never ran through post_formatter
+    # The mandatory closing line still applies regardless of format (2026-09-15
+    # directive has no format exception) -- that appends exactly one "\n\n"
+    # separator, but the original body sentences were never split one-per-line
+    # by post_formatter (carousels skip that step entirely).
+    body = posts[0]["post_copy"].rsplit("\n\n", 1)[0]
+    assert "\n\n" not in body
+    assert posts[0]["post_copy"].endswith(li1.WORKING_WITH_ME_CLOSING_LINE)
 
 
 def test_queued_content_item_carries_the_final_formatted_copy_not_the_raw_draft():

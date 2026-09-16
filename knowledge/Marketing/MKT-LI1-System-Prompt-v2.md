@@ -1,7 +1,7 @@
 # MKT-LI1 — LinkedIn Content Agent
-# System Prompt v2.3
+# System Prompt v2.6
 # THD Agentic Systems LLC — kdavis-agentic-platform
-# Last updated: 2026-08-14
+# Last updated: 2026-09-15
 
 **This doc mirrors the real system prompt in
 `agents/marketing/mkt_li1_linkedin_brand.py`'s `VOICE_SYSTEM_PROMPT`
@@ -190,13 +190,30 @@ mechanism.
 
 ---
 
-## CTA ROTATION (added 2026-08-14)
+## CLOSING LINE (replaced 2026-08-14 CTA ROTATION entirely, 2026-09-15)
 
-- **High-value technical posts:** "Comment [KEYWORD] if you want the full
-  breakdown" — captures intent without a hard sell.
-- **Product-adjacent posts:** one soft mention of what's being built as the
-  natural resolution of the problem discussed.
-- **Personal/philosophy posts:** no CTA. Let it land.
+Every post now ends with exactly one of two mandatory closing lines, code-enforced
+in `_apply_closing_line` (not left to the model's own wording — the system prompt
+tells the model not to write a closing at all and the code strips one out if it
+does, e.g. any lingering "Comment [KEYWORD] if you want..." pattern):
+
+- **Pillar 4 (Product, Business, and CTA) and Product Launch Posts:**
+  `"Link in the comments."` — these are about a specific product/signup, so the
+  ask points there. Product Launch Posts also stopped putting the URL in the
+  post body (LinkedIn's algorithm deprioritizes outbound in-body links); the
+  real URL is carried in the queued row's `notes` field for Kelvin to paste as
+  the first comment at publish time.
+- **Every other post** (Pillars 1/2/3/5, Builder Posts, Mention-only Posts):
+  `"If you or your team is interested in working with me, link is in the
+  description."` — these build Kelvin's personal authority, so the ask is about
+  him, not a product. This closing line is a structural constant, not a
+  per-post editorial CTA decision — it does NOT by itself escalate a post to
+  Tier 3 (see HITL TIER RULES below).
+
+Reason for the change: Kelvin wants every single post to carry a way to reach a
+link, and wants the old comment-keyword engagement pattern ("Comment DECODED
+if you want...") gone entirely, on both technical posts that had it and
+product posts.
 
 ---
 
@@ -392,13 +409,18 @@ NOTES: [anything the reviewer should know about this post's intent or context]
 **Tier 2 (wife can approve):**
 - Pillar 1 and 2 posts with no product mention
 - Pillar 3 posts
-- Any post that is purely educational or personal with no CTA
+- Any post that is purely educational or personal
+- The mandatory "If you or your team is interested in working with me..."
+  closing line (see CLOSING LINE above) does NOT count as the kind of CTA
+  that disqualifies a post from Tier 2 — it's a structural constant on
+  every non-Pillar-4 post now, not a per-post editorial CTA decision
 
 **Tier 3 (Kelvin must approve):**
-- Any post containing a direct product mention or CTA
+- Any post containing a direct product mention
 - Any post referencing pricing, revenue, or MRR
 - Any post responding to a specific named competitor or market event
-- Any Pillar 4 post
+- Any Pillar 4 post (always carries the "Link in the comments." closing,
+  pointing at a real product/signup)
 - Any post that MKT-10 flags with a compliance note
 
 ---
@@ -477,3 +499,24 @@ v2.3 — (2026-08-14) Two new manually-triggered post types added, evergreen bat
        url) — fixed four-part problem/audience/outcome/door structure, always Tier 3.
        Neither routes through the Opinion Matrix or the pillar/schedule/ratio system —
        each has its own dedicated system prompt reusing the same Voice Directive tone.
+
+v2.4 — (2026-09-15) Marketing stage-gate update: generate_product_content() added as
+       a new stage-aware entry point wrapping generate_product_launch_post based on
+       mse_icp_configs.selling_stage ('active'/'warming'/'building').
+
+v2.5 — (2026-09-15) Image pipeline sequencing fix: image_brief/image_description are
+       always null now — MKT-LI1 no longer selects or generates any image at
+       draft/queue time (removed the direct cause of a same-day image-relevance
+       incident). Real image generation moved entirely to api/routes/
+       internal_marketing.py's post-approval flow (assets_library/scene_image_gen.py).
+
+v2.6 — (2026-09-15) CLOSING LINE replaces the old CTA ROTATION system entirely.
+       Every post now ends with one of two code-enforced closing lines instead of the
+       model choosing its own ask: "Link in the comments." for Pillar 4/Product Launch
+       posts, "If you or your team is interested in working with me, link is in the
+       description." for every other post type. The old "Comment [KEYWORD] if you
+       want..." engagement pattern is gone — the code strips it out if the model still
+       produces one. Product Launch Posts also stopped putting the URL in the post
+       body; it now lives in the queued row's notes for Kelvin to paste as the first
+       comment at publish time. HITL_TIER_RULES updated: the new "working with me"
+       closing line does not by itself escalate a post to Tier 3.

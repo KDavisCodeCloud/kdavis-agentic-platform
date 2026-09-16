@@ -59,9 +59,15 @@ FINANCIAL_CLAIM_PHRASES = (
 )
 
 PLATFORM_PROHIBITED_PHRASES: dict[str, tuple[str, ...]] = {
+    # "link in comments"/"link in the comments" removed 2026-09-15 (Kelvin's
+    # explicit standing directive) -- this is now the mandatory closing line
+    # on every CTA (Pillar 4 / Product Launch) post, enforced in code by
+    # mkt_li1_linkedin_brand.py's _apply_closing_line, not generic engagement
+    # bait. Leaving it banned here would have this same guard silently
+    # redact the very line Kelvin asked to be on every post.
     "linkedin": (
         "like if you agree", "comment 'yes'", "comment yes below", "tag 3 friends",
-        "tag a friend", "dm me for details", "link in comments", "follow for follow",
+        "tag a friend", "dm me for details", "follow for follow",
     ),
     "reddit": (
         "buy now", "limited time offer", "click here", "dm me to purchase", "act now",
