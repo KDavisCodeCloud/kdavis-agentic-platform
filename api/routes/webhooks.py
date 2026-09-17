@@ -750,6 +750,7 @@ async def _run_pr_review(
     Background task: runs Agent 03 for the given GitHub pull_request payload.
     """
     from agents.agent_03_pr_review.workflow import PRReviewWorkflow
+    from core.workspace_credentials import build_agent_credentials
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -760,8 +761,9 @@ async def _run_pr_review(
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_03_pr_review", cloud_provider)
 
+            creds = await build_agent_credentials(conn, workspace_id)
             agent = PRReviewWorkflow(
-                conn, workspace_id, checkpointer,
+                conn, workspace_id, checkpointer, **creds,
                 llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
             )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
@@ -1076,6 +1078,7 @@ async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provi
     Accepts both manual API triggers and alertmanager/PagerDuty webhook mappings.
     """
     from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
+    from core.workspace_credentials import build_agent_credentials, get_workspace_slack_webhook_url
 
     workspace_id = str(workspace["id"])
     checkpointer = app.state.checkpointer
@@ -1086,8 +1089,10 @@ async def _run_onboarding_buddy(app, workspace: dict, payload: dict, cloud_provi
             await compliance.assert_workspace_active(workspace_id)
             await compliance.assert_agent_permitted(workspace_id, "agent_09_onboarding_buddy", cloud_provider)
 
+            creds = await build_agent_credentials(conn, workspace_id)
+            creds["slack_webhook_url"] = await get_workspace_slack_webhook_url(conn, workspace_id)
             agent = OnboardingWorkflow(
-                conn, workspace_id, checkpointer,
+                conn, workspace_id, checkpointer, **creds,
                 llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
             )
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)

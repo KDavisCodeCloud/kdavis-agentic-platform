@@ -122,7 +122,31 @@ infrastructure?** No. Every agent's execution stops at a human-in-the-loop
 approval gate before any proposed change is applied. This is not a
 configurable setting — it is how every one of the eleven agents is built.
 Detection and diagnosis are automated; execution requires an explicit
-human approval, every time.
+human approval, every time. Verified directly against the code
+(2026-09-17): every agent's workflow graph is strictly linear
+(ingest → diagnose → approval gate → execute), and the approval gate is
+the only mechanism that can ever resume execution — no tiered-autonomy,
+confidence-based, or "previously approved" auto-execution path exists
+anywhere in the platform. `workspaces.auto_execution_enabled` is a
+workspace-level setting, defaulted to `false` on every workspace, that
+exists as a structural guarantee of this — any future feature that
+wanted to execute without an explicit approval would have to fail closed
+unless a customer opted in, which none has, and no such feature exists
+today.
+
+**Can access be restricted to read-only?** Yes, per AWS/Azure connection
+(Settings → Connections), for the two agents that call those providers
+directly to change something (IAM Policy Minimization, FinOps Cost
+Optimization). In Read-Only mode, no write API call to that provider is
+ever attempted — this is enforced at the approval endpoint itself, not a
+UI-only restriction, so a request to approve a write action against a
+read-only connection is rejected before anything runs.
+
+**What exact permissions does each agent need?** Published per-agent,
+read vs. write, down to the specific AWS action or Azure ARM action —
+see `docs/customer/permissions-guide.md`, generated directly from a live
+audit of every API call each agent's code makes. Not a general
+description; a manifest.
 
 **What is logged?** Every agent run — created, approved, held, rejected,
 or resolved manually — is written to an immutable, per-tenant

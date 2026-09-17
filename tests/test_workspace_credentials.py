@@ -34,6 +34,7 @@ from core.workspace_credentials import (
     build_trust_policy,
     generate_external_id,
     get_azure_bearer_token,
+    get_workspace_slack_webhook_url,
     mint_github_app_token,
     resolve_k8s_context,
     verify_azure_devops_pat,
@@ -190,6 +191,37 @@ class TestBuildK8sCredentials:
         assert creds["k8s_ca_cert"] is None
 
 
+class TestGetWorkspaceSlackWebhookUrl:
+    """Settings → Policies build, 2026-09-17: Agent 09's fix for the
+    GITHUB_TOKEN/SLACK_WEBHOOK_URL cross-tenant credential leak -- resolves
+    the workspace's own migration 037 workspace_notification_channels
+    ('slack') row instead of a platform-wide env var."""
+
+    async def test_no_slack_channel_configured_returns_none(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        assert await get_workspace_slack_webhook_url(conn, str(uuid4())) is None
+
+    async def test_decrypts_config_and_returns_webhook_url(self):
+        import json
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"config_encrypted": "cipher"})
+        with patch(
+            "core.workspace_credentials.decrypt",
+            return_value=json.dumps({"webhook_url": "https://hooks.slack.example/real"}),
+        ):
+            result = await get_workspace_slack_webhook_url(conn, str(uuid4()))
+        assert result == "https://hooks.slack.example/real"
+
+    async def test_queries_channel_type_slack_and_enabled_only(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        await get_workspace_slack_webhook_url(conn, str(uuid4()))
+        sql = conn.fetchrow.call_args.args[0]
+        assert "channel_type = 'slack'" in sql
+        assert "enabled = true" in sql
+
+
 class TestBuildTrustPolicy:
     def test_scopes_to_our_account_and_the_external_id(self):
         policy = build_trust_policy("111111111111", "ext-abc")
@@ -200,15 +232,42 @@ class TestBuildTrustPolicy:
 
 class TestBuildPermissionsPolicy:
     def test_covers_agents_05_06_08_aws_calls(self):
+        """Settings → Policies build, Step 0/5 audit (2026-09-17): this list
+        was corrected to exactly match what agents 05/06/08's tools.py
+        actually call -- see core/workspace_credentials.py's own comment on
+        _PERMISSIONS_POLICY_ACTIONS for the full before/after. eks:*, and
+        cloudformation:DescribeStacks (as opposed to DescribeStackResources,
+        which IS called), and ec2:Describe{Instances,Volumes,Addresses} were
+        unused over-grants, removed -- so this test now also asserts they're
+        gone, not just that the real actions are present."""
         actions = build_permissions_policy()["Statement"][0]["Action"]
         for required in (
             "iam:CreatePolicyVersion",
+            "iam:DeletePolicyVersion",
+            "iam:ListInstanceProfiles",
+            "iam:ListAttachedRolePolicies",
+            "iam:ListRolePolicies",
+            "iam:GetRolePolicy",
+            "lambda:ListFunctions",
             "ce:GetCostAndUsage",
             "ec2:StopInstances",
             "ec2:DeleteVolume",
-            "cloudformation:DescribeStacks",
+            "ec2:ReleaseAddress",
+            "cloudformation:DescribeStackResources",
+            "s3:GetBucketPolicy",
+            "ec2:DescribeSecurityGroups",
+            "ec2:DescribeRouteTables",
         ):
             assert required in actions
+        for unused in (
+            "cloudformation:DescribeStacks",
+            "eks:DescribeCluster",
+            "eks:ListClusters",
+            "ec2:DescribeInstances",
+            "ec2:DescribeVolumes",
+            "ec2:DescribeAddresses",
+        ):
+            assert unused not in actions
 
 
 class TestVerifyRole:

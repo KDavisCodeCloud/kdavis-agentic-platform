@@ -174,9 +174,19 @@ class IncidentResponse(BaseModel):
     agent_id: Optional[str] = None
     resource_id: Optional[str] = None
     resource_name: Optional[str] = None
+    # Settings → Policies, Step 3 -- so the frontend can map an incident to
+    # its workspace connection mode (aws_connection_mode/azure_connection_mode)
+    # without a second lookup. Was tracked on the incidents row all along
+    # (core/hitl.py's create_incident) but never actually returned here.
+    cloud_provider: Optional[str] = None
     created_at: Optional[str] = None
     assigned_to: Optional[str] = None
     assigned_to_email: Optional[str] = None
+    # migration 050 -- graceful permission-failure surfacing (Settings →
+    # Policies, Step 4). Both None for every incident that never reached
+    # execution, or that failed for a reason other than execution.
+    failure_reason: Optional[str] = None
+    failure_kind: Optional[str] = None  # 'permission_denied' | 'execution_error' | None
 
 
 class IncidentAssignRequest(BaseModel):

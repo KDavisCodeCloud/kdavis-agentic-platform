@@ -197,6 +197,15 @@ def _make_workflow(mock_db, workspace_id, mock_router) -> DriftWorkflow:
         patch.object(DriftWorkflow, "_build_graph", return_value=MagicMock()),
     ):
         wf = DriftWorkflow(mock_db, workspace_id, MagicMock())
+    # Settings → Policies, Step 2 (migration 049): mock_db's shared default
+    # fetchrow return ({"id": uuid4()} -- see conftest.py) reads as truthy
+    # to ResourceExemptionGuard's own fetchrow call, which every existing
+    # test here would otherwise trip as "this resource is exempted" purely
+    # by fixture coincidence. Same convention as wf.hitl.find_open_incident
+    # being mocked explicitly per-test below -- default closed (not
+    # exempted) here so existing ingest/diagnose behavior is unaffected;
+    # tests that want to exercise the exemption path override this.
+    wf.exemptions.check_and_suppress = AsyncMock(return_value=False)
     return wf
 
 

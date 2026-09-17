@@ -69,6 +69,50 @@ def _make_workflow(mock_db, workspace_id, mock_router) -> PRReviewWorkflow:
     return wf
 
 
+class TestPRReviewWorkflowCredentialWiring:
+    """Settings → Policies build, 2026-09-17: PRReviewWorkflow previously
+    accepted no credential kwargs at all, so PRReviewTools() always fell
+    back to the platform's own shared GITHUB_TOKEN env var -- every real
+    customer's PR review was posted under the platform's identity, not
+    the connected workspace's. Regression coverage for that fix."""
+
+    def test_github_token_reaches_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(PRReviewWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = PRReviewWorkflow(mock_db, str(uuid4()), MagicMock(), github_token="gh_real")
+        assert wf._tools.github_token == "gh_real"
+
+    def test_unused_creds_accepted_without_error(self):
+        """aws_session/azure_access_token/azure_devops_token/azure_devops_org
+        are accepted for uniform **creds spreading from webhooks.py/
+        incidents.py but genuinely unused -- PRReviewTools is GitHub-only."""
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(PRReviewWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            PRReviewWorkflow(  # must not raise
+                mock_db, str(uuid4()), MagicMock(),
+                aws_session=MagicMock(), azure_access_token="tok",
+                azure_devops_token="pat", azure_devops_org="acme-org",
+            )
+
+    def test_no_token_does_not_crash_the_constructor(self):
+        """Unchanged fallback behavior when no per-workspace token is
+        configured yet (e.g. local dev, or a workspace that hasn't
+        connected GitHub) -- PRReviewTools' own os.environ fallback still
+        applies, this just confirms the constructor doesn't require one."""
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(PRReviewWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            PRReviewWorkflow(mock_db, str(uuid4()), MagicMock())  # must not raise
+
+
 def _base_pr_state(workspace_id: str, payload: dict | None = None) -> PRReviewState:
     return {
         "workspace_id": workspace_id,

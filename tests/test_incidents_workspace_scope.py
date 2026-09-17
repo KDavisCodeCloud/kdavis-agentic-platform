@@ -44,7 +44,9 @@ def _incident_row(**overrides) -> dict:
     24-gap-closure Phase 2 added agent_id/resource_id/resource_name/
     created_at/assigned_to/assigned_to_email to both SELECTs; every mock
     row needs all of them present now, real KeyError otherwise (caught
-    exactly this way when Phase 1 first added severity)."""
+    exactly this way when Phase 1 first added severity). Settings →
+    Policies build (migration 050) added failure_reason/failure_kind the
+    same way."""
     base = {
         "id": uuid4(),
         "workspace_id": uuid4(),
@@ -58,9 +60,12 @@ def _incident_row(**overrides) -> dict:
         "severity": "medium",
         "resource_id": None,
         "resource_name": None,
+        "cloud_provider": None,
         "created_at": None,
         "assigned_to": None,
         "assigned_to_email": None,
+        "failure_reason": None,
+        "failure_kind": None,
     }
     base.update(overrides)
     return base

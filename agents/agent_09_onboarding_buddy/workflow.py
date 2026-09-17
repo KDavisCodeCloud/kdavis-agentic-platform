@@ -158,12 +158,22 @@ class OnboardingWorkflow(BaseAgent):
         db_conn,
         workspace_id: str,
         checkpointer: AsyncPostgresSaver,
+        github_token: Optional[str] = None,  # Settings → Policies build, 2026-09-17: was previously never
+                                              # threaded through -- OnboardingTools() silently fell back to
+                                              # the platform's own shared GITHUB_TOKEN/SLACK_WEBHOOK_URL env
+                                              # vars for every workspace, a cross-tenant credential leak.
+        slack_webhook_url: Optional[str] = None,  # resolved per-workspace via
+                                                   # core.workspace_credentials.get_workspace_slack_webhook_url
+        aws_session=None,  # unused -- Agent 09 has no AWS path; accepted for uniform **creds spreading
+        azure_access_token: Optional[str] = None,  # unused -- Agent 09 has no Azure ARM path
+        azure_devops_token: Optional[str] = None,  # unused -- OnboardingTools is GitHub-only, no Azure DevOps path
+        azure_devops_org: Optional[str] = None,  # unused, same reason
         llm_provider: Optional[str] = None,  # Phase 5 -- workspaces.llm_provider, routed into BaseAgent.call_llm()'s defaults
         byok_encrypted_key: Optional[str] = None,  # Phase 5 -- workspaces.encrypted_llm_key
     ):
         super().__init__(db_conn, workspace_id, llm_provider=llm_provider, byok_encrypted_key=byok_encrypted_key)
         self._checkpointer    = checkpointer
-        self._tools           = OnboardingTools()
+        self._tools           = OnboardingTools(github_token=github_token, slack_webhook_url=slack_webhook_url)
         self._diagnose_prompt = _load_diagnose_prompt()
         self._graph           = self._build_graph()
 

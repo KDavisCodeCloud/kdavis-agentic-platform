@@ -26,19 +26,28 @@ from api.routes import incidents
 from db.models import IncidentApproveRequest, IncidentResolveManuallyRequest
 
 
-def _make_request(fetchrow_return: dict, execute_return=None, credentials_row=None, k8s_credentials_row=None) -> SimpleNamespace:
+def _make_request(
+    fetchrow_return: dict, execute_return=None, credentials_row=None, k8s_credentials_row=None,
+    notification_channel_row=None,
+) -> SimpleNamespace:
     """credentials_row backs the SECOND conn.fetchrow call -- made by
     core.workspace_credentials.build_agent_credentials() inside _resume()
-    for the credentialed agents (01/02/04/05/06/08/10, _CREDENTIALED_AGENTS).
-    k8s_credentials_row backs a THIRD conn.fetchrow call -- build_k8s_credentials(),
-    made only for agent_02_k8s_alert/agent_08_drift_detection. Both None
-    (the default) means "no credentials configured", which
-    build_agent_credentials/build_k8s_credentials handle by returning
-    all-None credentials -- fine for dispatch tests that only care which
-    workflow class got instantiated. Harmless to always provide a third
-    value even for agent types that never make a third fetchrow call."""
+    for the credentialed agents (01/02/03/04/05/06/08/09/10/11,
+    _CREDENTIALED_AGENTS). k8s_credentials_row backs a THIRD conn.fetchrow
+    call -- build_k8s_credentials(), made only for agent_02_k8s_alert/
+    agent_08_drift_detection. notification_channel_row backs a THIRD
+    conn.fetchrow call for agent_09_onboarding_buddy specifically --
+    get_workspace_slack_webhook_url() -- mutually exclusive with
+    k8s_credentials_row in practice (no agent calls both), but both slots
+    are always provided so the side_effect list has enough items
+    regardless of which third call (if any) a given agent_id makes. All
+    None (the default) means "no credentials configured", which each
+    helper handles by returning all-None/None -- fine for dispatch tests
+    that only care which workflow class got instantiated."""
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(side_effect=[fetchrow_return, credentials_row, k8s_credentials_row])
+    conn.fetchrow = AsyncMock(
+        side_effect=[fetchrow_return, credentials_row, k8s_credentials_row or notification_channel_row]
+    )
     conn.execute = AsyncMock(return_value=execute_return)
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)
@@ -247,6 +256,79 @@ class TestApproveDispatchesToCorrectWorkflow:
         MockWorkflow.return_value.resume.assert_awaited_once()
         _, kwargs = MockWorkflow.call_args
         assert kwargs["github_token"] == "ghp_real_workspace_token"
+
+    async def test_agent03_and_agent09_registered_in_credentialed_agents(self):
+        # Settings → Policies build, 2026-09-17: found during a live
+        # execution-path audit -- agent_03_pr_review and
+        # agent_09_onboarding_buddy's workflow constructors accepted no
+        # credential kwargs at all, so PRReviewTools()/OnboardingTools()
+        # always fell back to the platform's own shared GITHUB_TOKEN (and,
+        # for Agent 09, SLACK_WEBHOOK_URL) env var -- a cross-tenant
+        # credential leak for every real customer's PR review comment or
+        # onboarding issue/Slack post. Same class of bug as Agent 11 above.
+        assert "agent_03_pr_review" in incidents._CREDENTIALED_AGENTS
+        assert "agent_09_onboarding_buddy" in incidents._CREDENTIALED_AGENTS
+
+    async def test_agent03_incident_resume_passes_github_token(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_03_pr_review", workspace_id, cloud_provider="github")
+        credentials_row = {
+            "github_pat_encrypted": "cipher",
+            "github_app_installation_id": None,
+            "aws_role_arn": None, "aws_external_id": None,
+            "azure_tenant_id": None, "azure_client_id": None,
+            "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None,
+        }
+        request, conn = _make_request(row, credentials_row=credentials_row)
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+        with (
+            patch.dict(incidents._WORKFLOW_CLASSES, {"agent_03_pr_review": MockWorkflow}),
+            patch("core.workspace_credentials.decrypt", return_value="ghp_real_workspace_token"),
+        ):
+            await _approve(request, str(row["id"]), workspace_id)
+            await _drain_background_tasks()
+
+        MockWorkflow.assert_called_once()
+        _, kwargs = MockWorkflow.call_args
+        assert kwargs["github_token"] == "ghp_real_workspace_token"
+
+    async def test_agent09_incident_resume_passes_github_token_and_slack_webhook_url(self):
+        workspace_id = uuid4()
+        row = _incident_row("agent_09_onboarding_buddy", workspace_id, cloud_provider="github")
+        credentials_row = {
+            "github_pat_encrypted": "cipher",
+            "github_app_installation_id": None,
+            "aws_role_arn": None, "aws_external_id": None,
+            "azure_tenant_id": None, "azure_client_id": None,
+            "azure_client_secret_encrypted": None, "azure_subscription_id": None,
+            "azure_devops_pat_encrypted": None,
+        }
+        notification_channel_row = {"config_encrypted": "cipher"}
+        request, conn = _make_request(
+            row, credentials_row=credentials_row, notification_channel_row=notification_channel_row,
+        )
+
+        MockWorkflow = MagicMock()
+        MockWorkflow.return_value.resume = AsyncMock(return_value=None)
+
+        with (
+            patch.dict(incidents._WORKFLOW_CLASSES, {"agent_09_onboarding_buddy": MockWorkflow}),
+            patch("core.workspace_credentials.decrypt", side_effect=[
+                "ghp_real_workspace_token",
+                json.dumps({"webhook_url": "https://hooks.slack.example/real"}),
+            ]),
+        ):
+            await _approve(request, str(row["id"]), workspace_id)
+            await _drain_background_tasks()
+
+        MockWorkflow.assert_called_once()
+        _, kwargs = MockWorkflow.call_args
+        assert kwargs["github_token"] == "ghp_real_workspace_token"
+        assert kwargs["slack_webhook_url"] == "https://hooks.slack.example/real"
 
     async def test_unknown_agent_id_raises_500_not_silent_fallback(self):
         workspace_id = uuid4()

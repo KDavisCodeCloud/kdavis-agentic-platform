@@ -182,6 +182,52 @@ def _make_workflow(mock_db, workspace_id, mock_router) -> OnboardingWorkflow:
     return wf
 
 
+class TestOnboardingWorkflowCredentialWiring:
+    """Settings → Policies build, 2026-09-17: OnboardingWorkflow previously
+    accepted no credential kwargs at all, so OnboardingTools() always fell
+    back to the platform's own shared GITHUB_TOKEN/SLACK_WEBHOOK_URL env
+    vars -- every real customer's knowledge-gap issue or Slack post was
+    made under the platform's identity, not the connected workspace's.
+    Regression coverage for that fix."""
+
+    def test_github_token_and_slack_webhook_url_reach_tools(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(OnboardingWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            wf = OnboardingWorkflow(
+                mock_db, str(uuid4()), MagicMock(),
+                github_token="gh_real", slack_webhook_url="https://hooks.slack.example/real",
+            )
+        assert wf._tools.github_token == "gh_real"
+        assert wf._tools.slack_webhook_url == "https://hooks.slack.example/real"
+
+    def test_unused_creds_accepted_without_error(self):
+        """aws_session/azure_access_token/azure_devops_token/azure_devops_org
+        are accepted for uniform **creds spreading from webhooks.py/
+        incidents.py but genuinely unused -- OnboardingTools is GitHub +
+        Slack only."""
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(OnboardingWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            OnboardingWorkflow(  # must not raise
+                mock_db, str(uuid4()), MagicMock(),
+                aws_session=MagicMock(), azure_access_token="tok",
+                azure_devops_token="pat", azure_devops_org="acme-org",
+            )
+
+    def test_no_creds_does_not_crash_the_constructor(self):
+        mock_db = MagicMock()
+        with (
+            patch("agents.base_agent._load_router", return_value=MagicMock()),
+            patch.object(OnboardingWorkflow, "_build_graph", return_value=MagicMock()),
+        ):
+            OnboardingWorkflow(mock_db, str(uuid4()), MagicMock())  # must not raise
+
+
 def _base_state(workspace_id: str, payload: dict | None = None) -> OnboardingState:
     return {
         "workspace_id":       workspace_id,

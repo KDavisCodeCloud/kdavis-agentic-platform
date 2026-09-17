@@ -50,6 +50,10 @@ export interface Incident {
   // GET /incidents or GET /incidents/{id} (same convention as
   // custom_solution_input on the pre-existing custom-fix path)
   resolution_note?: string | null
+  // Settings → Policies, Step 4 (migration 050) — graceful permission-
+  // failure surfacing. Both null unless status === 'failed'.
+  failure_reason?: string | null
+  failure_kind?: 'permission_denied' | 'execution_error' | null
 }
 
 // 24-gap-closure Phase 2 — incident search/filter API. All optional;
@@ -310,6 +314,27 @@ export interface ConnectionsStatus {
   require_mfa?: boolean
   // 24-gap-closure Phase 7 follow-up, item 7 (2026-09-17)
   has_contact_email?: boolean
+  // Settings → Policies, Step 3 (migration 050) -- 'read_only' | 'execute'
+  aws_connection_mode?: 'read_only' | 'execute'
+  azure_connection_mode?: 'read_only' | 'execute'
+}
+
+// Settings → Policies (migrations 048/049/050)
+export interface ExecutionPolicy {
+  auto_execution_enabled: boolean
+  aws_connection_mode: 'read_only' | 'execute'
+  azure_connection_mode: 'read_only' | 'execute'
+}
+
+export interface ResourceExemption {
+  id: string
+  resource_id: string
+  resource_name: string | null
+  reason: string
+  suppressed_count: number
+  created_by_email: string | null
+  created_at: string
+  revoked_at: string | null
 }
 
 // Onboarding completeness build, item 4. last4/rotated_at are display

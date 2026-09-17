@@ -70,6 +70,7 @@ from api.routes import compliance_agent
 from api.routes import github_app_admin
 from api.routes import setup_checklist
 from api.routes import llm_usage
+from api.routes import policies
 from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
 from core.json_logging import configure_logging

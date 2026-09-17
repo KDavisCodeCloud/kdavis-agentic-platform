@@ -35,6 +35,7 @@ from core.security import shield
 from core.hitl import HITLGate
 from core.compliance import WorkspaceComplianceGuard
 from core.token_budget import TokenBudgetGuard
+from core.resource_exemptions import ResourceExemptionGuard
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ class BaseAgent(ABC):
         self.hitl = HITLGate(db_conn)
         self.compliance = WorkspaceComplianceGuard(db_conn)
         self.budget = TokenBudgetGuard(db_conn)
+        self.exemptions = ResourceExemptionGuard(db_conn)
         self._router = _load_router()
         # A workspace's stored BYOK provider preference (workspaces.llm_provider)
         # + encrypted key (workspaces.encrypted_llm_key) -- set once here from

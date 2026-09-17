@@ -355,10 +355,28 @@ class HITLGate:
         if row is not None:
             self._fire_ticketing_notification(incident_id, dict(row))
 
-    async def mark_failed(self, incident_id: str, reason: str = "") -> None:
+    async def mark_failed(
+        self,
+        incident_id: str,
+        reason: str = "",
+        failure_kind: Optional[str] = None,
+    ) -> None:
+        """
+        failure_kind: 'permission_denied' | 'execution_error' | None
+        (migration 050). None is kept as a valid value for existing call
+        sites (e.g. create_failed_incident's own diagnosis-failure path,
+        core/token_budget.py's budget-exceeded path) that predate this
+        column and have no specific classification to offer -- the
+        incident is still marked failed either way, this only affects
+        whether the HITL card can render the specific "insufficient
+        permissions, missing action X" treatment versus the generic
+        "execution failed" one.
+        """
         await self._db.execute(
-            "UPDATE incidents SET execution_status = $1 WHERE id = $2",
+            "UPDATE incidents SET execution_status = $1, failure_reason = $2, failure_kind = $3 WHERE id = $4",
             STATUS_FAILED,
+            reason or None,
+            failure_kind,
             UUID(incident_id),
         )
         self._write_audit_entry("unknown", "hitl_gate", incident_id, f"failed:{reason}", 0)

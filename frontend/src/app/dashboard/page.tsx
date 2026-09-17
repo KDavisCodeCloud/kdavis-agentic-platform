@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck, Check, Copy, KeyRound, UserCog, Coins } from 'lucide-react'
+import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck, Check, Copy, KeyRound, UserCog, Coins, ShieldAlert } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
 import { ContentPipeline } from '@/components/ContentPipeline'
 import OutreachPipeline from '@/components/OutreachPipeline'
@@ -12,6 +12,7 @@ import { FinOpsAgentDashboard } from '@/components/FinOpsAgentDashboard'
 import { ComplianceAgentDashboard } from '@/components/ComplianceAgentDashboard'
 import { ConnectionsPanel } from '@/components/ConnectionsPanel'
 import { MembersPanel } from '@/components/MembersPanel'
+import { PoliciesPanel } from '@/components/PoliciesPanel'
 import { SetupChecklistCard } from '@/components/SetupChecklistCard'
 import { LlmUsagePanel } from '@/components/LlmUsagePanel'
 import { PastDueBanner } from '@/components/PastDueBanner'
@@ -23,7 +24,7 @@ import { getBillingStatus } from '@/lib/api'
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
 
-type DashTab = 'hitl' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent' | 'connections' | 'members' | 'llm-usage'
+type DashTab = 'hitl' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent' | 'connections' | 'members' | 'llm-usage' | 'policies'
 
 // Stripe's success_url (api/routes/stripe_billing.py) redirects here with
 // ?checkout_success=1 -- the workspace only exists as a locked
@@ -376,6 +377,18 @@ export default function DashboardPage() {
           <Coins className="h-3.5 w-3.5" />
           LLM Usage
         </button>
+        <button
+          onClick={() => setActiveTab('policies')}
+          className={cn(
+            'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-colors',
+            activeTab === 'policies'
+              ? 'bg-zinc-800 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300',
+          )}
+        >
+          <ShieldAlert className="h-3.5 w-3.5" />
+          Policies
+        </button>
         {MOCK_MODE && (
           <span className="ml-auto text-xs text-zinc-700">
             Refresh page to reset demo
@@ -415,6 +428,7 @@ export default function DashboardPage() {
         {activeTab === 'connections'      && <ConnectionsPanel token={token} />}
         {activeTab === 'members'          && <MembersPanel token={token} />}
         {activeTab === 'llm-usage'        && <LlmUsagePanel token={token} />}
+        {activeTab === 'policies'         && <PoliciesPanel token={token} />}
       </main>
     </div>
   )

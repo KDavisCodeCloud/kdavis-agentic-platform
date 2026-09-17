@@ -28,6 +28,7 @@ Two differences from that proven pattern, both deliberate:
 """
 
 import base64
+import json
 import logging
 import os
 import secrets
@@ -54,24 +55,49 @@ _ARM_RESOURCE = "https://management.azure.com/"
 _AZURE_DEVOPS_API = "https://dev.azure.com"
 
 _PERMISSIONS_POLICY_ACTIONS = [
-    # Agent 05 -- IAM policy minimization
+    # Agent 05 -- IAM policy minimization. Reads: iam/agents/agent_05_iam_minimizer/
+    # tools.py's get_aws_policy_document, list_aws_instance_profile_roles,
+    # list_lambda_execution_roles, detect_overpermissive_aws_roles. Write:
+    # apply_aws_policy (DeletePolicyVersion only on the 5-version-cap eviction
+    # retry path). Corrected 2026-09-17 (Settings → Policies build, Step 0/5
+    # audit) -- ListInstanceProfiles/ListAttachedRolePolicies/ListRolePolicies/
+    # GetRolePolicy/lambda:ListFunctions/DeletePolicyVersion were genuinely
+    # missing from this policy despite every one of those calls existing in
+    # tools.py since Agent 05 shipped; any real customer's role, set up
+    # exactly per these instructions, would 403 on those specific read paths.
     "iam:ListPolicyVersions",
     "iam:GetPolicyVersion",
     "iam:CreatePolicyVersion",
+    "iam:DeletePolicyVersion",
     "iam:ListEntitiesForPolicy",
-    # Agent 06 -- FinOps cost data + quick-win waste cleanup
+    "iam:ListInstanceProfiles",
+    "iam:ListAttachedRolePolicies",
+    "iam:ListRolePolicies",
+    "iam:GetRolePolicy",
+    "lambda:ListFunctions",
+    # Agent 06 -- FinOps cost data + quick-win waste cleanup. Confirmed by
+    # the same audit: agent_06 identifies idle resources from an operator-
+    # supplied billing export (see agent-reference.md), never a live
+    # ec2:Describe* call -- those three were an unused over-grant, removed.
     "ce:GetCostAndUsage",
-    "ec2:DescribeInstances",
-    "ec2:DescribeVolumes",
-    "ec2:DescribeAddresses",
     "ec2:StopInstances",
     "ec2:DeleteVolume",
     "ec2:ReleaseAddress",
-    # Agent 08 -- drift detection against CloudFormation/EKS
-    "cloudformation:DescribeStacks",
+    # Agent 08 -- drift detection. Confirmed by the same audit: no EKS API
+    # call and no cloudformation:DescribeStacks call exist anywhere in this
+    # agent (drift's K8s path goes through the cluster's own API, not AWS
+    # EKS control-plane calls) -- both were an unused over-grant, removed,
+    # replaced with the S3/security-group/route-table read actions its
+    # fetch_s3_bucket_state/fetch_security_group_state/fetch_route_table_state
+    # (Phase 1/2, site-audit gap closure) actually call.
     "cloudformation:DescribeStackResources",
-    "eks:DescribeCluster",
-    "eks:ListClusters",
+    "s3:GetBucketVersioning",
+    "s3:GetEncryptionConfiguration",
+    "s3:GetBucketPublicAccessBlock",
+    "s3:GetBucketPolicy",
+    "s3:GetReplicationConfiguration",
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeRouteTables",
 ]
 
 
@@ -162,6 +188,34 @@ def build_kubeconfig(api_url: str, token: str, ca_cert: Optional[str] = None) ->
         "current-context": "workspace-context",
     }
     return yaml.safe_dump(config)
+
+
+async def get_workspace_slack_webhook_url(conn, workspace_id: str) -> Optional[str]:
+    """
+    Resolves this workspace's stored Slack webhook URL (migration 037's
+    workspace_notification_channels, channel_type='slack') -- the same
+    per-workspace Slack connection api/routes/workspace_notifications.py
+    lets a customer configure and core/notifications.py's
+    notify_incident_channels() already sends platform incident alerts
+    through. Agent 09 (Onboarding Buddy)'s post_slack_message reuses this
+    rather than a separate credential, since it's the same underlying
+    resource (this workspace's Slack) -- added as part of the Settings →
+    Policies build's credential-leak fix (agent_09 previously fell back
+    to a platform-wide SLACK_WEBHOOK_URL env var).
+
+    Returns None if no enabled Slack channel is configured -- callers
+    (agent_09) already handle a missing slack_webhook_url as "post
+    unavailable," same as no GITHUB_TOKEN.
+    """
+    row = await conn.fetchrow(
+        "SELECT config_encrypted FROM workspace_notification_channels "
+        "WHERE workspace_id = $1 AND channel_type = 'slack' AND enabled = true",
+        UUID(workspace_id) if isinstance(workspace_id, str) else workspace_id,
+    )
+    if not row or not row["config_encrypted"]:
+        return None
+    config = json.loads(decrypt(row["config_encrypted"]))
+    return config.get("webhook_url")
 
 
 async def build_k8s_credentials(conn, workspace_id: str) -> dict:

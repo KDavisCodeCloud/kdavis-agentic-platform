@@ -36,6 +36,8 @@ import boto3
 import httpx
 from botocore.exceptions import ClientError
 
+from core.cloud_errors import classify_aws_client_error, raise_if_azure_permission_error
+
 log = logging.getLogger(__name__)
 
 _GH_API   = "https://api.github.com"
@@ -404,6 +406,9 @@ class IAMMinimizeTools:
             )
         except ClientError as exc:
             if exc.response.get("Error", {}).get("Code") != "LimitExceeded":
+                permission_error = classify_aws_client_error(exc, "iam:CreatePolicyVersion")
+                if permission_error:
+                    raise permission_error from exc
                 raise RuntimeError(f"AWS CreatePolicyVersion error for {policy_arn}: {exc}") from exc
             # IAM allows at most 5 versions per policy -- delete the oldest
             # non-default version and retry, matching this method's own
@@ -467,6 +472,9 @@ class IAMMinimizeTools:
                 "cloud": "azure",
             }
 
+        raise_if_azure_permission_error(
+            resp.status_code, resp.text, "Microsoft.Authorization/roleAssignments/write",
+        )
         raise RuntimeError(f"Azure role assignment error {resp.status_code}: {resp.text[:200]}")
 
     async def apply_gcp_iam_binding(

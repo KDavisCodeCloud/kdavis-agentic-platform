@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle, Key, AlertTriangle, Ticket, ChevronDown, Siren, KeyRound } from 'lucide-react'
+import { Github, Cloud, CloudCog, GitBranch, Boxes, CheckCircle2, Circle, Key, AlertTriangle, Ticket, ChevronDown, Siren, KeyRound, Lock, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CodeBlock } from '@/components/ui/code-block'
 import { cn } from '@/lib/utils'
@@ -14,7 +14,7 @@ import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
   connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear, connectGithubIssues,
   connectServiceNow, getWorkspaceTokenStatus, rotateWorkspaceToken, isMemberSessionToken, API_URL,
-  listExhaustedRetries, setWorkspaceTokenExpiry,
+  listExhaustedRetries, setWorkspaceTokenExpiry, setAwsConnectionMode, setAzureConnectionMode,
 } from '@/lib/api'
 import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus, WorkspaceTokenStatus, ExhaustedRetry } from '@/lib/types'
 
@@ -110,6 +110,82 @@ function SectionCard({
   )
 }
 
+// Settings → Policies, Step 3 (migration 050). Same short action lists
+// published in docs/customer/permissions-guide.md's custom role JSON --
+// kept short here (Execute-mode additions only) since the full read+write
+// manifest already lives in that doc; this is a quick in-context reminder,
+// not a duplicate source of truth.
+const _EXECUTE_MODE_EXTRA_ACTIONS: Record<'aws' | 'azure', string[]> = {
+  aws: ['iam:CreatePolicyVersion', 'iam:DeletePolicyVersion', 'ec2:StopInstances', 'ec2:DeleteVolume', 'ec2:ReleaseAddress'],
+  azure: ['Microsoft.Authorization/roleAssignments/write', 'Microsoft.Compute/virtualMachines/deallocate/action', 'Microsoft.Compute/disks/delete'],
+}
+
+function ConnectionModeToggle({
+  provider, mode, connected, busy, onChange,
+}: {
+  provider: 'aws' | 'azure'
+  mode: 'read_only' | 'execute'
+  connected: boolean
+  busy: boolean
+  onChange: (mode: 'read_only' | 'execute') => void
+}) {
+  const [showRequiredRoles, setShowRequiredRoles] = useState(false)
+
+  function handleClick(next: 'read_only' | 'execute') {
+    if (next === mode || busy) return
+    if (next === 'execute') setShowRequiredRoles(true)
+    onChange(next)
+  }
+
+  return (
+    <div className="mt-3 border-t border-zinc-800 pt-3">
+      <p className="mb-1.5 text-[11px] font-medium text-zinc-500">Execution mode</p>
+      <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900/50 p-1">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => handleClick('read_only')}
+          className={cn(
+            'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50',
+            mode === 'read_only' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+          )}
+        >
+          <Lock className="h-3 w-3" />
+          Read-Only
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => handleClick('execute')}
+          className={cn(
+            'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50',
+            mode === 'execute' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+          )}
+        >
+          <Unlock className="h-3 w-3" />
+          Execute
+        </button>
+      </div>
+      <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-600">
+        {mode === 'read_only'
+          ? 'Monitoring and diagnosis still run. No write API call is ever attempted — HITL cards steer to manual resolution instead.'
+          : 'Approved remediations may write to this connection, same as before.'}
+        {!connected && ' Takes effect once this connection is verified below.'}
+      </p>
+      {mode === 'execute' && showRequiredRoles && (
+        <div className="mt-2 rounded border border-zinc-800 bg-zinc-950 p-2">
+          <p className="mb-1 text-[11px] text-zinc-500">
+            Execute mode additionally needs these actions (full custom role JSON in the permissions guide):
+          </p>
+          <code className="block whitespace-pre-wrap break-all font-mono text-[10.5px] text-zinc-400">
+            {_EXECUTE_MODE_EXTRA_ACTIONS[provider].join('\n')}
+          </code>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [status, setStatus] = useState<ConnectionsStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -145,6 +221,12 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [awsSetup, setAwsSetup] = useState<AwsRoleSetup | null>(null)
   const [awsRoleArn, setAwsRoleArn] = useState('')
   const [awsBusy, setAwsBusy] = useState(false)
+
+  // Settings → Policies, Step 3 (migration 050) -- per-connection mode.
+  const [awsMode, setAwsMode] = useState<'read_only' | 'execute'>('execute')
+  const [awsModeBusy, setAwsModeBusy] = useState(false)
+  const [azureMode, setAzureMode] = useState<'read_only' | 'execute'>('execute')
+  const [azureModeBusy, setAzureModeBusy] = useState(false)
 
   // Azure
   const [azureTenantId, setAzureTenantId] = useState('')
@@ -199,6 +281,8 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
         getTicketingStatus(token),
       ])
       setStatus(connections)
+      setAwsMode(connections.aws_connection_mode ?? 'execute')
+      setAzureMode(connections.azure_connection_mode ?? 'execute')
       setTicketingStatus(ticketing)
 
       // Token status is admin-only server-side (403 for viewer/approver
@@ -301,6 +385,36 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       setError(e instanceof Error ? e.message : 'Could not verify that Service Principal')
     } finally {
       setAzureBusy(false)
+    }
+  }
+
+  async function handleSetAwsMode(mode: 'read_only' | 'execute') {
+    const previous = awsMode
+    setAwsMode(mode)
+    setAwsModeBusy(true)
+    setError(null)
+    try {
+      await setAwsConnectionMode(token, mode)
+    } catch (e: unknown) {
+      setAwsMode(previous)
+      setError(e instanceof Error ? e.message : 'Could not change the AWS connection mode')
+    } finally {
+      setAwsModeBusy(false)
+    }
+  }
+
+  async function handleSetAzureMode(mode: 'read_only' | 'execute') {
+    const previous = azureMode
+    setAzureMode(mode)
+    setAzureModeBusy(true)
+    setError(null)
+    try {
+      await setAzureConnectionMode(token, mode)
+    } catch (e: unknown) {
+      setAzureMode(previous)
+      setError(e instanceof Error ? e.message : 'Could not change the Azure connection mode')
+    } finally {
+      setAzureModeBusy(false)
     }
   }
 
@@ -572,6 +686,10 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
               </div>
             </div>
           )}
+          <ConnectionModeToggle
+            provider="aws" mode={awsMode} connected={status.aws_connected}
+            busy={awsModeBusy} onChange={handleSetAwsMode}
+          />
         </SectionCard>
 
         <SectionCard
@@ -630,6 +748,10 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
               {status.azure_connected ? 'Update' : 'Verify'}
             </Button>
           </div>
+          <ConnectionModeToggle
+            provider="azure" mode={azureMode} connected={status.azure_connected}
+            busy={azureModeBusy} onChange={handleSetAzureMode}
+          />
         </SectionCard>
 
         <SectionCard

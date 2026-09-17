@@ -53,7 +53,11 @@ from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
 from agents.agent_11_resource_health.workflow import ResourceHealthWorkflow
 from core.audit import write_audit_event
-from core.workspace_credentials import build_agent_credentials, build_k8s_credentials, resolve_k8s_context
+from core.cloud_errors import CloudPermissionError
+from core.hitl import HITLGate
+from core.workspace_credentials import (
+    build_agent_credentials, build_k8s_credentials, get_workspace_slack_webhook_url, resolve_k8s_context,
+)
 from core.workspace_scope import workspace_scoped_connection
 
 
@@ -131,16 +135,67 @@ _WORKFLOW_CLASSES: dict[str, type] = {
 # uniform **creds shape as every other credentialed agent (github_token/
 # azure_devops_token/azure_devops_org -- see ResourceHealthWorkflow's
 # __init__), so it needs this set too, same as the others above.
+#
+# agent_03_pr_review and agent_09_onboarding_buddy: the same cross-tenant
+# credential leak, found during the Settings → Policies build's Step 0
+# execution-path audit (2026-09-17) and fixed the same session. Neither
+# workflow constructor accepted any credential kwargs at all until that
+# fix -- PRReviewTools()/OnboardingTools() always fell back to the
+# platform's own shared GITHUB_TOKEN (and, for Agent 09, SLACK_WEBHOOK_URL)
+# env vars, so every real customer's PR review comment or onboarding
+# knowledge-gap issue/Slack post was made under the platform's own
+# identity, not the connected workspace's. Agent 09 additionally needs
+# its Slack webhook resolved per-workspace -- see this file's _resume()
+# below, same one-off-addition pattern as agent_08's k8s_context.
 _CREDENTIALED_AGENTS = {
     "agent_01_cicd_triage",
     "agent_02_k8s_alert",
+    "agent_03_pr_review",
     "agent_04_migration",
     "agent_05_iam_minimizer",
     "agent_06_finops",
     "agent_08_drift_detection",
+    "agent_09_onboarding_buddy",
     "agent_10_dependency_patch",
     "agent_11_resource_health",
 }
+
+# Settings → Policies, Step 3 (connection modes). Scoped to exactly the
+# two agents whose _execute_node calls a boto3/ARM API directly against a
+# customer's live AWS/Azure resources -- confirmed by reading every one
+# of the 11 agents' tools.py in full for this build's Step 0 audit.
+# Agent 08 (Drift) writes only via kubectl apply (K8s API) or a repo PR;
+# agent 02 (K8s Alert) writes only via K8s API + a repo PR; every other
+# agent writes only via a repo PR/issue. None of those are gated by
+# aws_connection_mode/azure_connection_mode -- only a real AWS/Azure API
+# mutation is.
+_CLOUD_CONNECTION_MODE_GATED_AGENTS = {"agent_05_iam_minimizer", "agent_06_finops"}
+
+
+def _reject_if_read_only_connection(agent_id: str, cloud_provider: Optional[str], workspace: dict) -> None:
+    """
+    Step 3: "No execution attempt is ever made" in Read-Only mode. This is
+    the ONLY enforcement point that matters -- api/routes/incidents.py's
+    POST /{id}/approve is the sole gateway to execution for every agent
+    (Step 0 audit), so rejecting here means the fire-and-forget
+    asyncio.create_task(_resume()) below is never even created, and the
+    agent's tools.py write method is never called. Raises HTTPException,
+    same convention as every other guard in this endpoint.
+    """
+    if agent_id not in _CLOUD_CONNECTION_MODE_GATED_AGENTS:
+        return
+    mode_column = {"aws": "aws_connection_mode", "azure": "azure_connection_mode"}.get(cloud_provider or "")
+    if mode_column is None:
+        return  # e.g. gcp -- not a customer-configurable connection, unaffected
+    if workspace.get(mode_column) == "read_only":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"This workspace's {cloud_provider.upper()} connection is in Read-Only mode — "
+                f"execution options are disabled. Switch to Execute mode in Settings → Connections, "
+                f"or resolve this incident manually."
+            ),
+        )
 
 
 @router.get("/{incident_id}", response_model=IncidentResponse)
@@ -159,7 +214,8 @@ async def get_incident(
             """
             SELECT i.id, i.workspace_id, i.agent_id, i.parsed_error, i.remediation_options,
                    i.selected_option_id, i.execution_status, i.estimated_duration_seconds, i.tokens_used,
-                   i.severity, i.resource_id, i.resource_name, i.created_at, i.assigned_to,
+                   i.severity, i.resource_id, i.resource_name, i.cloud_provider, i.created_at, i.assigned_to,
+                   i.failure_reason, i.failure_kind,
                    m.email AS assigned_to_email
             FROM incidents i
             LEFT JOIN workspace_members m ON m.id = i.assigned_to
@@ -191,9 +247,12 @@ async def get_incident(
         agent_id=row["agent_id"],
         resource_id=row["resource_id"],
         resource_name=row["resource_name"],
+        cloud_provider=row["cloud_provider"],
         created_at=row["created_at"].isoformat() if row["created_at"] else None,
         assigned_to=str(row["assigned_to"]) if row["assigned_to"] else None,
         assigned_to_email=row["assigned_to_email"],
+        failure_reason=row["failure_reason"],
+        failure_kind=row["failure_kind"],
     )
 
 
@@ -287,6 +346,9 @@ async def approve_incident(
             )
         new_status = "executing"
 
+    if new_status == "executing":
+        _reject_if_read_only_connection(row["agent_id"], row["cloud_provider"], workspace)
+
     # Update DB status
     async with db.acquire() as conn:
         await conn.execute(
@@ -370,10 +432,55 @@ async def approve_incident(
                         # Only a fallback now -- DriftTools prefers the real
                         # per-workspace k8s_api_url/k8s_token above when present.
                         creds["k8s_context"] = resolve_k8s_context(row["cloud_provider"])
+                    if row["agent_id"] == "agent_09_onboarding_buddy":
+                        # Same credential-leak fix as above -- Agent 09's
+                        # Slack post used a platform-wide SLACK_WEBHOOK_URL
+                        # env var until now. Not part of build_agent_credentials()'s
+                        # shared dict (only this one agent uses it), so it's
+                        # resolved separately here, same one-off pattern as
+                        # k8s_context above.
+                        creds["slack_webhook_url"] = await get_workspace_slack_webhook_url(conn, str(workspace["id"]))
                     agent = workflow_cls(conn, str(workspace["id"]), checkpointer, **creds)
                 else:
                     agent = workflow_cls(conn, str(workspace["id"]), checkpointer)
-                await agent.resume(incident_id, selected_option)
+                try:
+                    await agent.resume(incident_id, selected_option)
+                except CloudPermissionError as exc:
+                    # Step 4: graceful 403/AccessDenied handling. Before this,
+                    # ANY exception raised inside _execute_node (permission
+                    # errors included) propagated out of this fire-and-forget
+                    # task with nothing catching it -- asyncio silently drops
+                    # it and the incident is stuck at 'executing' forever,
+                    # the HITL card's execution-log animation spinning with
+                    # no real failure ever surfacing. Found live while
+                    # tracing the execution path for this build.
+                    log.warning(
+                        "[IncidentsRoute] Incident %s execution failed — permission denied "
+                        "(provider=%s action=%s)", incident_id, exc.provider, exc.action,
+                    )
+                    await HITLGate(conn).mark_failed(
+                        incident_id, exc.operator_message(), failure_kind="permission_denied",
+                    )
+                    await write_audit_event(
+                        workspace_id=str(workspace["id"]),
+                        action="execution_failed_permission_denied",
+                        status="failed",
+                        incident_id=incident_id,
+                        agent_id=row["agent_id"],
+                        metadata={"provider": exc.provider, "action": exc.action},
+                    )
+                except Exception as exc:  # noqa: BLE001 -- last-resort catch, see docstring above
+                    log.error("[IncidentsRoute] Incident %s execution raised: %s", incident_id, exc, exc_info=True)
+                    await HITLGate(conn).mark_failed(
+                        incident_id, f"Execution failed: {exc}", failure_kind="execution_error",
+                    )
+                    await write_audit_event(
+                        workspace_id=str(workspace["id"]),
+                        action="execution_failed",
+                        status="failed",
+                        incident_id=incident_id,
+                        agent_id=row["agent_id"],
+                    )
 
         # Fire and forget — result is polled via GET /incidents/{id}
         asyncio.create_task(_resume())
@@ -606,7 +713,8 @@ async def list_incidents(
     query = """
         SELECT i.id, i.parsed_error, i.remediation_options, i.execution_status,
                i.estimated_duration_seconds, i.severity, i.agent_id, i.resource_id,
-               i.resource_name, i.created_at, i.assigned_to, m.email AS assigned_to_email
+               i.resource_name, i.cloud_provider, i.created_at, i.assigned_to, i.failure_reason, i.failure_kind,
+               m.email AS assigned_to_email
         FROM incidents i
         LEFT JOIN workspace_members m ON m.id = i.assigned_to
         WHERE i.workspace_id = $1
@@ -680,9 +788,12 @@ async def list_incidents(
                 agent_id=row["agent_id"],
                 resource_id=row["resource_id"],
                 resource_name=row["resource_name"],
+                cloud_provider=row["cloud_provider"],
                 created_at=row["created_at"].isoformat() if row["created_at"] else None,
                 assigned_to=str(row["assigned_to"]) if row["assigned_to"] else None,
                 assigned_to_email=row["assigned_to_email"],
+                failure_reason=row["failure_reason"],
+                failure_kind=row["failure_kind"],
             )
         )
     return results

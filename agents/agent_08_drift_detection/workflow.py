@@ -61,6 +61,9 @@ class DriftState(TypedDict):
     file_path: str           # path to IaC/manifest file for PR commits
     desired_state_text: str  # sanitized desired state (from IaC/Git)
     actual_state_text: str   # sanitized actual state (live infrastructure)
+    # Settings → Policies, Step 2 (migration 049) -- True when ingest
+    # routed straight to exempted_complete instead of diagnose.
+    is_exempted: bool
 
     # After diagnose
     incident_id: Optional[str]
@@ -192,14 +195,19 @@ class DriftWorkflow(BaseAgent):
     def _build_graph(self):
         graph = StateGraph(DriftState)
 
-        graph.add_node("ingest",    self._ingest_node)
-        graph.add_node("diagnose",  self._diagnose_node)
-        graph.add_node("hitl_gate", self._hitl_gate_node)
-        graph.add_node("execute",   self._execute_node)
-        graph.add_node("complete",  self._complete_node)
+        graph.add_node("ingest",             self._ingest_node)
+        graph.add_node("exempted_complete",  self._exempted_complete_node)
+        graph.add_node("diagnose",           self._diagnose_node)
+        graph.add_node("hitl_gate",          self._hitl_gate_node)
+        graph.add_node("execute",            self._execute_node)
+        graph.add_node("complete",           self._complete_node)
 
         graph.add_edge(START,       "ingest")
-        graph.add_edge("ingest",    "diagnose")
+        graph.add_conditional_edges(
+            "ingest", self._route_after_ingest,
+            {"exempted": "exempted_complete", "normal": "diagnose"},
+        )
+        graph.add_edge("exempted_complete", END)
         graph.add_edge("diagnose",  "hitl_gate")
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
@@ -223,6 +231,14 @@ class DriftWorkflow(BaseAgent):
         scope         = payload.get("scope", payload.get("namespace", payload.get("region", "")))
         repository    = payload.get("repository", "")
         file_path     = payload.get("file_path", "")
+
+        # Settings → Policies, Step 2 (migration 049): an exempted resource
+        # is skipped here, before any live_fetch cloud read or the diagnose
+        # node's LLM call -- checked as early as resource_id is known, ahead
+        # of every other API call this node makes below.
+        if await self.exemptions.check_and_suppress(self.workspace_id, resource_id):
+            self._write_audit("ingest", "resource_exemption_suppressed")
+            return {"resource_id": resource_id, "is_exempted": True}
 
         # Desired state — try several key aliases
         desired_raw = (
@@ -342,6 +358,14 @@ class DriftWorkflow(BaseAgent):
             "execution_result":   None,
             "error":              None,
         }
+
+    def _route_after_ingest(self, state: DriftState) -> str:
+        return "exempted" if state.get("is_exempted") else "normal"
+
+    async def _exempted_complete_node(self, state: DriftState) -> dict:
+        """Terminal node for an exempted resource -- no incident is ever
+        created (ingest returned before touching hitl_gate)."""
+        return {}
 
     async def _diagnose_node(self, state: DriftState) -> dict:
         """
@@ -578,6 +602,7 @@ class DriftWorkflow(BaseAgent):
             "file_path":         "",
             "desired_state_text": "",
             "actual_state_text": "",
+            "is_exempted":       False,
             "incident_id":       thread_id,
             "parsed_error":      None,
             "drift_items":       None,

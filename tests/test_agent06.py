@@ -460,9 +460,26 @@ class TestStopEC2Instances:
         fake_ec2.stop_instances.assert_called_once_with(InstanceIds=["i-0abc123", "i-0def456"])
 
     async def test_raises_on_api_error(self, tools, fake_ec2):
-        fake_ec2.stop_instances.side_effect = _client_error("AccessDenied", "StopInstances")
+        # Settings → Policies, Step 4: a non-permission error code still
+        # raises the generic RuntimeError unchanged -- only permission-
+        # denied-class codes (see test_raises_cloud_permission_error_on_access_denied)
+        # get reclassified.
+        fake_ec2.stop_instances.side_effect = _client_error("ValidationError", "StopInstances")
         with pytest.raises(RuntimeError, match="AWS StopInstances error"):
             await tools.stop_ec2_instances(["i-0abc123"])
+
+    async def test_raises_cloud_permission_error_on_access_denied(self, tools, fake_ec2):
+        """Settings → Policies, Step 4: graceful 403/AccessDenied handling --
+        an AWS permission-denied response raises CloudPermissionError (caught
+        by api/routes/incidents.py's _resume(), not a generic RuntimeError),
+        naming the specific missing action."""
+        from core.cloud_errors import CloudPermissionError
+
+        fake_ec2.stop_instances.side_effect = _client_error("AccessDenied", "StopInstances")
+        with pytest.raises(CloudPermissionError) as exc_info:
+            await tools.stop_ec2_instances(["i-0abc123"])
+        assert exc_info.value.provider == "aws"
+        assert exc_info.value.action == "ec2:StopInstances"
 
 
 class TestDeleteUnattachedEBSVolumes:

@@ -33,6 +33,8 @@ import boto3
 import httpx
 from botocore.exceptions import ClientError
 
+from core.cloud_errors import classify_aws_client_error
+
 log = logging.getLogger(__name__)
 
 _GH_API      = "https://api.github.com"
@@ -181,6 +183,9 @@ class FinOpsTools:
         try:
             ec2.stop_instances(InstanceIds=instance_ids)
         except ClientError as exc:
+            permission_error = classify_aws_client_error(exc, "ec2:StopInstances")
+            if permission_error:
+                raise permission_error from exc
             raise RuntimeError(f"AWS StopInstances error: {exc}") from exc
 
         log.info("[FinOpsTools] Stopped EC2 instances: %s", instance_ids)

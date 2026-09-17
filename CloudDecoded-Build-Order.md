@@ -258,6 +258,29 @@ this file's own "Key Constraints" section below.
 - HITL gate is non-negotiable: high blast-radius actions always require human approval regardless of tenant autonomy settings
 - Per-tenant Supabase pgvector with RLS keyed to `tenant_id` — no cross-tenant data leakage
 - DataSanitizationShield runs before any client data is embedded
-- Tiered autonomy: low-risk previously-approved actions can auto-execute within guardrails; novel/high-blast-radius always HITL
+- ~~Tiered autonomy: low-risk previously-approved actions can auto-execute within guardrails; novel/high-blast-radius always HITL~~
+  **CORRECTED 2026-09-17 — this was never built, and per Kelvin's explicit
+  decision on the Settings → Policies build, it stays that way.** A live
+  execution-path audit across all 11 agents (see that build's SOP) found
+  zero tiered-autonomy / confidence-based-skip / "previously-approved
+  pattern" code anywhere in this repo — every agent's LangGraph graph is
+  strictly linear and only `POST /incidents/{id}/approve` (a real human,
+  RBAC-gated) ever resumes past the HITL gate. This line was a 2026-07-04
+  design intent that was never implemented; it is now explicitly
+  deferred, not a stale doc drifted from real behavior. Per-agent
+  autonomy toggles, severity-based approval policies, scope deny-lists,
+  and autonomy threshold config are **deferred pending customer demand**
+  — not built in that session, and not planned until a customer actually
+  asks. `workspaces.auto_execution_enabled` (migration 048, default
+  FALSE) is the structural kill-switch any future auto-execution feature
+  would have to explicitly opt into; `core/execution_policy.py`'s
+  `assert_auto_execution_allowed()` is the enforcement point, with no
+  call site today because nothing bypasses human approval today.
+  Execution scope itself (what an approved remediation is even capable
+  of touching) is enforced by the stronger layer instead: the credential
+  a workspace grants (AWS role policy, Azure Service Principal role,
+  GitHub App installation scope) plus, as of that same build, a per-
+  connection Read-Only/Execute mode (migration 050) — see
+  `docs/customer/permissions-guide.md`.
 - X/Twitter account suspended — DM channel dormant until compliance ticket resolves
 - SOC 2 readiness baked in from the start — not retrofitted later

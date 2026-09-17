@@ -82,6 +82,10 @@ class ResourceHealthState(TypedDict):
     # so every alert -- including genuinely new ones -- got silently
     # routed to dedup_complete and NO real incident was ever created.
     is_dedup_match: bool
+    # Settings → Policies, Step 2 (migration 049) -- True only when
+    # dedup_check routed to dedup_complete because the resource is
+    # exempted, not because an existing incident was found.
+    is_exempted: bool
 
     # After diagnose
     incident_id: Optional[str]
@@ -466,6 +470,12 @@ class ResourceHealthWorkflow(BaseAgent):
         if state.get("error"):
             return {}
 
+        # Settings → Policies, Step 2 (migration 049): an exempted resource
+        # is skipped here, before find_open_incident/diagnose, so it costs
+        # zero LLM tokens -- not just zero duplicate incident rows.
+        if await self.exemptions.check_and_suppress(self.workspace_id, state.get("resource_id")):
+            return {"is_dedup_match": True, "is_exempted": True}
+
         existing = await self.hitl.find_open_incident(
             workspace_id=self.workspace_id,
             resource_id=state.get("resource_id"),
@@ -486,9 +496,13 @@ class ResourceHealthWorkflow(BaseAgent):
         return "existing" if state.get("is_dedup_match") else "new"
 
     async def _dedup_complete_node(self, state: ResourceHealthState) -> dict:
-        """Terminal node for a deduplicated alert -- incident_id is already
-        set in state by _dedup_check_node, nothing left to do but record it."""
-        self._write_audit("dedup", "existing_incident_bumped", incident_id=state.get("incident_id"))
+        """Terminal node for a deduplicated OR exempted alert -- incident_id
+        is already set in state by _dedup_check_node for the dedup case
+        (None for an exemption, since no incident was ever created)."""
+        if state.get("is_exempted"):
+            self._write_audit("dedup", "resource_exemption_suppressed")
+        else:
+            self._write_audit("dedup", "existing_incident_bumped", incident_id=state.get("incident_id"))
         return {}
 
     async def _diagnose_node(self, state: ResourceHealthState) -> dict:
@@ -719,6 +733,7 @@ class ResourceHealthWorkflow(BaseAgent):
             "metric_current_value": None,
             "metric_threshold": None,
             "is_dedup_match": False,
+            "is_exempted": False,
             "incident_id": thread_id,
             "parsed_error": None,
             "remediation_options": None,

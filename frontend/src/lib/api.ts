@@ -10,6 +10,7 @@ import type {
   IncidentFilters, WorkspaceMembersResponse, WorkspaceMember, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
   ExhaustedRetriesResponse, SetTokenExpiryResult, RequireMfaResult,
   SetupChecklist, ConnectionTestResult, LlmUsage,
+  ExecutionPolicy, ResourceExemption,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -248,6 +249,51 @@ export async function resolveIncidentManually(
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+// "Exempt this resource" on the incident card (Settings → Policies, Step 2).
+export async function exemptResourceFromIncident(
+  token: string,
+  incidentId: string,
+  reason: string,
+): Promise<ResourceExemption> {
+  if (MOCK_MODE) {
+    return {
+      id: 'mock-exemption', resource_id: 'mock-resource', resource_name: null,
+      reason, suppressed_count: 0, created_by_email: null,
+      created_at: new Date().toISOString(), revoked_at: null,
+    }
+  }
+  return request<ResourceExemption>(`/incidents/${incidentId}/exempt-resource`, token, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+}
+
+// ── Settings → Policies (migrations 048/049/050) — admin-only ──────────
+
+export async function getExecutionPolicy(token: string): Promise<ExecutionPolicy> {
+  if (MOCK_MODE) return { auto_execution_enabled: false, aws_connection_mode: 'execute', azure_connection_mode: 'execute' }
+  return request<ExecutionPolicy>('/workspace/policies', token)
+}
+
+export async function setExecutionPolicy(token: string, autoExecutionEnabled: boolean): Promise<ExecutionPolicy> {
+  if (MOCK_MODE) return { auto_execution_enabled: autoExecutionEnabled, aws_connection_mode: 'execute', azure_connection_mode: 'execute' }
+  return request<ExecutionPolicy>('/workspace/policies/execution', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ auto_execution_enabled: autoExecutionEnabled }),
+  })
+}
+
+export async function listResourceExemptions(token: string): Promise<ResourceExemption[]> {
+  if (MOCK_MODE) return []
+  const res = await request<{ exemptions: ResourceExemption[] }>('/workspace/policies/exemptions', token)
+  return res.exemptions
+}
+
+export async function revokeResourceExemption(token: string, exemptionId: string): Promise<ResourceExemption> {
+  if (MOCK_MODE) throw new ApiError(404, 'Not available in demo mode')
+  return request<ResourceExemption>(`/workspace/policies/exemptions/${exemptionId}`, token, { method: 'DELETE' })
 }
 
 // ── Agents ─────────────────────────────────────────────────────────────
@@ -876,6 +922,24 @@ export async function connectK8sCluster(token: string, body: K8sClusterInput): P
   return request<{ id: string }>('/workspace/credentials/k8s', token, {
     method: 'PATCH',
     body: JSON.stringify(body),
+  })
+}
+
+// -- Connection mode (Settings → Policies, Step 3, migration 050) ---------
+
+export async function setAwsConnectionMode(token: string, mode: 'read_only' | 'execute'): Promise<{ provider: string; mode: string }> {
+  if (MOCK_MODE) return { provider: 'aws', mode }
+  return request<{ provider: string; mode: string }>('/workspace/credentials/aws-role/mode', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ mode }),
+  })
+}
+
+export async function setAzureConnectionMode(token: string, mode: 'read_only' | 'execute'): Promise<{ provider: string; mode: string }> {
+  if (MOCK_MODE) return { provider: 'azure', mode }
+  return request<{ provider: string; mode: string }>('/workspace/credentials/azure/mode', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ mode }),
   })
 }
 

@@ -33,8 +33,8 @@ const PILLARS = [
     body: 'Every run — created, approved, rejected, held, or resolved manually — is written to your own per-tenant audit record: actor, action, resource, outcome, and timestamp. Nothing is deleted from it, and it’s scoped to your workspace the same way every other table is — queryable by you, not just visible in a dashboard summary. If a fix was proposed, you can see exactly what it proposed and what happened to that proposal.',
   },
   {
-    title: 'Bring your own cloud credentials, scoped to what’s needed',
-    body: 'AWS access is a cross-account role assumed with an external ID — never a stored access key. Azure access is a Service Principal you create and can revoke at any time. GitHub access is a real GitHub App installation with fine-grained, revocable permissions — not a personal access token tied to one person’s account.',
+    title: 'Customer-controlled credentials, least-privilege manifests published',
+    body: 'AWS access is a cross-account role assumed with an external ID — never a stored access key. Azure access is a Service Principal you create and can revoke at any time. GitHub access is a real GitHub App installation with fine-grained, revocable permissions — not a personal access token tied to one person’s account. Every AWS action and Azure action any agent can take is published, per-agent, read vs. write — not described in general terms. A Read-Only mode is available per AWS/Azure connection: no write API call is ever attempted, regardless of what you approve.',
   },
   {
     title: 'A circuit breaker on every run',

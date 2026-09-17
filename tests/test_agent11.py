@@ -41,6 +41,12 @@ def _make_workflow(mock_db, workspace_id, mock_router) -> ResourceHealthWorkflow
         patch.object(ResourceHealthWorkflow, "_build_graph", return_value=MagicMock()),
     ):
         wf = ResourceHealthWorkflow(mock_db, workspace_id, MagicMock())
+    # Settings → Policies, Step 2 (migration 049): see test_agent08.py's
+    # _make_workflow for why this default-closed override is needed —
+    # mock_db's shared default fetchrow return reads as truthy to
+    # ResourceExemptionGuard, which would otherwise trip every existing
+    # test here as "this resource is exempted."
+    wf.exemptions.check_and_suppress = AsyncMock(return_value=False)
     return wf
 
 

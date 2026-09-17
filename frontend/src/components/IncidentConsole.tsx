@@ -6,9 +6,9 @@ import { AnimatePresence } from 'framer-motion'
 import { PipelineTracker } from './PipelineTracker'
 import { RemediationCard } from './RemediationCard'
 import { Button } from '@/components/ui/button'
-import { listIncidents, bulkIncidentAction } from '@/lib/api'
+import { listIncidents, bulkIncidentAction, getConnectionsStatus } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { Incident, IncidentStatus, IncidentFilters } from '@/lib/types'
+import type { Incident, IncidentStatus, IncidentFilters, ConnectionsStatus } from '@/lib/types'
 
 interface IncidentConsoleProps {
   token: string
@@ -34,6 +34,20 @@ const AGENT_OPTIONS = [
 ]
 
 const POLL_INTERVAL_MS = 5_000
+
+// Settings → Policies, Step 3. Mirrors api/routes/incidents.py's
+// _CLOUD_CONNECTION_MODE_GATED_AGENTS -- only agents 05 (IAM) and 06
+// (FinOps) call AWS/Azure ARM write APIs directly; every other agent's
+// writes go through a repo PR or a Kubernetes API call, unaffected by
+// aws_connection_mode/azure_connection_mode regardless of cloud_provider.
+const _CLOUD_CONNECTION_MODE_GATED_AGENTS = new Set(['agent_05_iam_minimizer', 'agent_06_finops'])
+
+function isReadOnlyBlocked(incident: Incident, connections: ConnectionsStatus | null): boolean {
+  if (!connections || !incident.agent_id || !_CLOUD_CONNECTION_MODE_GATED_AGENTS.has(incident.agent_id)) return false
+  if (incident.cloud_provider === 'aws') return connections.aws_connection_mode === 'read_only'
+  if (incident.cloud_provider === 'azure') return connections.azure_connection_mode === 'read_only'
+  return false
+}
 
 // 24-gap-closure Phase 2 -- search/filter API + dashboard UI.
 interface SearchFilters {
@@ -62,6 +76,11 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
   const [loading, setLoading]         = useState(true)
   const [error, setError]             = useState<string | null>(null)
   const [connected, setConnected]     = useState(true)
+  // Settings → Policies, Step 3 -- so RemediationCard can render execution
+  // options disabled for a Read-Only-mode connection without waiting for
+  // the approve call to 403. Fetched once; connection mode changes rarely
+  // enough that this doesn't need to be part of the 5s incident poll.
+  const [connections, setConnections] = useState<ConnectionsStatus | null>(null)
   const [lastPoll, setLastPoll]       = useState<Date | null>(null)
   const pollRef                       = useRef<ReturnType<typeof setInterval> | null>(null)
   // Ref so fetchIncidents can read latest selected without being in its deps
@@ -126,6 +145,10 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
       if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [fetchIncidents])
+
+  useEffect(() => {
+    getConnectionsStatus(token).then(setConnections).catch(() => setConnections(null))
+  }, [token])
 
   function handleApproved(incidentId: string, optionId: string) {
     setIncidents(prev =>
@@ -439,6 +462,7 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
                 onApproved={handleApproved}
                 onResolvedManually={handleResolvedManually}
                 onAssigned={handleAssigned}
+                readOnlyConnection={isReadOnlyBlocked(selected, connections)}
               />
             </div>
           )}

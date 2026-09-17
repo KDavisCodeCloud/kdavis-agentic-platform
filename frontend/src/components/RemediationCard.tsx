@@ -1,13 +1,13 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send } from 'lucide-react'
+import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send, ShieldOff } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
   approveIncident, resolveIncidentManually, assignIncident, listWorkspaceMembers,
-  listIncidentComments, createIncidentComment,
+  listIncidentComments, createIncidentComment, exemptResourceFromIncident,
 } from '@/lib/api'
 import { cn, fmtDuration, timeAgo } from '@/lib/utils'
 import { IMPACT_META, SEVERITY_META, STATUS_META, type Incident, type RemediationOption, type WorkspaceMember, type IncidentComment } from '@/lib/types'
@@ -291,15 +291,95 @@ function CommentsThread({ incidentId, token }: { incidentId: string; token: stri
   )
 }
 
+// Settings → Policies, Step 2 — "Exempt this resource" on the incident
+// card. Only meaningful when the incident has a resource_id (agents 08/11
+// today — see api/routes/policies.py's exempt_resource_from_incident,
+// which 400s without one) -- doesn't change this incident's own status,
+// only suppresses FUTURE alerts for the same resource.
+function ExemptResourceButton({ incident, token }: { incident: Incident; token: string }) {
+  const [open, setOpen]       = useState(false)
+  const [reason, setReason]   = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState<string | null>(null)
+  const [done, setDone]       = useState(false)
+
+  if (!incident.resource_id) return null
+  if (done) {
+    return (
+      <p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500">
+        <ShieldOff className="h-3 w-3" />
+        Future alerts for this resource are suppressed.
+      </p>
+    )
+  }
+
+  async function handleConfirm() {
+    setLoading(true)
+    setError(null)
+    try {
+      await exemptResourceFromIncident(token, incident.incident_id, reason.trim())
+      setDone(true)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not exempt this resource')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      {!open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300"
+        >
+          <ShieldOff className="h-3 w-3" />
+          Exempt this resource from future alerts
+        </button>
+      ) : (
+        <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+          <p className="text-xs text-zinc-500">
+            Future alerts for <span className="font-mono text-zinc-400">{incident.resource_name || incident.resource_id}</span> will
+            be suppressed before diagnosis (no LLM spend) until un-exempted in Settings → Policies.
+          </p>
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Reason (required) — e.g. known-noisy dev resource"
+            className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/50 focus:outline-none"
+          />
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <div className="flex gap-2">
+            <Button size="sm" variant="ghost" className="border border-zinc-700" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={loading || !reason.trim()} loading={loading} onClick={handleConfirm}>
+              Confirm exemption
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface RemediationCardProps {
   incident: Incident
   token: string
   onApproved: (incidentId: string, optionId: string) => void
   onResolvedManually: (incidentId: string, resolutionNote: string | null) => void
   onAssigned?: (incidentId: string, assignedTo: string | null, assignedToEmail: string | null) => void
+  // Settings → Policies, Step 3: true when this incident's cloud
+  // connection (AWS/Azure) is in Read-Only mode for a write-capable
+  // agent. Execution options render disabled; manual resolution becomes
+  // the primary action. No approve call is ever attempted from here —
+  // the server independently rejects it too (defense in depth).
+  readOnlyConnection?: boolean
 }
 
-export function RemediationCard({ incident, token, onApproved, onResolvedManually, onAssigned }: RemediationCardProps) {
+export function RemediationCard({ incident, token, onApproved, onResolvedManually, onAssigned, readOnlyConnection }: RemediationCardProps) {
   const [selected, setSelected]         = useState<string | null>(null)
   const [customInput, setCustom]        = useState('')
   const [expanded, setExpanded]         = useState<string | null>(null)
@@ -431,6 +511,8 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
             Est. fix time: {fmtDuration(incident.estimated_duration_seconds)}
           </div>
         )}
+
+        <ExemptResourceButton incident={incident} token={token} />
       </div>
 
       {/* Body */}
@@ -452,20 +534,26 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
               const isCustom        = opt.id === 'custom'
               const isManualResolve = opt.id === MANUAL_RESOLVE_ID
               const impact          = IMPACT_META[opt.impact]
+              // Settings → Policies, Step 3: hold and manual-resolve never
+              // execute anything, so they're never blocked by read-only mode.
+              const isBlockedByReadOnly = !!readOnlyConnection && !isHold && !isManualResolve
 
               return (
                 <div
                   key={opt.id}
-                  onClick={() => setSelected(opt.id)}
+                  onClick={() => { if (!isBlockedByReadOnly) setSelected(opt.id) }}
                   className={cn(
-                    'rounded-lg border p-3 transition-all cursor-pointer',
-                    isSelected
+                    'rounded-lg border p-3 transition-all',
+                    isBlockedByReadOnly
+                      ? 'cursor-not-allowed border-zinc-800 bg-zinc-950/50 opacity-50'
+                      : 'cursor-pointer',
+                    !isBlockedByReadOnly && isSelected
                       ? isHold
                         ? 'border-zinc-600 bg-zinc-800'
                         : isManualResolve
                         ? 'border-emerald-500/60 bg-emerald-500/10'
                         : 'border-blue-500/60 bg-blue-500/10'
-                      : 'border-zinc-800 bg-zinc-950 hover:border-zinc-700 hover:bg-zinc-900/80',
+                      : !isBlockedByReadOnly ? 'border-zinc-800 bg-zinc-950 hover:border-zinc-700 hover:bg-zinc-900/80' : '',
                   )}
                 >
                   <div className="flex items-start gap-3">
@@ -497,6 +585,14 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                           </span>
                         )}
                       </div>
+
+                      {isBlockedByReadOnly && (
+                        <p className="mt-1 flex items-center gap-1 text-xs text-amber-400">
+                          <AlertTriangle className="h-3 w-3 shrink-0" />
+                          Requires write access — this connection is in Read-Only mode. See the
+                          permission guide, or use &quot;I&apos;ll handle this myself&quot; below.
+                        </p>
+                      )}
 
                       {isManualResolve ? (
                         <p className="mt-1 text-xs leading-relaxed text-zinc-500">{opt.description}</p>
@@ -617,9 +713,14 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
             {incident.status === 'failed' && (
               <>
                 <XCircle className="h-10 w-10 text-red-400" />
-                <div>
-                  <p className="text-sm font-medium text-red-400">Execution failed</p>
-                  <p className="mt-1 text-xs text-zinc-500">Review the logs and retry manually or escalate.</p>
+                <div className="max-w-sm">
+                  <p className="text-sm font-medium text-red-400">
+                    {incident.failure_kind === 'permission_denied' ? 'Insufficient permissions' : 'Execution failed'}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                    {incident.failure_reason
+                      ?? 'Review the logs and retry manually or escalate.'}
+                  </p>
                 </div>
               </>
             )}

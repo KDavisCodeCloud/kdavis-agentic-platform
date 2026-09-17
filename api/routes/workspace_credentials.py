@@ -157,6 +157,12 @@ class ConnectionsStatusResponse(BaseModel):
     # credential-expiry (Phase 5) and payment-failure (Phase 7)
     # notifications both depend on a contact_email existing.
     has_contact_email: bool = False
+    # Settings → Policies, Step 3 (migration 050) -- 'read_only' | 'execute'.
+    # Read only meaningful once the corresponding connection exists; shown
+    # regardless (defaults to 'execute', matching the column default) so
+    # ConnectionsPanel can render the mode toggle before a connection is made.
+    aws_connection_mode: str = "execute"
+    azure_connection_mode: str = "execute"
 
 
 class WorkspaceTokenStatusResponse(BaseModel):
@@ -268,6 +274,8 @@ async def get_connections_status(
         product_tier=workspace.get("product_tier"),
         require_mfa=bool(workspace.get("require_mfa")),
         has_contact_email=bool(workspace.get("contact_email")),
+        aws_connection_mode=workspace.get("aws_connection_mode") or "execute",
+        azure_connection_mode=workspace.get("azure_connection_mode") or "execute",
     )
 
 
@@ -702,3 +710,58 @@ async def connect_k8s(
 
     log.info("[WorkspaceCredentials] Kubernetes cluster verified workspace=%s", workspace_id)
     return CredentialStatusResponse(id=str(workspace_id))
+
+
+# Settings → Policies, Step 3 (migration 050) -- connection mode toggle.
+
+class SetConnectionModeRequest(BaseModel):
+    mode: str = Field(..., pattern="^(read_only|execute)$")
+
+
+class SetConnectionModeResponse(BaseModel):
+    provider: str
+    mode: str
+
+
+async def _set_connection_mode(provider: str, column: str, body: SetConnectionModeRequest, request: Request, workspace: dict) -> SetConnectionModeResponse:
+    """
+    Shared by the aws/azure connection-mode routes below. Admin-only --
+    same rationale as rotating the workspace token (_caller_is_workspace_
+    admin): this changes what "requires write access" means for every
+    incident this connection produces, more sensitive than the
+    admin-or-approver bar on approving one incident.
+    """
+    if not _caller_is_workspace_admin(workspace):
+        raise HTTPException(status_code=403, detail=f"Only a workspace admin can change the {provider} connection mode")
+
+    workspace_id = workspace["id"]
+    async with request.app.state.db_pool.acquire() as conn:
+        before = await conn.fetchrow(f"SELECT {column} FROM workspaces WHERE id = $1", workspace_id)
+        await conn.execute(f"UPDATE workspaces SET {column} = $1 WHERE id = $2", body.mode, workspace_id)
+
+    log.info("[WorkspaceCredentials] workspace=%s %s %s -> %s", workspace_id, column, before[column] if before else None, body.mode)
+    await write_audit_event(
+        workspace_id=str(workspace_id),
+        action=f"{provider}_connection_mode_changed",
+        status="success",
+        metadata={"before": before[column] if before else None, "after": body.mode},
+    )
+    return SetConnectionModeResponse(provider=provider, mode=body.mode)
+
+
+@router.patch("/aws-role/mode", response_model=SetConnectionModeResponse)
+async def set_aws_connection_mode(
+    body: SetConnectionModeRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> SetConnectionModeResponse:
+    return await _set_connection_mode("aws", "aws_connection_mode", body, request, workspace)
+
+
+@router.patch("/azure/mode", response_model=SetConnectionModeResponse)
+async def set_azure_connection_mode(
+    body: SetConnectionModeRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> SetConnectionModeResponse:
+    return await _set_connection_mode("azure", "azure_connection_mode", body, request, workspace)

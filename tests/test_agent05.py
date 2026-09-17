@@ -744,9 +744,26 @@ class TestApplyAWSPolicy:
         assert result["new_version_id"] == "v4"
 
     async def test_raises_on_api_error(self, tools, fake_iam):
-        fake_iam.create_policy_version.side_effect = _client_error("AccessDenied", "CreatePolicyVersion")
+        # Settings → Policies, Step 4: a non-permission error code still
+        # raises the generic RuntimeError unchanged -- only permission-
+        # denied-class codes (see test_raises_cloud_permission_error_on_access_denied)
+        # get reclassified.
+        fake_iam.create_policy_version.side_effect = _client_error("ValidationError", "CreatePolicyVersion")
         with pytest.raises(RuntimeError, match="AWS CreatePolicyVersion error"):
             await tools.apply_aws_policy("arn:aws:iam::123:policy/P", {})
+
+    async def test_raises_cloud_permission_error_on_access_denied(self, tools, fake_iam):
+        """Settings → Policies, Step 4: graceful 403/AccessDenied handling --
+        an AWS permission-denied response raises CloudPermissionError (caught
+        by api/routes/incidents.py's _resume(), not a generic RuntimeError),
+        naming the specific missing action."""
+        from core.cloud_errors import CloudPermissionError
+
+        fake_iam.create_policy_version.side_effect = _client_error("AccessDenied", "CreatePolicyVersion")
+        with pytest.raises(CloudPermissionError) as exc_info:
+            await tools.apply_aws_policy("arn:aws:iam::123:policy/P", {})
+        assert exc_info.value.provider == "aws"
+        assert exc_info.value.action == "iam:CreatePolicyVersion"
 
     async def test_deletes_oldest_version_and_retries_on_limit_exceeded(self, tools, fake_iam):
         from datetime import datetime, timedelta
