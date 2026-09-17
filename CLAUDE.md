@@ -41,8 +41,14 @@ security-first, LLM-agnostic, multi-tenant, SOC 2-ready from day one.
 6. Every completed task generates a SOP entry pushed to Obsidian vault.
    Agents document themselves. You don't document manually.
 
-7. CI/CD pushes to GitHub (public portfolio) AND Gitea (private internal)
-   simultaneously on every merge to main.
+7. ~~CI/CD pushes to GitHub (public portfolio) AND Gitea (private
+   internal) simultaneously on every merge to main.~~ **RETIRED
+   2026-09-17** — no private Gitea server was ever provisioned for this
+   project; `gitea-mirror.yml` was `workflow_dispatch`-only (never
+   auto-triggering) since 2026-08-13 and has now been removed entirely.
+   This was carried over from the generic project-scaffold template's
+   dual-repo architecture, not a decision made for this project. GitHub
+   is the sole repo. See `DECISIONS.md`.
 
 8. Token circuit breaker on every agent: 50-call loop limit, $2 spend cap
    per trial run. Hard stop, not a warning.
@@ -959,7 +965,6 @@ The Actions tab shows you:
 - Every deploy that ran and whether it passed or failed
 - Every PR that was blocked by a quality gate and why
 - Every scheduled job (weekly sweep, email deploy) and its outcome
-- Every Gitea mirror push confirmation
 
 Set up GitHub Actions notifications:
 - Go to Settings → Notifications → Actions
@@ -1002,12 +1007,6 @@ What it does:
   4. Blocks merge if either check fails
 You see it in: Actions tab → prompt-version-check.yml
 You interact with it: bump the version in your prompt filename before PR
-
-`gitea-mirror.yml`
-Trigger: every push to any branch
-What it does: pushes identical ref to internal Gitea server simultaneously
-You see it in: Actions tab → gitea-mirror.yml (should always be green)
-You interact with it: you don't — it's fully automatic
 
 `weekly-sweep.yml`
 Trigger: cron every Monday 6am local time

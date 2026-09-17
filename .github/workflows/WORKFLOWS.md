@@ -35,20 +35,14 @@ duration, and logs.
 
 ---
 
-## gitea-mirror.yml
-
-**Trigger:** push to any branch
-
-**What it does:** pushes the identical ref to the internal Gitea
-server, simultaneously with GitHub. This is the private mirror —
-GitHub stays the public portfolio repo, Gitea holds the same history
-internally.
-
-**You see it in:** Actions tab → `gitea-mirror.yml` (should always be green)
-**You interact with it:** you don't — it's fully automatic
-
-**Required repo secrets:** `GITEA_SSH_PRIVATE_KEY`, `GITEA_HOST`,
-`GITEA_REMOTE_URL`, `DASHBOARD_WEBHOOK_URL`, `DASHBOARD_WEBHOOK_TOKEN`
+**Retired 2026-09-17:** `gitea-mirror.yml` (private Gitea mirror on every
+push) was removed. It never had a real Gitea server behind it — the
+required secrets (`GITEA_SSH_PRIVATE_KEY`, `GITEA_HOST`,
+`GITEA_REMOTE_URL`) were never provisioned, so it had been
+`workflow_dispatch`-only (never auto-triggering) since 2026-08-13. Carried
+over from the generic project-scaffold template's "GitHub public +
+Gitea private" dual-repo architecture, never actually built for this
+project. See `DECISIONS.md` for the retirement decision.
 
 ---
 

@@ -121,3 +121,26 @@ Full detail: `knowledge/operator/architecture-decisions/2026-09-15-iac-diagnosis
   `DATABASE_URL`, verified, live-tested the previously-broken signup flow
   end-to-end (now `201`s correctly).
 
+## 2026-09-17 — Retired the private Gitea mirror (`gitea-mirror.yml`)
+
+Kelvin noticed `gitea-mirror.yml` hadn't run since 2026-08-13 and asked
+to fix it. Investigation: no real Gitea server was ever provisioned for
+this project — `GITEA_SSH_PRIVATE_KEY`/`GITEA_HOST`/`GITEA_REMOTE_URL`
+never existed as repo secrets (`gh secret list` confirmed), which is why
+the workflow was switched to `workflow_dispatch`-only on 2026-08-13 in
+the first place (same root cause `deploy.yml`'s AWS/Fargate path has,
+per the 24-gap-closure Phase 7 SOP). `GAPS.md`/`DECISIONS.md` had no
+prior entry tracking a real Gitea server as planned work — the entire
+"GitHub public + Gitea private" dual-repo architecture was carried over
+verbatim from the generic project-scaffold template (`CLAUDE.md`'s Core
+Principles #7 and Phase 1 step 14/16), never a decision made for this
+project specifically.
+
+Given a choice between (a) providing real Gitea infrastructure, (b)
+retiring it, or (c) leaving it dormant, Kelvin chose to retire it.
+Removed `.github/workflows/gitea-mirror.yml` entirely, its section in
+`.github/workflows/WORKFLOWS.md`, and corrected `CLAUDE.md`'s Core
+Principle #7 (struck through, dated, reasoned — not silently deleted,
+matching this file's own established correction convention) plus its
+two other now-dead references in the "GitHub Actions — daily visibility"
+guide section. GitHub is the sole repo for this project going forward.
