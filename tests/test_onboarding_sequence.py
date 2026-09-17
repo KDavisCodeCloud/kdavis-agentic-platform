@@ -43,16 +43,26 @@ def _workspace_row(**overrides) -> dict:
 
 
 class TestHasConnectedAnything:
-    def test_false_when_nothing_set(self):
-        assert onboarding_sequence._has_connected_anything(_workspace_row()) is False
+    """24-gap-closure Phase 6 -- now reads the real 5-item checklist
+    (core/setup_checklist.compute_setup_checklist) instead of re-deriving
+    the signal from raw columns, so needs a conn mock for the checklist's
+    own alert_ingestion_log / workspace_notification_channels lookups."""
 
-    def test_true_when_github_app_installed(self):
+    def _conn(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[None, None])
+        return conn
+
+    async def test_false_when_nothing_set(self):
+        assert await onboarding_sequence._has_connected_anything(self._conn(), _workspace_row()) is False
+
+    async def test_true_when_github_app_installed(self):
         row = _workspace_row(github_app_installation_id="inst-123")
-        assert onboarding_sequence._has_connected_anything(row) is True
+        assert await onboarding_sequence._has_connected_anything(self._conn(), row) is True
 
-    def test_true_when_aws_role_verified(self):
+    async def test_true_when_aws_role_verified(self):
         row = _workspace_row(aws_role_verified_at=datetime.now(timezone.utc))
-        assert onboarding_sequence._has_connected_anything(row) is True
+        assert await onboarding_sequence._has_connected_anything(self._conn(), row) is True
 
 
 class TestRunOnboardingSequenceCheck:

@@ -9,6 +9,7 @@ import type {
   ServiceNowConnectInput, WorkspaceTokenStatus, RotateWorkspaceTokenResult,
   IncidentFilters, WorkspaceMembersResponse, WorkspaceMember, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
   ExhaustedRetriesResponse, SetTokenExpiryResult, RequireMfaResult,
+  SetupChecklist, ConnectionTestResult,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -20,6 +21,7 @@ import {
   getMockWorkspaceTokenStatus, mockRotateWorkspaceToken,
   mockAssignIncident, getMockWorkspaceMembers, getMockIncidentComments, mockCreateIncidentComment,
   mockBulkIncidentAction, mockInviteMember, mockDeactivateMember, mockSetRequireMfa, mockSetTokenExpiry,
+  getMockSetupChecklist, mockRunConnectionTest, mockCleanupConnectionTest,
 } from './mock-data'
 
 export const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -960,4 +962,20 @@ export async function getSystemStatus(): Promise<SystemStatus | null> {
   } catch {
     return null
   }
+}
+
+// 24-gap-closure Phase 6 -- setup completeness checklist.
+export async function getSetupChecklist(token: string): Promise<SetupChecklist> {
+  if (MOCK_MODE) return getMockSetupChecklist()
+  return request<SetupChecklist>('/workspace/setup-checklist', token)
+}
+
+export async function runConnectionTest(token: string): Promise<ConnectionTestResult> {
+  if (MOCK_MODE) return mockRunConnectionTest()
+  return request<ConnectionTestResult>('/workspace/setup-checklist/test', token, { method: 'POST' })
+}
+
+export async function cleanupConnectionTest(token: string, incidentId: string): Promise<void> {
+  if (MOCK_MODE) return mockCleanupConnectionTest(incidentId)
+  await request(`/workspace/setup-checklist/test/${incidentId}`, token, { method: 'DELETE' })
 }

@@ -312,6 +312,21 @@ export interface ConnectionsStatus {
 
 // Onboarding completeness build, item 4. last4/rotated_at are display
 // hints only -- workspaces.workspace_token stores a one-way hash, so
+// 24-gap-closure Phase 6 -- mirrors api/routes/setup_checklist.py's
+// SetupChecklistResponse.
+export interface SetupChecklist {
+  cloud_connected: boolean
+  repo_connected: boolean
+  alert_source_verified: boolean
+  notification_channel_set: boolean
+  end_to_end_test_passed: boolean
+  completed_count: number
+}
+
+export interface ConnectionTestResult {
+  incident_id: string
+}
+
 // there is no raw token to "reveal" after issuance. See
 // db/migrations/040_workspace_token_display_metadata.sql.
 export interface WorkspaceTokenStatus {

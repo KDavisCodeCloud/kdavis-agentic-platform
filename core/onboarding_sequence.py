@@ -13,25 +13,21 @@ checking more often keeps each email landing within a few hours of its
 target day rather than being delayed up to a full day by an unlucky
 checkout time.
 
-Real-signal gating, not a fabricated checklist field:
-  - The build plan's actual spec describes gating day-2/day-5 sends on a
-    5/5 "setup completeness checklist" -- that field does not exist in
-    this schema yet (it's Phase 6 of a separate, larger build tracked
-    elsewhere). Rather than invent schema this module doesn't own, both
-    gates below use the best real signal already available today:
-      * day-2 ("has this workspace connected anything") --
-        any of the *_verified_at / github_app_installation_id columns
-        already selected by api/middleware/auth.py's
-        _WORKSPACE_SELECT_COLUMNS being non-null.
-      * day-5 ("has a real alert source ever delivered a webhook") --
-        any row in alert_ingestion_log for this workspace (migration 030
-        -- written by core/ingestion_log.log_alert_received on every
-        real inbound webhook, before any processing happens).
-    Once the real 5/5 checklist field ships, _has_connected_anything /
-    _has_verified_alert_source below should be swapped to read it
-    directly instead of re-deriving the same signal from raw columns --
-    tracked as a follow-up, not done here since that field doesn't exist
-    to read yet.
+Real-signal gating, reading the actual 5-item checklist as of
+24-gap-closure Phase 6 (core/setup_checklist.py, migration 046):
+  - day-2 ("has this workspace connected anything") -- checklist's
+    cloud_connected OR repo_connected.
+  - day-5 ("has a real alert source ever delivered a webhook") --
+    checklist's alert_source_verified (still, as it always was, backed
+    by a real alert_ingestion_log row, migration 030 -- written by
+    core/ingestion_log.log_alert_received on every real inbound webhook,
+    never a self-reported flag).
+  Before Phase 6 shipped the real field, this module re-derived both
+  signals independently from raw *_verified_at columns and
+  alert_ingestion_log directly -- now calls
+  core/setup_checklist.compute_setup_checklist so there is exactly one
+  place that decides what "connected" and "alert source verified" mean,
+  not two definitions that could drift apart.
   - Each email is sent at most once per workspace (workspace_onboarding_emails,
     migration 041's UNIQUE (workspace_id, email_type) constraint is the
     real enforcement; this module's own check-before-send is redundant
@@ -54,6 +50,7 @@ from core.email import (
     onboarding_day5_setup_help_html,
     send_email,
 )
+from core.setup_checklist import compute_setup_checklist
 
 log = logging.getLogger(__name__)
 
@@ -70,23 +67,14 @@ _DAY5_WINDOW = timedelta(days=5)
 _ELIGIBILITY_SLACK = timedelta(days=2)
 
 
-def _has_connected_anything(row: dict) -> bool:
-    return bool(
-        row["github_app_installation_id"]
-        or row["github_pat_verified_at"]
-        or row["aws_role_verified_at"]
-        or row["azure_verified_at"]
-        or row["azure_devops_pat_verified_at"]
-        or row["k8s_verified_at"]
-    )
+async def _has_connected_anything(conn, row: dict) -> bool:
+    checklist = await compute_setup_checklist(conn, row)
+    return checklist["cloud_connected"] or checklist["repo_connected"]
 
 
-async def _has_verified_alert_source(conn, workspace_id) -> bool:
-    row = await conn.fetchrow(
-        "SELECT 1 FROM alert_ingestion_log WHERE workspace_id = $1 LIMIT 1",
-        workspace_id,
-    )
-    return row is not None
+async def _has_verified_alert_source(conn, row: dict) -> bool:
+    checklist = await compute_setup_checklist(conn, row)
+    return checklist["alert_source_verified"]
 
 
 async def run_onboarding_sequence_check(pool: asyncpg.Pool) -> dict:
@@ -136,13 +124,13 @@ async def run_onboarding_sequence_check(pool: asyncpg.Pool) -> dict:
                 workspace_id = row["id"]
                 age = now - row["created_at"]
 
-                if _DAY2_WINDOW <= age <= _DAY2_WINDOW + _ELIGIBILITY_SLACK and not _has_connected_anything(row):
+                if _DAY2_WINDOW <= age <= _DAY2_WINDOW + _ELIGIBILITY_SLACK and not await _has_connected_anything(conn, row):
                     if await _send_once(conn, workspace_id, "day2_checklist", row["contact_email"],
                                          onboarding_day2_checklist_html(row["company_name"])):
                         sent["day2_checklist"] += 1
 
                 if _DAY5_WINDOW <= age <= _DAY5_WINDOW + _ELIGIBILITY_SLACK:
-                    if not await _has_verified_alert_source(conn, workspace_id):
+                    if not await _has_verified_alert_source(conn, row):
                         if await _send_once(conn, workspace_id, "day5_setup_help", row["contact_email"],
                                              onboarding_day5_setup_help_html(row["company_name"])):
                             sent["day5_setup_help"] += 1

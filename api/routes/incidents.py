@@ -52,6 +52,7 @@ from agents.agent_08_drift_detection.workflow import DriftWorkflow
 from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
 from agents.agent_11_resource_health.workflow import ResourceHealthWorkflow
+from core.audit import write_audit_event
 from core.workspace_credentials import build_agent_credentials, build_k8s_credentials, resolve_k8s_context
 from core.workspace_scope import workspace_scoped_connection
 
@@ -227,7 +228,7 @@ async def approve_incident(
         row = await conn.fetchrow(
             """
             SELECT id, workspace_id, agent_id, execution_status, remediation_options,
-                   estimated_duration_seconds, cloud_provider
+                   estimated_duration_seconds, cloud_provider, is_test
             FROM incidents
             WHERE id = $1 AND workspace_id = $2
             """,
@@ -304,6 +305,32 @@ async def approve_incident(
         "[IncidentsRoute] Incident %s approved: option=%s status=%s",
         incident_id, selected_id, new_status
     )
+
+    # Resume the LangGraph workflow asynchronously
+    if new_status == "executing" and row.get("is_test"):
+        # 24-gap-closure Phase 6 -- synthetic connection-test / demo-mode
+        # incidents (migration 046's incidents.is_test) have no registered
+        # agent workflow to resume (agent_id is a sentinel like
+        # "system_connection_test", never a real _WORKFLOW_CLASSES key) and
+        # must never take a real remediation action regardless -- approve
+        # simulates instant success instead of calling any agent's resume().
+        async with db.acquire() as conn:
+            await conn.execute(
+                "UPDATE incidents SET execution_status = 'executed' WHERE id = $1",
+                UUID(incident_id),
+            )
+        await write_audit_event(
+            workspace_id=str(workspace["id"]),
+            action="test_incident_approved_simulated",
+            status="success",
+            incident_id=incident_id,
+        )
+        return ApprovalResponse(
+            incident_id=incident_id,
+            status="executed",
+            selected_option_id=selected_id,
+            message="Test incident approved — simulated, no real action was taken.",
+        )
 
     # Resume the LangGraph workflow asynchronously
     if new_status == "executing":

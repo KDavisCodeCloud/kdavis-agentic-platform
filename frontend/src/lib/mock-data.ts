@@ -423,6 +423,35 @@ export function mockSetTokenExpiry(expiresAt: string | null): { expires_at: stri
   return { expires_at: expiresAt }
 }
 
+// 24-gap-closure Phase 6 -- setup completeness checklist. alert_source_
+// verified stays false in demo mode by design -- there is no real
+// webhook receiver here to ever flip it, same as production's own
+// "never self-report" rule.
+let _mockTestPassed = false
+
+export function getMockSetupChecklist() {
+  const cloudConnected = _connectionsStatus.aws_connected || _connectionsStatus.azure_connected
+  const repoConnected = _connectionsStatus.github_connected || _connectionsStatus.azure_devops_connected
+  const items = [cloudConnected, repoConnected, false, true, _mockTestPassed]
+  return {
+    cloud_connected: cloudConnected,
+    repo_connected: repoConnected,
+    alert_source_verified: false,
+    notification_channel_set: true,
+    end_to_end_test_passed: _mockTestPassed,
+    completed_count: items.filter(Boolean).length,
+  }
+}
+
+export function mockRunConnectionTest(): { incident_id: string } {
+  const incidentId = `demo-test-${Math.random().toString(36).slice(2, 10)}`
+  return { incident_id: incidentId }
+}
+
+export function mockCleanupConnectionTest(_incidentId: string): void {
+  _mockTestPassed = true
+}
+
 export function mockAssignIncident(incidentId: string, memberId: string | null): Incident | null {
   const inc = getStore().find(i => i.incident_id === incidentId)
   if (!inc) return null

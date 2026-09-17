@@ -12,6 +12,7 @@ import { FinOpsAgentDashboard } from '@/components/FinOpsAgentDashboard'
 import { ComplianceAgentDashboard } from '@/components/ComplianceAgentDashboard'
 import { ConnectionsPanel } from '@/components/ConnectionsPanel'
 import { MembersPanel } from '@/components/MembersPanel'
+import { SetupChecklistCard } from '@/components/SetupChecklistCard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getBillingStatus } from '@/lib/api'
@@ -382,6 +383,8 @@ export default function DashboardPage() {
           </button>
         </div>
       )}
+
+      <SetupChecklistCard token={token} />
 
       {/* Main content */}
       <main className="flex-1 overflow-hidden">

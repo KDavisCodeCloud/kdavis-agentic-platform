@@ -68,6 +68,7 @@ from api.routes import audit
 from api.routes import finops_agent
 from api.routes import compliance_agent
 from api.routes import github_app_admin
+from api.routes import setup_checklist
 from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
 from core.json_logging import configure_logging
@@ -428,6 +429,7 @@ app.include_router(audit.router,           prefix="/api/v1")
 app.include_router(finops_agent.router,    prefix="/api/v1")
 app.include_router(compliance_agent.router, prefix="/api/v1")
 app.include_router(github_app_admin.router, prefix="/api/v1")
+app.include_router(setup_checklist.router,  prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────

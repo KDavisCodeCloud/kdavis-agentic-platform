@@ -364,6 +364,44 @@ class TestApproveStatusTransitions:
         assert exc.value.status_code == 404
 
 
+class TestApproveTestIncident:
+    """24-gap-closure Phase 6 -- migration 046's incidents.is_test. A
+    test/demo incident's agent_id ("system_connection_test" etc.) has no
+    entry in _WORKFLOW_CLASSES, so approving it must simulate success
+    instead of resuming any real workflow (which would otherwise 500)."""
+
+    async def test_approving_simulates_success_without_resuming_any_workflow(self):
+        workspace_id = uuid4()
+        row = _incident_row("system_connection_test", workspace_id)
+        row["is_test"] = True
+        request, conn = _make_request(row)
+
+        with patch("api.routes.incidents.write_audit_event", new=AsyncMock()) as mock_audit:
+            result = await _approve(request, str(row["id"]), workspace_id)
+
+        assert result.status == "executed"
+        assert "simulated" in result.message.lower()
+        # The normal "executing" status write, then this short-circuit's
+        # own "executed" override -- no workflow class lookup, no
+        # resume() task scheduled for either.
+        assert conn.execute.await_count == 2
+        final_update_sql = conn.execute.await_args_list[-1].args[0]
+        assert "execution_status = 'executed'" in final_update_sql
+        mock_audit.assert_awaited_once()
+        assert mock_audit.await_args.kwargs["action"] == "test_incident_approved_simulated"
+
+    async def test_non_test_incident_with_unregistered_agent_still_500s(self):
+        """The is_test short-circuit must not accidentally swallow the
+        real fail-loud behavior for a genuinely unknown agent_id."""
+        workspace_id = uuid4()
+        row = _incident_row("agent_99_does_not_exist", workspace_id)
+        request, conn = _make_request(row)
+
+        with pytest.raises(HTTPException) as exc:
+            await _approve(request, str(row["id"]), workspace_id)
+        assert exc.value.status_code == 500
+
+
 class TestApproveRejectRoleGate:
     """
     Membership plan, Phase C (RBAC). A member session needs role 'admin'
