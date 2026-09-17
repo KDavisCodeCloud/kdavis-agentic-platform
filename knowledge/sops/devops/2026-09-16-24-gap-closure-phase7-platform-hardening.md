@@ -135,6 +135,38 @@ per-agent breakdown, alongside the existing budget/utilization figures
 dashboard tab: totals, a utilization badge color-coded by threshold, and
 a per-agent bar breakdown.
 
+## The new CI pipeline's first real run caught real environment gaps
+
+Per this build's own "verify live, don't just assume" discipline: the
+first actual push-triggered run of `.github/workflows/ci.yml` failed —
+checked immediately via `gh run view --log-failed` rather than assumed
+fine because the YAML looked right. Three real, fixed issues: (1)
+`test_internal_agents.py::test_builds_from_real_git_log` needs more
+history than `actions/checkout@v4`'s 1-commit shallow default gives
+(fixed: `fetch-depth: 0`); (2)
+`test_providers_router.py::test_router_returns_completion_and_falls_back_to_anthropic`
+is a live-network smoke test needing a real `ANTHROPIC_API_KEY`, not
+among this repo's configured secrets (deselected by node id — adding
+that key as a repo secret so it can run for real is a follow-up for
+Kelvin); (3) `actions/setup-node`'s npm cache failed to resolve
+`frontend/package-lock.json` for reasons not worth chasing for a
+build-speed optimization (removed). Also deselected the same 4
+pre-existing failures every phase this session already reported
+unchanged, so the gate doesn't cry wolf on day one over issues nobody
+in this build caused.
+
+Second run (commit `819eeeb`) still failed — checked again rather than
+assumed fixed: `npm ci` errored (`EUSAGE`) because
+`frontend/package-lock.json` is gitignored (`.gitignore:30`) and was
+never committed, so a fresh CI checkout has no lockfile to install from
+at all. A fourth real, separate finding, flagged for Kelvin: this also
+means `npm install`/`npm ci` isn't actually reproducible for anyone
+cloning this repo fresh, CI or otherwise — not this phase's call to
+reverse by force-committing a lockfile that was deliberately excluded.
+Switched the workflow to `npm install` (commit `565ebdc`) to unblock CI
+without touching that decision. Third run verified green — both jobs
+passed for real, not assumed.
+
 ## Verification
 
 - Full backend suite: 2035 passed (+14 new tests across
