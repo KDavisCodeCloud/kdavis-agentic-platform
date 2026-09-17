@@ -303,6 +303,33 @@ export async function triggerLeadFinder(productId: string): Promise<{ run_id: st
   return res.json();
 }
 
+export interface LeadFinderRun {
+  id: string;
+  product_id: string;
+  status: "pending" | "running" | "complete" | "failed";
+  started_at: string | null;
+  completed_at: string | null;
+  leads_found: number;
+  leads_verified: number;
+  leads_deduplicated: number;
+  sources_used: string[];
+  error_message: string | null;
+  current_step: string | null;
+  total_steps: number | null;
+  completed_steps: number;
+  estimated_seconds_remaining: number | null;
+}
+
+export async function fetchLeadFinderRun(runId: string): Promise<LeadFinderRun> {
+  const res = await fetch(`/api/marketing-leads/runs/${encodeURIComponent(runId)}`, { cache: "no-store" });
+  assertNotRedirectedToLogin(res);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching lead finder run status failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function triggerSendSequences(): Promise<{ status: string }> {
   const res = await fetch(`/api/marketing-leads/send-sequences`, { method: "POST" });
   assertNotRedirectedToLogin(res);

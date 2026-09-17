@@ -1,14 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   listIcpProducts,
   triggerLeadFinder,
   triggerSendSequences,
   fetchPipelineSummary,
+  fetchLeadFinderRun,
   type IcpProduct,
   type PipelineSummary,
+  type LeadFinderRun,
 } from "@/lib/api";
+
+const POLL_INTERVAL_MS = 4000;
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainderMinutes = minutes % 60;
+  return remainderMinutes ? `${hours}h ${remainderMinutes}m` : `${hours}h`;
+}
 
 const STAGE_ORDER = ["new", "contacted", "replied", "qualified", "demo", "won", "lost"];
 
@@ -28,6 +41,54 @@ export function LeadPipelinePanel() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<string | null>(null);
 
+  const [run, setRun] = useState<LeadFinderRun | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const pollHandle = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickHandle = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopPolling() {
+    if (pollHandle.current) clearInterval(pollHandle.current);
+    if (tickHandle.current) clearInterval(tickHandle.current);
+    pollHandle.current = null;
+    tickHandle.current = null;
+  }
+
+  function startPolling(runId: string) {
+    stopPolling();
+    setElapsedSeconds(0);
+
+    tickHandle.current = setInterval(() => {
+      setElapsedSeconds((s) => s + 1);
+    }, 1000);
+
+    const poll = async () => {
+      try {
+        const latest = await fetchLeadFinderRun(runId);
+        setRun(latest);
+        if (latest.status === "complete" || latest.status === "failed") {
+          stopPolling();
+          setActionResult(
+            latest.status === "complete"
+              ? `Done — ${latest.leads_found} lead(s) found, ${latest.leads_verified} verified.`
+              : null
+          );
+          if (latest.status === "failed") {
+            setActionError(latest.error_message ?? "Lead finder run failed");
+          }
+        }
+      } catch (err) {
+        // A transient poll failure shouldn't kill the whole progress
+        // display -- just try again next interval.
+        setActionError((prev) => prev ?? (err instanceof Error ? err.message : "Checking run status failed"));
+      }
+    };
+
+    poll();
+    pollHandle.current = setInterval(poll, POLL_INTERVAL_MS);
+  }
+
+  useEffect(() => stopPolling, []);
+
   useEffect(() => {
     listIcpProducts()
       .then((rows) => {
@@ -46,11 +107,10 @@ export function LeadPipelinePanel() {
     setFinding(true);
     setActionError(null);
     setActionResult(null);
+    setRun(null);
     try {
       const { run_id: runId } = await triggerLeadFinder(productId);
-      setActionResult(
-        `Lead finder run started (${runId.slice(0, 8)}…). This can take hours — SMTP verification is throttled. Check back later.`
-      );
+      startPolling(runId);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Triggering lead finder failed");
     } finally {
@@ -149,6 +209,33 @@ export function LeadPipelinePanel() {
           {sending ? "Sending…" : "Send Due Sequences Now"}
         </button>
       </div>
+
+      {run && (run.status === "pending" || run.status === "running") && (
+        <div className="mt-3 p-2 rounded-[8px]" style={{ backgroundColor: "#10151b", border: "1px solid #1c222b" }}>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-[11px] font-mono truncate pr-2" style={{ color: "#c7cfd6" }}>
+              {run.current_step ?? (run.status === "pending" ? "Queued…" : "Working…")}
+            </p>
+            <p className="text-[10px] font-mono shrink-0" style={{ color: "#8b96a3" }}>
+              {formatDuration(elapsedSeconds)} elapsed
+              {run.estimated_seconds_remaining != null && run.estimated_seconds_remaining > 0
+                ? ` · ~${formatDuration(run.estimated_seconds_remaining)} left`
+                : ""}
+            </p>
+          </div>
+          <div className="w-full rounded-full overflow-hidden" style={{ height: 5, backgroundColor: "#1c222b" }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: run.total_steps
+                  ? `${Math.min(100, Math.round((run.completed_steps / run.total_steps) * 100))}%`
+                  : "4%",
+                backgroundColor: "#f5a623",
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {actionError && (
         <p className="text-[11px] font-mono mt-2" style={{ color: "#e05d5d" }}>{actionError}</p>
