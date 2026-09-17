@@ -181,6 +181,29 @@ class TestConnectAzure:
         assert result.id == str(workspace_id)
         conn.execute.assert_awaited_once()
 
+    async def test_client_secret_expiry_persisted_and_clears_prior_warned_flag(self):
+        """24-gap-closure Phase 5."""
+        from datetime import datetime, timezone
+        workspace_id = uuid4()
+        request, conn = _make_request()
+        expiry = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        with (
+            patch("api.routes.workspace_credentials.verify_service_principal", new=AsyncMock(return_value=None)),
+            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
+        ):
+            await wc_routes.connect_azure(
+                wc_routes.ConnectAzureRequest(
+                    azure_tenant_id="tid", client_id="cid", client_secret="secret",
+                    subscription_id="sub", client_secret_expires_at=expiry,
+                ),
+                request,
+                workspace={"id": workspace_id},
+            )
+        sql, *params = conn.execute.await_args.args
+        assert "azure_client_secret_expires_at" in sql
+        assert "azure_client_secret_expiry_warned_at = NULL" in sql
+        assert expiry in params
+
 
 class TestConnectAzureDevOps:
     async def test_verification_failure_raises_400(self):
@@ -228,6 +251,44 @@ class TestConnectAzureDevOps:
             )
         assert result.webhook_secret is None  # not shown again -- was already minted on a prior connect
         conn.execute.assert_awaited_once()
+
+    async def test_pat_expiry_persisted_on_first_connect(self):
+        """24-gap-closure Phase 5."""
+        from datetime import datetime, timezone
+        workspace_id = uuid4()
+        request, conn = _make_request(fetchrow_return={"encrypted_azure_devops_webhook_secret": None})
+        expiry = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        with (
+            patch("api.routes.workspace_credentials.verify_azure_devops_pat", new=AsyncMock(return_value=None)),
+            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
+        ):
+            await wc_routes.connect_azure_devops(
+                wc_routes.ConnectAzureDevOpsRequest(org="acme-org", pat="pat123", pat_expires_at=expiry),
+                request,
+                workspace={"id": workspace_id},
+            )
+        sql, *params = conn.execute.await_args.args
+        assert "azure_devops_pat_expires_at" in sql
+        assert expiry in params
+
+    async def test_pat_expiry_persisted_on_reconnect(self):
+        """24-gap-closure Phase 5."""
+        from datetime import datetime, timezone
+        workspace_id = uuid4()
+        request, conn = _make_request(fetchrow_return={"encrypted_azure_devops_webhook_secret": "already-set-cipher"})
+        expiry = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        with (
+            patch("api.routes.workspace_credentials.verify_azure_devops_pat", new=AsyncMock(return_value=None)),
+            patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}),
+        ):
+            await wc_routes.connect_azure_devops(
+                wc_routes.ConnectAzureDevOpsRequest(org="acme-org", pat="pat123", pat_expires_at=expiry),
+                request,
+                workspace={"id": workspace_id},
+            )
+        sql, *params = conn.execute.await_args.args
+        assert "azure_devops_pat_expiry_warned_at = NULL" in sql
+        assert expiry in params
 
 
 class TestGetConnectionsStatus:
@@ -414,10 +475,13 @@ class TestRotateWorkspaceTokenSelfServe:
         conn.execute.assert_not_awaited()
 
     async def test_admin_member_can_rotate(self):
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
         rotated = datetime.now(timezone.utc)
+        grace_ends = rotated + timedelta(hours=72)
         workspace_id = uuid4()
-        request, conn = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        request, conn = _make_request(fetchrow_return={
+            "workspace_token_rotated_at": rotated, "previous_workspace_token_expires_at": grace_ends,
+        })
         workspace = {"id": workspace_id, "member_role": "admin"}
 
         with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()) as mock_audit:
@@ -426,15 +490,20 @@ class TestRotateWorkspaceTokenSelfServe:
         assert result.workspace_token.startswith("cd_ws_")
         assert result.last4 == result.workspace_token[-4:]
         assert result.rotated_at == rotated.isoformat()
+        assert result.grace_period_ends_at == grace_ends.isoformat()
+        assert len(result.alert_source_checklist) > 0
         conn.fetchrow.assert_awaited_once()
         mock_audit.assert_awaited_once()
         assert mock_audit.await_args.kwargs["action"] == "workspace_token_rotated"
         assert mock_audit.await_args.kwargs["workspace_id"] == str(workspace_id)
 
     async def test_token_authenticated_caller_always_allowed(self):
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
         rotated = datetime.now(timezone.utc)
-        request, conn = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        request, conn = _make_request(fetchrow_return={
+            "workspace_token_rotated_at": rotated,
+            "previous_workspace_token_expires_at": rotated + timedelta(hours=72),
+        })
         workspace = {"id": uuid4()}  # no member_role key at all -- token path
 
         with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()):
@@ -443,23 +512,31 @@ class TestRotateWorkspaceTokenSelfServe:
         assert result.workspace_token.startswith("cd_ws_")
 
     async def test_new_token_is_hashed_before_storage_not_stored_raw(self):
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
         rotated = datetime.now(timezone.utc)
-        request, conn = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        request, conn = _make_request(fetchrow_return={
+            "workspace_token_rotated_at": rotated,
+            "previous_workspace_token_expires_at": rotated + timedelta(hours=72),
+        })
         workspace = {"id": uuid4()}
 
         with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()):
             result = await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
 
         update_sql, token_hash_arg, last4_arg, workspace_id_arg = conn.fetchrow.await_args.args
-        assert "UPDATE workspaces SET workspace_token" in update_sql
+        assert "UPDATE workspaces SET" in update_sql
+        assert "workspace_token = $1" in update_sql
+        assert "previous_workspace_token_hash = workspace_token" in update_sql
         assert token_hash_arg != result.workspace_token  # never the raw token
         assert last4_arg == result.last4
 
     async def test_each_rotation_generates_a_distinct_token(self):
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
         rotated = datetime.now(timezone.utc)
-        request, _ = _make_request(fetchrow_return={"workspace_token_rotated_at": rotated})
+        request, _ = _make_request(fetchrow_return={
+            "workspace_token_rotated_at": rotated,
+            "previous_workspace_token_expires_at": rotated + timedelta(hours=72),
+        })
         workspace = {"id": uuid4()}
 
         with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()):

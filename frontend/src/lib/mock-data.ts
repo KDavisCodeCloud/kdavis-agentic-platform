@@ -757,19 +757,41 @@ export function getMockConnectionsStatus(): ConnectionsStatus {
 }
 
 // Onboarding completeness build, item 4. last_used_at/expires_at added
-// 24-gap-closure Phase 4.
-let _mockWorkspaceToken: { last4: string; rotated_at: string; last_used_at: string | null; expires_at: string | null } = {
-  last4: 'aZ9k', rotated_at: new Date().toISOString(), last_used_at: new Date().toISOString(), expires_at: null,
+// 24-gap-closure Phase 4; grace_period_ends_at added Phase 5.
+let _mockWorkspaceToken: {
+  last4: string; rotated_at: string; last_used_at: string | null
+  expires_at: string | null; grace_period_ends_at: string | null
+} = {
+  last4: 'aZ9k', rotated_at: new Date().toISOString(), last_used_at: new Date().toISOString(),
+  expires_at: null, grace_period_ends_at: null,
 }
+
+const _MOCK_ALERT_SOURCE_CHECKLIST = [
+  'GitHub webhook (if using the legacy PAT path, not the GitHub App)',
+  'Azure Monitor Action Group webhook',
+  'AWS SNS topic subscription (CloudWatch/EventBridge alarms)',
+  'Azure DevOps service hook',
+  'Any other custom webhook URL registered with this token',
+]
 
 export function getMockWorkspaceTokenStatus(): typeof _mockWorkspaceToken {
   return _mockWorkspaceToken
 }
 
-export function mockRotateWorkspaceToken(): { workspace_token: string; last4: string; rotated_at: string } {
+export function mockRotateWorkspaceToken(): {
+  workspace_token: string; last4: string; rotated_at: string
+  grace_period_ends_at: string; alert_source_checklist: string[]
+} {
   const raw = `cd_ws_demo_${Math.random().toString(36).slice(2, 10)}`
-  _mockWorkspaceToken = { last4: raw.slice(-4), rotated_at: new Date().toISOString(), last_used_at: null, expires_at: null }
-  return { workspace_token: raw, last4: _mockWorkspaceToken.last4, rotated_at: _mockWorkspaceToken.rotated_at }
+  const graceEndsAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString()
+  _mockWorkspaceToken = {
+    last4: raw.slice(-4), rotated_at: new Date().toISOString(), last_used_at: null,
+    expires_at: null, grace_period_ends_at: graceEndsAt,
+  }
+  return {
+    workspace_token: raw, last4: _mockWorkspaceToken.last4, rotated_at: _mockWorkspaceToken.rotated_at,
+    grace_period_ends_at: graceEndsAt, alert_source_checklist: _MOCK_ALERT_SOURCE_CHECKLIST,
+  }
 }
 
 export function mockGetGithubAppInstallUrl(): { install_url: string } {

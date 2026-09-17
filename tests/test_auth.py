@@ -134,6 +134,40 @@ class TestGetWorkspace:
             await get_workspace(request)
         mock_create_task.assert_called_once()
 
+    async def test_valid_token_never_falls_back_to_previous_token_lookup(self):
+        """Primary lookup succeeds -- the previous-token fallback query
+        (24-gap-closure Phase 5) must not fire at all."""
+        request = _make_request("cd_ws_real", _workspace_row("active"))
+        await get_workspace(request)
+        conn = request.app.state.db_pool.acquire.return_value.__aenter__.return_value
+        assert conn.fetchrow.await_count == 1
+
+    async def test_rotated_away_token_still_works_within_grace_window(self):
+        """24-gap-closure Phase 5 -- webhook token rotation grace window.
+        Primary lookup misses (this token was rotated away from); the
+        fallback query against previous_workspace_token_hash succeeds."""
+        request = _make_request("cd_ws_old", None)  # primary miss
+        conn = request.app.state.db_pool.acquire.return_value.__aenter__.return_value
+        conn.fetchrow = AsyncMock(side_effect=[None, _workspace_row("active")])
+
+        result = await get_workspace(request)
+
+        assert result["stripe_subscription_status"] == "active"
+        assert conn.fetchrow.await_count == 2
+        fallback_sql = conn.fetchrow.await_args_list[1].args[0]
+        assert "previous_workspace_token_hash" in fallback_sql
+        assert "previous_workspace_token_expires_at > NOW()" in fallback_sql
+
+    async def test_token_matching_neither_current_nor_previous_403s(self):
+        request = _make_request("cd_ws_bogus", None)
+        conn = request.app.state.db_pool.acquire.return_value.__aenter__.return_value
+        conn.fetchrow = AsyncMock(side_effect=[None, None])
+
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace(request)
+        assert exc.value.status_code == 403
+        assert conn.fetchrow.await_count == 2
+
     async def test_select_includes_migration_022_credential_columns(self):
         """Pins the real SQL shape -- migration 022 added github/aws/azure
         credential columns to workspaces, and core/workspace_credentials.py's

@@ -26,6 +26,7 @@ workspace route -- a real paying customer uses the same routes Kelvin does.
 import logging
 import os
 import secrets
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -88,11 +89,22 @@ class ConnectAzureRequest(BaseModel):
     client_id: str = Field(..., min_length=1)
     client_secret: str = Field(..., min_length=1)
     subscription_id: str = Field(..., min_length=1)
+    # 24-gap-closure Phase 5 -- captured at connection time, not
+    # generated: an SP client secret's expiry is chosen in Azure AD when
+    # the customer creates it, we only ever record what they tell us.
+    # Optional so a workspace that connected before this phase, or a
+    # customer who genuinely doesn't know it yet, isn't blocked -- no
+    # expiry captured just means no 14-day warning/expired-incident ever
+    # fires for that credential, same as today's behavior.
+    client_secret_expires_at: datetime | None = None
 
 
 class ConnectAzureDevOpsRequest(BaseModel):
     org: str = Field(..., min_length=1)
     pat: str = Field(..., min_length=1)
+    # 24-gap-closure Phase 5 -- same rationale as client_secret_expires_at
+    # above: a PAT's expiry is chosen at creation in Azure DevOps.
+    pat_expires_at: datetime | None = None
 
 
 class ConnectAzureDevOpsResponse(BaseModel):
@@ -147,12 +159,33 @@ class WorkspaceTokenStatusResponse(BaseModel):
     rotated_at: str | None
     last_used_at: str | None = None
     expires_at: str | None = None
+    # 24-gap-closure Phase 5 -- present (non-null) only while a prior
+    # token is still inside its 72h rotation grace window, so a page
+    # reload still shows the banner correctly, not just the response
+    # from the rotate call itself in that one session.
+    grace_period_ends_at: str | None = None
+
+
+# 24-gap-closure Phase 5 -- every place the workspace token appears in a
+# URL a customer pastes into an external system. Returned on every
+# rotation so the frontend can render it as a checklist -- the customer
+# needs to know exactly what to go update, not just that "some alert
+# sources" might need it.
+_ALERT_SOURCE_CHECKLIST = (
+    "GitHub webhook (if using the legacy PAT path, not the GitHub App)",
+    "Azure Monitor Action Group webhook",
+    "AWS SNS topic subscription (CloudWatch/EventBridge alarms)",
+    "Azure DevOps service hook",
+    "Any other custom webhook URL registered with this token",
+)
 
 
 class RotateWorkspaceTokenResponse(BaseModel):
     workspace_token: str
     last4: str
     rotated_at: str
+    grace_period_ends_at: str
+    alert_source_checklist: list[str] = Field(default_factory=lambda: list(_ALERT_SOURCE_CHECKLIST))
 
 
 class SetTokenExpiryRequest(BaseModel):
@@ -250,11 +283,16 @@ async def get_workspace_token_status(
     rotated_at = workspace.get("workspace_token_rotated_at")
     last_used_at = workspace.get("workspace_token_last_used_at")
     expires_at = workspace.get("workspace_token_expires_at")
+    grace_ends_at = workspace.get("previous_workspace_token_expires_at")
+    from datetime import datetime, timezone
+    if grace_ends_at is not None and grace_ends_at <= datetime.now(timezone.utc):
+        grace_ends_at = None  # window already closed -- don't show a stale banner
     return WorkspaceTokenStatusResponse(
         last4=workspace.get("workspace_token_last4"),
         rotated_at=rotated_at.isoformat() if rotated_at else None,
         last_used_at=last_used_at.isoformat() if last_used_at else None,
         expires_at=expires_at.isoformat() if expires_at else None,
+        grace_period_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
     )
 
 
@@ -267,12 +305,17 @@ async def rotate_workspace_token_self_serve(
     Onboarding completeness build, item 4 -- self-serve equivalent of
     api/routes/internal_workspaces.py's admin-only rotate-token (that one
     stays THD-team-only, gated by get_internal_user; this is the
-    customer-facing path, gated by workspace-admin role). The old token
-    stops matching the moment this commits -- there is no server-side
-    grace window in this codebase today (that's a separate, not-yet-built
-    phase); this response's caller is expected to show the 72-hour
-    inbound-webhook grace-window notice as UI copy describing the
-    intended policy, not as a claim about enforced behavior.
+    customer-facing path, gated by workspace-admin role).
+
+    24-gap-closure Phase 5: the old token now stays valid for a real 72h
+    grace window (previous_workspace_token_hash/_expires_at, checked as a
+    fallback in api/middleware/auth.py's _get_workspace_by_token) rather
+    than stopping the moment this commits -- an alert source that hasn't
+    been updated with the new token yet keeps working during the window
+    instead of silently breaking. `previous_workspace_token_hash =
+    workspace_token` in the UPDATE below reads the PRE-update value
+    (standard SQL UPDATE semantics -- every SET expression sees the old
+    row), so no separate read-then-write is needed to capture it.
 
     Returns the new raw token exactly once, same "shown once" contract as
     every other token-issuing endpoint in this codebase.
@@ -286,10 +329,14 @@ async def rotate_workspace_token_self_serve(
 
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
-            "UPDATE workspaces SET workspace_token = $1, workspace_token_last4 = $2, "
+            "UPDATE workspaces SET "
+            "previous_workspace_token_hash = workspace_token, "
+            "previous_workspace_token_expires_at = NOW() + INTERVAL '72 hours', "
+            "workspace_token = $1, workspace_token_last4 = $2, "
             "workspace_token_rotated_at = NOW(), workspace_token_last_used_at = NULL, "
             "updated_at = NOW() "
-            "WHERE id = $3 RETURNING workspace_token_rotated_at",
+            "WHERE id = $3 "
+            "RETURNING workspace_token_rotated_at, previous_workspace_token_expires_at",
             token_hash,
             last4,
             workspace["id"],
@@ -307,6 +354,7 @@ async def rotate_workspace_token_self_serve(
         workspace_token=raw_token,
         last4=last4,
         rotated_at=row["workspace_token_rotated_at"].isoformat(),
+        grace_period_ends_at=row["previous_workspace_token_expires_at"].isoformat(),
     )
 
 
@@ -467,6 +515,15 @@ async def connect_aws_role(
     request: Request,
     workspace: dict = Depends(get_workspace),
 ) -> CredentialStatusResponse:
+    """
+    24-gap-closure Phase 5 note: unlike connect_azure/connect_azure_devops
+    below, there is no *_expires_at captured here by design. This role is
+    assumed via AWS STS AssumeRole against the trust policy set up in
+    setup_aws_role -- there is no client secret or PAT with a fixed
+    lifetime the customer chose; the trust relationship itself doesn't
+    expire the way an Azure SP client secret or a PAT does. Nothing to
+    capture, nothing for core/credential_expiry.py to ever check for AWS.
+    """
     workspace_id = workspace["id"]
 
     async with request.app.state.db_pool.acquire() as conn:
@@ -521,15 +578,18 @@ async def connect_azure(
             SET azure_tenant_id = $1, azure_client_id = $2,
                 azure_client_secret_encrypted = $3, azure_subscription_id = $4,
                 azure_verified_at = NOW(),
+                azure_client_secret_expires_at = $5,
+                azure_client_secret_expiry_warned_at = NULL,
                 cloud_providers = array_append(
                     array_remove(COALESCE(cloud_providers, '{}'), 'azure'), 'azure'
                 )
-            WHERE id = $5
+            WHERE id = $6
             """,
             body.azure_tenant_id,
             body.client_id,
             encrypt(body.client_secret),
             body.subscription_id,
+            body.client_secret_expires_at,
             workspace_id,
         )
 
@@ -574,9 +634,11 @@ async def connect_azure_devops(
             # Azure DevOps service hook's secret.
             await conn.execute(
                 "UPDATE workspaces SET azure_devops_org = $1, azure_devops_pat_encrypted = $2, "
-                "azure_devops_pat_verified_at = NOW() WHERE id = $3",
+                "azure_devops_pat_verified_at = NOW(), azure_devops_pat_expires_at = $3, "
+                "azure_devops_pat_expiry_warned_at = NULL WHERE id = $4",
                 body.org,
                 encrypt(body.pat),
+                body.pat_expires_at,
                 workspace_id,
             )
         else:
@@ -584,10 +646,12 @@ async def connect_azure_devops(
             await conn.execute(
                 "UPDATE workspaces SET azure_devops_org = $1, azure_devops_pat_encrypted = $2, "
                 "azure_devops_pat_verified_at = NOW(), encrypted_azure_devops_webhook_secret = $3, "
-                "azure_devops_webhook_secret_created_at = NOW() WHERE id = $4",
+                "azure_devops_webhook_secret_created_at = NOW(), azure_devops_pat_expires_at = $4, "
+                "azure_devops_pat_expiry_warned_at = NULL WHERE id = $5",
                 body.org,
                 encrypt(body.pat),
                 encrypt(webhook_secret_raw),
+                body.pat_expires_at,
                 workspace_id,
             )
 

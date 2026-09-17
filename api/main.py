@@ -243,6 +243,13 @@ async def lifespan(app: FastAPI):
     app.state.notification_retry_task = asyncio.create_task(_notification_retry_loop(app.state.db_pool))
     app.state.notification_digest_task = asyncio.create_task(_notification_digest_loop(app.state.db_pool))
 
+    # 24-gap-closure Phase 5 -- daily check for Azure SP client secrets /
+    # Azure DevOps PATs expiring within 14 days or already expired.
+    # Daily cadence matches _RETENTION_INTERVAL_SECONDS -- a credential's
+    # expiry date doesn't move faster than that, so there's nothing to
+    # gain from checking more often.
+    app.state.credential_expiry_task = asyncio.create_task(_credential_expiry_loop(app.state.db_pool))
+
     yield
 
     # Shutdown
@@ -250,6 +257,7 @@ async def lifespan(app: FastAPI):
     app.state.onboarding_task.cancel()
     app.state.notification_retry_task.cancel()
     app.state.notification_digest_task.cancel()
+    app.state.credential_expiry_task.cancel()
     await app.state.db_pool.close()
     await lg_conn.close()
     log.info("[API] Shutdown complete")
@@ -315,6 +323,22 @@ async def _notification_digest_loop(pool) -> None:
         except Exception:
             log.exception("[NotificationRetry] Digest pass failed — will retry next cycle")
         await asyncio.sleep(_NOTIFICATION_DIGEST_INTERVAL_SECONDS)
+
+
+_CREDENTIAL_EXPIRY_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _credential_expiry_loop(pool) -> None:
+    from core.credential_expiry import run_credential_expiry_check
+
+    while True:
+        try:
+            await run_credential_expiry_check(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[CredentialExpiry] Check pass failed — will retry next cycle")
+        await asyncio.sleep(_CREDENTIAL_EXPIRY_INTERVAL_SECONDS)
 
 
 # ──────────────────────────────────────────────

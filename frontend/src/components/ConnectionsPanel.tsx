@@ -151,11 +151,15 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [azureClientId, setAzureClientId] = useState('')
   const [azureClientSecret, setAzureClientSecret] = useState('')
   const [azureSubscriptionId, setAzureSubscriptionId] = useState('')
+  // 24-gap-closure Phase 5 -- captured at connection time, not generated.
+  const [azureSecretExpiresAt, setAzureSecretExpiresAt] = useState('')
   const [azureBusy, setAzureBusy] = useState(false)
 
   // Azure DevOps
   const [adoOrg, setAdoOrg] = useState('')
   const [adoPat, setAdoPat] = useState('')
+  // 24-gap-closure Phase 5
+  const [adoPatExpiresAt, setAdoPatExpiresAt] = useState('')
   const [adoBusy, setAdoBusy] = useState(false)
   const [adoWebhookSecret, setAdoWebhookSecret] = useState<string | null>(null)
 
@@ -176,6 +180,8 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [tokenStatus, setTokenStatus] = useState<WorkspaceTokenStatus | null>(null)
   const [tokenBusy, setTokenBusy] = useState(false)
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
+  // 24-gap-closure Phase 5 -- webhook token rotation grace window.
+  const [rotationChecklist, setRotationChecklist] = useState<string[]>([])
   // 24-gap-closure Phase 4 -- optional expiry, admin-only same as rotate.
   const [expiryInput, setExpiryInput] = useState('')
   const [expiryBusy, setExpiryBusy] = useState(false)
@@ -283,11 +289,13 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
         client_id: azureClientId.trim(),
         client_secret: azureClientSecret.trim(),
         subscription_id: azureSubscriptionId.trim(),
+        client_secret_expires_at: azureSecretExpiresAt ? new Date(azureSecretExpiresAt).toISOString() : null,
       })
       setAzureTenantId('')
       setAzureClientId('')
       setAzureClientSecret('')
       setAzureSubscriptionId('')
+      setAzureSecretExpiresAt('')
       await load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not verify that Service Principal')
@@ -300,9 +308,14 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
     setAdoBusy(true)
     setError(null)
     try {
-      const result = await connectAzureDevOps(token, { org: adoOrg.trim(), pat: adoPat.trim() })
+      const result = await connectAzureDevOps(token, {
+        org: adoOrg.trim(),
+        pat: adoPat.trim(),
+        pat_expires_at: adoPatExpiresAt ? new Date(adoPatExpiresAt).toISOString() : null,
+      })
       if (result.webhook_secret) setAdoWebhookSecret(result.webhook_secret)
       setAdoPat('')
+      setAdoPatExpiresAt('')
       await load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not verify that Azure DevOps PAT')
@@ -400,7 +413,8 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
     try {
       const result = await rotateWorkspaceToken(token)
       setRotatedToken(result.workspace_token)
-      setTokenStatus({ last4: result.last4, rotated_at: result.rotated_at })
+      setRotationChecklist(result.alert_source_checklist)
+      setTokenStatus({ last4: result.last4, rotated_at: result.rotated_at, grace_period_ends_at: result.grace_period_ends_at })
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not rotate the workspace token')
     } finally {
@@ -595,6 +609,17 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
               placeholder="Subscription ID"
               className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
             />
+            <div>
+              <label className="mb-1 block text-[11px] text-zinc-500">
+                Client secret expiry (optional -- set in Azure AD when you created it)
+              </label>
+              <input
+                type="date"
+                value={azureSecretExpiresAt}
+                onChange={e => setAzureSecretExpiresAt(e.target.value)}
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 focus:border-blue-500/60 focus:outline-none"
+              />
+            </div>
             <Button
               size="sm"
               className="w-full"
@@ -630,6 +655,17 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
               placeholder="Organization (e.g. acme-org)"
               className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/60 focus:outline-none"
             />
+            <div>
+              <label className="mb-1 block text-[11px] text-zinc-500">
+                PAT expiry (optional -- set when you created it in Azure DevOps)
+              </label>
+              <input
+                type="date"
+                value={adoPatExpiresAt}
+                onChange={e => setAdoPatExpiresAt(e.target.value)}
+                className="w-full rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs text-zinc-200 focus:border-blue-500/60 focus:outline-none"
+              />
+            </div>
             <div className="flex gap-2">
               <input
                 type="password"
@@ -993,17 +1029,29 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
             {rotatedToken ? (
               <div className="space-y-2">
                 <p className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                  Save this token now — it won&apos;t be shown again. The old token stopped working immediately;
-                  it does <strong>not</strong> stay valid for a grace period today.
+                  Save this token now — it won&apos;t be shown again. The old token stays valid for 72 hours
+                  {tokenStatus?.grace_period_ends_at && (
+                    <> (until {new Date(tokenStatus.grace_period_ends_at).toLocaleString()})</>
+                  )}, so nothing breaks while you update it everywhere below.
                 </p>
                 <CodeBlock label="New workspace token" code={rotatedToken} />
-                <p className="text-xs text-zinc-500">Update every alert source and webhook registered above with this
-                new token before they&apos;ll work again -- GitHub/Azure DevOps webhooks, Azure Action Groups, and
-                any AWS SNS subscription all include the token in their URL.</p>
+                <div className="rounded border border-zinc-800 bg-zinc-950/50 p-3">
+                  <p className="mb-1.5 text-[11px] font-medium text-zinc-400">Update this token in:</p>
+                  <ul className="list-inside list-disc space-y-0.5 text-[11px] text-zinc-500">
+                    {rotationChecklist.map(item => <li key={item}>{item}</li>)}
+                  </ul>
+                </div>
                 <Button size="sm" onClick={() => setRotatedToken(null)}>Done</Button>
               </div>
             ) : (
               <div className="space-y-2">
+                {tokenStatus?.grace_period_ends_at && new Date(tokenStatus.grace_period_ends_at) > new Date() && (
+                  <p className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                    A previously rotated token is still valid until{' '}
+                    {new Date(tokenStatus.grace_period_ends_at).toLocaleString()}. Make sure every alert source
+                    is updated with the new token before then.
+                  </p>
+                )}
                 <p className="font-mono text-xs text-zinc-400">
                   {tokenStatus?.last4 ? `cd_ws_••••••••${tokenStatus.last4}` : 'cd_ws_•••••••• (no hint available yet -- rotate to get one)'}
                 </p>

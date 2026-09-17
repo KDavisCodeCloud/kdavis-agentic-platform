@@ -271,11 +271,16 @@ export interface AzureServicePrincipalInput {
   client_id: string
   client_secret: string
   subscription_id: string
+  // 24-gap-closure Phase 5 -- captured at connection time, not
+  // generated (chosen by the customer in Azure AD).
+  client_secret_expires_at?: string | null
 }
 
 export interface AzureDevOpsInput {
   org: string
   pat: string
+  // 24-gap-closure Phase 5
+  pat_expires_at?: string | null
 }
 
 export interface K8sClusterInput {
@@ -315,12 +320,19 @@ export interface WorkspaceTokenStatus {
   // 24-gap-closure Phase 4
   last_used_at?: string | null
   expires_at?: string | null
+  // 24-gap-closure Phase 5 -- non-null only while a prior token is
+  // still inside its 72h rotation grace window (survives a page reload,
+  // not just the response from the rotate call itself).
+  grace_period_ends_at?: string | null
 }
 
 export interface RotateWorkspaceTokenResult {
   workspace_token: string
   last4: string
   rotated_at: string
+  // 24-gap-closure Phase 5
+  grace_period_ends_at: string
+  alert_source_checklist: string[]
 }
 
 // 24-gap-closure Phase 4 -- mirrors api/routes/workspace_credentials.py's

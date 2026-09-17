@@ -45,7 +45,8 @@ _WORKSPACE_SELECT_COLUMNS = (
     "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at, "
     "azure_devops_pat_verified_at, k8s_verified_at, "
     "workspace_token_last4, workspace_token_rotated_at, "
-    "workspace_token_last_used_at, workspace_token_expires_at, require_mfa"
+    "workspace_token_last_used_at, workspace_token_expires_at, require_mfa, "
+    "previous_workspace_token_expires_at"
 )
 
 # 24-gap-closure Phase 4 -- fire-and-forget: a token-authenticated request
@@ -162,6 +163,18 @@ async def _get_workspace_by_token(request: Request, blocked_statuses: tuple[str,
             f"SELECT {_WORKSPACE_SELECT_COLUMNS} FROM workspaces WHERE workspace_token = $1",
             token_hash,
         )
+        if not row:
+            # 24-gap-closure Phase 5 -- webhook token rotation grace
+            # window. The just-rotated-away-from token still
+            # authenticates for 72h (previous_workspace_token_expires_at,
+            # set by rotate_workspace_token_self_serve) so an alert
+            # source that hasn't been updated with the new token yet
+            # doesn't silently break the moment someone rotates.
+            row = await conn.fetchrow(
+                f"SELECT {_WORKSPACE_SELECT_COLUMNS} FROM workspaces "
+                f"WHERE previous_workspace_token_hash = $1 AND previous_workspace_token_expires_at > NOW()",
+                token_hash,
+            )
 
     if not row:
         log.warning("[Auth] Invalid workspace token presented")
