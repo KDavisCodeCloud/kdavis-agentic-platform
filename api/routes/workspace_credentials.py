@@ -135,17 +135,34 @@ class ConnectionsStatusResponse(BaseModel):
     # Onboarding completeness build, item 4: the frontend needs this to
     # decide whether to show the Workspace Token card's rotate action.
     member_role: str | None = None
+    # 24-gap-closure Phase 4 -- the Members & Security panel needs these
+    # to decide whether to show the Enterprise-only "require MFA" toggle
+    # and what state it's currently in.
+    product_tier: str | None = None
+    require_mfa: bool = False
 
 
 class WorkspaceTokenStatusResponse(BaseModel):
     last4: str | None
     rotated_at: str | None
+    last_used_at: str | None = None
+    expires_at: str | None = None
 
 
 class RotateWorkspaceTokenResponse(BaseModel):
     workspace_token: str
     last4: str
     rotated_at: str
+
+
+class SetTokenExpiryRequest(BaseModel):
+    # 24-gap-closure Phase 4 -- optional expiry. None clears it (never
+    # expires), matching the nullable column's own default.
+    expires_at: str | None = None
+
+
+class SetTokenExpiryResponse(BaseModel):
+    expires_at: str | None
 
 
 # Onboarding completeness build, item 4. Deliberately admin-only (not
@@ -210,6 +227,8 @@ async def get_connections_status(
         llm_configured=bool(workspace.get("encrypted_llm_key")),
         llm_provider=workspace.get("llm_provider"),
         member_role=workspace.get("member_role"),
+        product_tier=workspace.get("product_tier"),
+        require_mfa=bool(workspace.get("require_mfa")),
     )
 
 
@@ -229,9 +248,13 @@ async def get_workspace_token_status(
         raise HTTPException(status_code=403, detail="Only a workspace admin can view token details")
 
     rotated_at = workspace.get("workspace_token_rotated_at")
+    last_used_at = workspace.get("workspace_token_last_used_at")
+    expires_at = workspace.get("workspace_token_expires_at")
     return WorkspaceTokenStatusResponse(
         last4=workspace.get("workspace_token_last4"),
         rotated_at=rotated_at.isoformat() if rotated_at else None,
+        last_used_at=last_used_at.isoformat() if last_used_at else None,
+        expires_at=expires_at.isoformat() if expires_at else None,
     )
 
 
@@ -264,7 +287,8 @@ async def rotate_workspace_token_self_serve(
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "UPDATE workspaces SET workspace_token = $1, workspace_token_last4 = $2, "
-            "workspace_token_rotated_at = NOW(), updated_at = NOW() "
+            "workspace_token_rotated_at = NOW(), workspace_token_last_used_at = NULL, "
+            "updated_at = NOW() "
             "WHERE id = $3 RETURNING workspace_token_rotated_at",
             token_hash,
             last4,
@@ -284,6 +308,50 @@ async def rotate_workspace_token_self_serve(
         last4=last4,
         rotated_at=row["workspace_token_rotated_at"].isoformat(),
     )
+
+
+@router.patch("/token/expiry", response_model=SetTokenExpiryResponse)
+async def set_workspace_token_expiry(
+    body: SetTokenExpiryRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> SetTokenExpiryResponse:
+    """
+    24-gap-closure Phase 4 -- optional workspace-token expiry, admin-only
+    same as rotate. expires_at=None clears any existing expiry (token
+    never expires again, the pre-Phase-4 default for every workspace).
+    A caller-supplied expires_at in the past is rejected outright rather
+    than silently accepted and immediately locking the workspace out.
+    """
+    if not _caller_is_workspace_admin(workspace):
+        raise HTTPException(status_code=403, detail="Only a workspace admin can set token expiry")
+
+    expires_dt = None
+    if body.expires_at is not None:
+        from datetime import datetime, timezone
+        try:
+            expires_dt = datetime.fromisoformat(body.expires_at)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="expires_at must be a valid ISO 8601 timestamp")
+        if expires_dt.tzinfo is None:
+            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+        if expires_dt <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="expires_at must be in the future")
+
+    async with request.app.state.db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE workspaces SET workspace_token_expires_at = $1, updated_at = NOW() WHERE id = $2",
+            expires_dt, workspace["id"],
+        )
+
+    await write_audit_event(
+        workspace_id=str(workspace["id"]),
+        action="workspace_token_expiry_changed",
+        status="success",
+        metadata={"expires_at": expires_dt.isoformat() if expires_dt else None},
+    )
+
+    return SetTokenExpiryResponse(expires_at=expires_dt.isoformat() if expires_dt else None)
 
 
 @router.patch("/github", response_model=ConnectGithubResponse)

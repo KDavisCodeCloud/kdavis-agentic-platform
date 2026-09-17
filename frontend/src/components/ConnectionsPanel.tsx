@@ -14,7 +14,7 @@ import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
   connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear, connectGithubIssues,
   connectServiceNow, getWorkspaceTokenStatus, rotateWorkspaceToken, isMemberSessionToken, API_URL,
-  listExhaustedRetries,
+  listExhaustedRetries, setWorkspaceTokenExpiry,
 } from '@/lib/api'
 import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus, WorkspaceTokenStatus, ExhaustedRetry } from '@/lib/types'
 
@@ -176,6 +176,9 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [tokenStatus, setTokenStatus] = useState<WorkspaceTokenStatus | null>(null)
   const [tokenBusy, setTokenBusy] = useState(false)
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
+  // 24-gap-closure Phase 4 -- optional expiry, admin-only same as rotate.
+  const [expiryInput, setExpiryInput] = useState('')
+  const [expiryBusy, setExpiryBusy] = useState(false)
 
   // 24-gap-closure Phase 3 -- "flagged in dashboard" when an outbound
   // notification/ticketing send exhausted all 5 retry attempts.
@@ -402,6 +405,21 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       setError(e instanceof Error ? e.message : 'Could not rotate the workspace token')
     } finally {
       setTokenBusy(false)
+    }
+  }
+
+  async function handleSetExpiry(clear: boolean) {
+    setExpiryBusy(true)
+    setError(null)
+    try {
+      const iso = clear ? null : (expiryInput ? new Date(expiryInput).toISOString() : null)
+      const result = await setWorkspaceTokenExpiry(token, iso)
+      setTokenStatus(prev => prev ? { ...prev, expires_at: result.expires_at } : prev)
+      if (clear) setExpiryInput('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not update token expiry')
+    } finally {
+      setExpiryBusy(false)
     }
   }
 
@@ -994,9 +1012,36 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                     Last rotated {new Date(tokenStatus.rotated_at).toLocaleDateString()}
                   </p>
                 )}
+                <p className="text-[11px] text-zinc-600">
+                  {tokenStatus?.last_used_at
+                    ? `Last used ${new Date(tokenStatus.last_used_at).toLocaleString()}`
+                    : 'Never used yet'}
+                </p>
+                <p className="text-[11px] text-zinc-600">
+                  {tokenStatus?.expires_at
+                    ? `Expires ${new Date(tokenStatus.expires_at).toLocaleString()}`
+                    : 'Never expires'}
+                </p>
                 <Button size="sm" variant="warning" disabled={tokenBusy} loading={tokenBusy} onClick={handleRotateToken}>
                   Rotate token
                 </Button>
+
+                <div className="flex items-center gap-2 border-t border-zinc-800 pt-2">
+                  <input
+                    type="datetime-local"
+                    value={expiryInput}
+                    onChange={e => setExpiryInput(e.target.value)}
+                    className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-300 outline-none focus:border-blue-500"
+                  />
+                  <Button size="sm" variant="outline" disabled={expiryBusy || !expiryInput} loading={expiryBusy} onClick={() => handleSetExpiry(false)}>
+                    Set expiry
+                  </Button>
+                  {tokenStatus?.expires_at && (
+                    <Button size="sm" variant="ghost" disabled={expiryBusy} onClick={() => handleSetExpiry(true)}>
+                      Clear
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
           </SectionCard>

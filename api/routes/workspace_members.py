@@ -23,6 +23,15 @@ GET  /workspace-members         -- list the caller's workspace's members
                                     + seats_used/max_seats (Phase B).
 POST /workspace-members/accept  -- invited user accepts, links their
                                     fresh Supabase session to their row
+POST /workspace-members/{id}/deactivate -- 24-gap-closure Phase 4, admin-
+                                    only member removal (soft: status=
+                                    'deactivated'). Assigned incidents
+                                    return to unassigned; one audit row.
+PATCH /workspace-members/settings/require-mfa -- 24-gap-closure Phase 4,
+                                    Enterprise-only, admin-only workspace-
+                                    wide MFA requirement toggle. Enforced
+                                    in api/middleware/auth.py's
+                                    get_workspace_member, not here.
 
 role is admin | approver | viewer (migration 034, Phase C) -- admin:
 full control including invite; approver: can approve/reject incident
@@ -35,11 +44,14 @@ action it gates.
 import logging
 import os
 import re
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 
 from api.middleware.auth import get_workspace_or_member
+from api.middleware.rate_limiter import limiter
+from core.audit import write_audit_event
 from core.compliance import SubscriptionError, WorkspaceComplianceGuard
 
 log = logging.getLogger(__name__)
@@ -119,6 +131,7 @@ async def _get_member_row(conn, supabase_user_id) -> dict | None:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/invite", response_model=MemberResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def invite_member(
     body: InviteMemberRequest,
     request: Request,
@@ -240,6 +253,7 @@ async def list_members(
 
 
 @router.post("/accept", response_model=AcceptInviteResponse)
+@limiter.limit("10/minute")
 async def accept_invite(request: Request) -> AcceptInviteResponse:
     """
     The invited person calls this once, right after setting their
@@ -313,3 +327,133 @@ async def accept_invite(request: Request) -> AcceptInviteResponse:
         role=updated["role"],
         status=updated["status"],
     )
+
+
+class RequireMfaRequest(BaseModel):
+    require_mfa: bool
+
+
+class RequireMfaResponse(BaseModel):
+    require_mfa: bool
+
+
+@router.post("/{member_id}/deactivate", response_model=MemberResponse)
+async def deactivate_member(
+    member_id: str,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> MemberResponse:
+    """
+    24-gap-closure Phase 4 -- member removal/deactivation. Soft-deletes:
+    sets status='deactivated' (a value migration 033's own comment
+    already anticipated but no endpoint ever set) rather than deleting
+    the row, so task/comment/audit history stays intact. Any incident
+    currently assigned to this member is returned to unassigned in the
+    same transaction, and one audit_events row is written -- both
+    explicit requirements of this phase.
+
+    Admin-gated the same way as invite_member (_caller_is_authorized_to_invite):
+    a non-admin member session cannot deactivate anyone, including
+    themselves. A caller cannot deactivate their own member row --
+    self-lockout via this endpoint is blocked outright, not just
+    discouraged, since there would be no admin session left to undo it.
+    """
+    if not _caller_is_authorized_to_invite(workspace):
+        raise HTTPException(status_code=403, detail="Only a workspace admin can remove members")
+
+    try:
+        member_uuid = UUID(member_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="member_id must be a valid UUID")
+
+    caller_member_id = workspace.get("member_id")
+    if caller_member_id and caller_member_id == str(member_uuid):
+        raise HTTPException(status_code=400, detail="You cannot deactivate your own membership")
+
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, workspace_id, email, role, status FROM workspace_members "
+            "WHERE id = $1 AND workspace_id = $2",
+            member_uuid, workspace["id"],
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Member not found in this workspace")
+        if row["status"] == "deactivated":
+            raise HTTPException(status_code=409, detail="Member is already deactivated")
+
+        async with conn.transaction():
+            updated = await conn.fetchrow(
+                """
+                UPDATE workspace_members
+                SET status = 'deactivated', deactivated_at = NOW()
+                WHERE id = $1
+                RETURNING id, email, role, status, invited_at, joined_at
+                """,
+                member_uuid,
+            )
+            reassigned = await conn.execute(
+                "UPDATE incidents SET assigned_to = NULL WHERE assigned_to = $1",
+                member_uuid,
+            )
+
+    await write_audit_event(
+        workspace_id=str(workspace["id"]),
+        action="member_deactivated",
+        status="success",
+        metadata={
+            "member_id": member_id,
+            "member_email": row["email"],
+            "incidents_unassigned": reassigned,
+        },
+    )
+
+    log.info(
+        "[WorkspaceMembers] Deactivated member=%s email=%s workspace=%s",
+        member_id, row["email"], workspace["id"],
+    )
+
+    return MemberResponse(
+        id=str(updated["id"]),
+        email=updated["email"],
+        role=updated["role"],
+        status=updated["status"],
+        invited_at=updated["invited_at"].isoformat() if updated["invited_at"] else None,
+        joined_at=updated["joined_at"].isoformat() if updated["joined_at"] else None,
+    )
+
+
+@router.patch("/settings/require-mfa", response_model=RequireMfaResponse)
+async def set_require_mfa(
+    body: RequireMfaRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> RequireMfaResponse:
+    """
+    24-gap-closure Phase 4 -- workspace-wide "require MFA" is an
+    Enterprise setting per Kelvin's spec, same tier-gating convention as
+    every other Enterprise-exclusive feature in this codebase
+    (core/compliance.py's TIER_LIMITS). Admin-gated same as invite/deactivate.
+    Enforcement itself lives in api/middleware/auth.py's get_workspace_member,
+    not here -- this endpoint only flips the switch.
+    """
+    if not _caller_is_authorized_to_invite(workspace):
+        raise HTTPException(status_code=403, detail="Only a workspace admin can change this setting")
+    if (workspace.get("product_tier") or "starter") != "enterprise":
+        raise HTTPException(status_code=403, detail="Requiring MFA workspace-wide is an Enterprise feature")
+
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        await conn.execute(
+            "UPDATE workspaces SET require_mfa = $1, updated_at = NOW() WHERE id = $2",
+            body.require_mfa, workspace["id"],
+        )
+
+    await write_audit_event(
+        workspace_id=str(workspace["id"]),
+        action="require_mfa_changed",
+        status="success",
+        metadata={"require_mfa": body.require_mfa},
+    )
+
+    return RequireMfaResponse(require_mfa=body.require_mfa)

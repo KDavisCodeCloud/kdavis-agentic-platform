@@ -23,7 +23,13 @@ import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase'
 
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
-type Mode = 'member' | 'token'
+// 24-gap-closure Phase 4 -- MFA challenge step, added between password
+// sign-in and reaching the dashboard. 'mfa_challenge' only ever appears
+// for a member who has already enrolled a verified TOTP factor (Supabase
+// itself decides this via getAuthenticatorAssuranceLevel's nextLevel) --
+// nothing here forces enrollment; that happens separately in the
+// dashboard's Members & Security panel.
+type Mode = 'member' | 'token' | 'mfa_challenge'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -32,6 +38,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [token, setToken] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
+  const [mfaFactorId, setMfaFactorId] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -67,10 +75,60 @@ export default function LoginPage() {
         setError(signInError?.message || 'Sign in failed')
         return
       }
+
+      const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+      if (aal && aal.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') {
+        const { data: factorsData } = await supabase.auth.mfa.listFactors()
+        const factor = factorsData?.totp?.find(f => f.status === 'verified')
+        if (!factor) {
+          // Workspace requires MFA but this session hasn't stepped up --
+          // shouldn't happen (nextLevel implied a verified factor exists),
+          // but fail safe rather than silently granting aal1 access.
+          setError('Two-factor verification is required but no factor was found. Contact your admin.')
+          return
+        }
+        setMfaFactorId(factor.id)
+        setMode('mfa_challenge')
+        return
+      }
+
       localStorage.setItem('member_session_token', data.session.access_token)
       router.push('/dashboard')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleMfaSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    if (mfaCode.trim().length !== 6) {
+      setError('Enter the 6-digit code from your authenticator app')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const supabase = getSupabaseClient()
+      const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaFactorId })
+      if (challengeError || !challenge) {
+        setError(challengeError?.message || 'Could not start verification')
+        return
+      }
+      const { data: verify, error: verifyError } = await supabase.auth.mfa.verify({
+        factorId: mfaFactorId,
+        challengeId: challenge.id,
+        code: mfaCode.trim(),
+      })
+      if (verifyError || !verify) {
+        setError(verifyError?.message || 'Incorrect code')
+        return
+      }
+      localStorage.setItem('member_session_token', verify.access_token)
+      router.push('/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verification failed')
     } finally {
       setSubmitting(false)
     }
@@ -197,6 +255,12 @@ export default function LoginPage() {
                 {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
               </div>
 
+              <p style={{ textAlign: 'right', fontSize: 12.5, margin: '0 0 4px' }}>
+                <a href="/forgot-password" style={{ color: '#9fc2ff', textDecoration: 'none' }}>
+                  Forgot password?
+                </a>
+              </p>
+
               <button
                 type="submit"
                 disabled={submitting}
@@ -220,6 +284,47 @@ export default function LoginPage() {
                   Use a workspace access token instead
                 </button>
               </p>
+            </form>
+          ) : mode === 'mfa_challenge' ? (
+            <form onSubmit={handleMfaSubmit}>
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
+                  6-digit code
+                </label>
+                <p style={{ fontSize: 12.5, color: 'rgba(232,236,242,.5)', margin: '0 0 10px' }}>
+                  Enter the code from your authenticator app.
+                </p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={e => { setMfaCode(e.target.value.replace(/\D/g, '')); setError('') }}
+                  placeholder="123456"
+                  autoComplete="one-time-code"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
+                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+                    fontSize: 18, letterSpacing: '.2em', textAlign: 'center',
+                    fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
+                  }}
+                />
+                {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                style={{
+                  width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
+                  background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
+                  border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
+                  marginBottom: 16, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1,
+                  fontFamily: "'IBM Plex Sans',sans-serif",
+                }}
+              >
+                {submitting ? 'Verifying…' : 'Verify →'}
+              </button>
             </form>
           ) : (
             <form onSubmit={handleTokenSubmit}>

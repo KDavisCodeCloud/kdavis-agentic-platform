@@ -7,8 +7,8 @@ import type {
   DraftSummary, DraftDetail, AzureServicePrincipalInput, AzureDevOpsInput, K8sClusterInput,
   ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput, LinearConnectInput, GithubIssuesConnectInput,
   ServiceNowConnectInput, WorkspaceTokenStatus, RotateWorkspaceTokenResult,
-  IncidentFilters, WorkspaceMembersResponse, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
-  ExhaustedRetriesResponse,
+  IncidentFilters, WorkspaceMembersResponse, WorkspaceMember, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
+  ExhaustedRetriesResponse, SetTokenExpiryResult, RequireMfaResult,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -19,7 +19,7 @@ import {
   getMockTicketingStatus, mockConnectJira, mockConnectLinear, mockConnectGithubIssues, mockConnectServiceNow,
   getMockWorkspaceTokenStatus, mockRotateWorkspaceToken,
   mockAssignIncident, getMockWorkspaceMembers, getMockIncidentComments, mockCreateIncidentComment,
-  mockBulkIncidentAction,
+  mockBulkIncidentAction, mockInviteMember, mockDeactivateMember, mockSetRequireMfa, mockSetTokenExpiry,
 } from './mock-data'
 
 export const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -137,6 +137,40 @@ export async function assignIncident(
 export async function listWorkspaceMembers(token: string): Promise<WorkspaceMembersResponse> {
   if (MOCK_MODE) return getMockWorkspaceMembers()
   return request<WorkspaceMembersResponse>('/workspace-members', token)
+}
+
+// 24-gap-closure Phase 4 -- Members & Security panel.
+export async function inviteWorkspaceMember(token: string, email: string, role: string): Promise<WorkspaceMember> {
+  if (MOCK_MODE) return mockInviteMember(email, role)
+  return request<WorkspaceMember>('/workspace-members/invite', token, {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  })
+}
+
+export async function deactivateWorkspaceMember(token: string, memberId: string): Promise<WorkspaceMember> {
+  if (MOCK_MODE) {
+    const result = mockDeactivateMember(memberId)
+    if (!result) throw new ApiError(404, 'Member not found')
+    return result
+  }
+  return request<WorkspaceMember>(`/workspace-members/${memberId}/deactivate`, token, { method: 'POST' })
+}
+
+export async function setRequireMfa(token: string, requireMfa: boolean): Promise<RequireMfaResult> {
+  if (MOCK_MODE) return mockSetRequireMfa(requireMfa)
+  return request<RequireMfaResult>('/workspace-members/settings/require-mfa', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ require_mfa: requireMfa }),
+  })
+}
+
+export async function setWorkspaceTokenExpiry(token: string, expiresAt: string | null): Promise<SetTokenExpiryResult> {
+  if (MOCK_MODE) return mockSetTokenExpiry(expiresAt)
+  return request<SetTokenExpiryResult>('/workspace/credentials/token/expiry', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ expires_at: expiresAt }),
+  })
 }
 
 export async function listIncidentComments(token: string, incidentId: string): Promise<IncidentComment[]> {

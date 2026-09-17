@@ -42,8 +42,8 @@ def _make_request(token: str | None, row: dict | None) -> SimpleNamespace:
     return SimpleNamespace(headers=headers, app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
 
 
-def _workspace_row(status_val: str) -> dict:
-    return {
+def _workspace_row(status_val: str, **overrides) -> dict:
+    base = {
         "id": uuid4(),
         "company_name": "Acme",
         "stripe_subscription_status": status_val,
@@ -51,7 +51,13 @@ def _workspace_row(status_val: str) -> dict:
         "encrypted_llm_key": None,
         "monthly_token_budget_usd": 50.0,
         "current_month_spend_usd": 0.0,
+        # 24-gap-closure Phase 4
+        "workspace_token_expires_at": None,
+        "workspace_token_last_used_at": None,
+        "require_mfa": False,
     }
+    base.update(overrides)
+    return base
 
 
 class TestGetWorkspace:
@@ -99,6 +105,34 @@ class TestGetWorkspace:
         sql, bound_hash = conn.fetchrow.await_args.args
         assert bound_hash == _hash_token("cd_ws_plaintext")
         assert bound_hash != "cd_ws_plaintext"
+
+    async def test_expired_token_403(self):
+        """24-gap-closure Phase 4 -- optional workspace-token expiry."""
+        from datetime import datetime, timedelta, timezone
+        past = datetime.now(timezone.utc) - timedelta(days=1)
+        request = _make_request("cd_ws_real", _workspace_row("active", workspace_token_expires_at=past))
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace(request)
+        assert exc.value.status_code == 403
+        assert "expired" in exc.value.detail
+
+    async def test_future_expiry_passes(self):
+        from datetime import datetime, timedelta, timezone
+        future = datetime.now(timezone.utc) + timedelta(days=1)
+        request = _make_request("cd_ws_real", _workspace_row("active", workspace_token_expires_at=future))
+        result = await get_workspace(request)
+        assert result["stripe_subscription_status"] == "active"
+
+    async def test_no_expiry_configured_never_expires(self):
+        request = _make_request("cd_ws_real", _workspace_row("active"))
+        result = await get_workspace(request)
+        assert result["stripe_subscription_status"] == "active"
+
+    async def test_valid_token_touches_last_used_at(self):
+        request = _make_request("cd_ws_real", _workspace_row("active"))
+        with patch("api.middleware.auth.asyncio.create_task") as mock_create_task:
+            await get_workspace(request)
+        mock_create_task.assert_called_once()
 
     async def test_select_includes_migration_022_credential_columns(self):
         """Pins the real SQL shape -- migration 022 added github/aws/azure
@@ -267,6 +301,70 @@ class TestGetWorkspaceMember:
             with pytest.raises(HTTPException) as exc:
                 await get_workspace_member(request)
         assert exc.value.status_code == 402
+
+    async def test_require_mfa_workspace_rejects_aal1_session(self):
+        """24-gap-closure Phase 4 -- Enterprise workspace-wide MFA
+        requirement. A session token whose JWT claims aal1 (password
+        only, no verified TOTP factor for this session) must be rejected
+        once the workspace opts in, even though the session itself is
+        otherwise valid."""
+        import jose.jwt as jose_jwt
+        user_id = uuid4()
+        workspace_id = uuid4()
+        member_id = uuid4()
+        token = jose_jwt.encode({"aal": "aal1"}, "unused-secret", algorithm="HS256")
+        request = _make_bearer_request(
+            token,
+            _member_row(member_id, workspace_id, role="admin"),
+            _workspace_row("active", require_mfa=True),
+        )
+        mock_client = _mock_supabase_user(user_id)
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_workspace_member(request)
+        assert exc.value.status_code == 401
+        assert exc.value.detail == "mfa_required"
+
+    async def test_require_mfa_workspace_permits_aal2_session(self):
+        import jose.jwt as jose_jwt
+        user_id = uuid4()
+        workspace_id = uuid4()
+        member_id = uuid4()
+        token = jose_jwt.encode({"aal": "aal2"}, "unused-secret", algorithm="HS256")
+        request = _make_bearer_request(
+            token,
+            _member_row(member_id, workspace_id, role="admin"),
+            _workspace_row("active", require_mfa=True),
+        )
+        mock_client = _mock_supabase_user(user_id)
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            result = await get_workspace_member(request)
+        assert result["member_id"] == str(member_id)
+
+    async def test_require_mfa_false_never_checks_aal(self):
+        """Workspace hasn't opted in -- an aal1 (or garbage, or missing)
+        token must never be inspected at all."""
+        user_id = uuid4()
+        workspace_id = uuid4()
+        member_id = uuid4()
+        request = _make_bearer_request(
+            "not-a-real-jwt-at-all",
+            _member_row(member_id, workspace_id, role="admin"),
+            _workspace_row("active", require_mfa=False),
+        )
+        mock_client = _mock_supabase_user(user_id)
+        with (
+            patch.dict("os.environ", {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "svc"}),
+            patch("supabase.create_client", return_value=mock_client),
+        ):
+            result = await get_workspace_member(request)
+        assert result["member_id"] == str(member_id)
 
 
 class TestGetWorkspaceOrMember:

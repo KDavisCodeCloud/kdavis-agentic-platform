@@ -15,6 +15,7 @@ The token is SHA-256 hashed before DB lookup so plain-text tokens
 are never stored.
 """
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -43,8 +44,35 @@ _WORKSPACE_SELECT_COLUMNS = (
     "aws_role_verified_at, azure_tenant_id, azure_client_id, "
     "azure_client_secret_encrypted, azure_subscription_id, azure_verified_at, "
     "azure_devops_pat_verified_at, k8s_verified_at, "
-    "workspace_token_last4, workspace_token_rotated_at"
+    "workspace_token_last4, workspace_token_rotated_at, "
+    "workspace_token_last_used_at, workspace_token_expires_at, require_mfa"
 )
+
+# 24-gap-closure Phase 4 -- fire-and-forget: a token-authenticated request
+# must never be slowed down (or failed) by recording its own usage.
+# Detached short-lived connection, same pattern as core/notifications.py's
+# _asyncpg_url() convention -- never reuses the request-scoped pool
+# connection from inside a background task.
+async def _touch_workspace_token_last_used(workspace_id) -> None:
+    import asyncpg
+
+    url = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+    if not url:
+        return
+    try:
+        conn = await asyncpg.connect(url, statement_cache_size=0)
+    except Exception:
+        log.warning("[Auth] Could not record workspace_token_last_used_at for %s", workspace_id)
+        return
+    try:
+        await conn.execute(
+            "UPDATE workspaces SET workspace_token_last_used_at = NOW() WHERE id = $1",
+            workspace_id,
+        )
+    except Exception:
+        log.warning("[Auth] Failed to update workspace_token_last_used_at for %s", workspace_id)
+    finally:
+        await conn.close()
 
 # 'pending_payment' -- the default status for every newly-created workspace
 # (db/migrations/021_workspace_pending_payment.sql) -- is the actual paywall
@@ -152,6 +180,26 @@ async def _get_workspace_by_token(request: Request, blocked_statuses: tuple[str,
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=f"Workspace subscription {status_val} — access denied",
         )
+
+    # 24-gap-closure Phase 4 -- optional expiry (NULL == never expires,
+    # every existing token's unchanged default). Checked before the
+    # fire-and-forget last_used_at touch below so an expired token is
+    # never recorded as "used". .get() (not row["..."]) so a test fixture
+    # or any other caller shaped without this new column degrades to
+    # "never expires" instead of a KeyError -- same defensive convention
+    # every downstream workspace-dict consumer in this codebase already
+    # uses.
+    expires_at = row.get("workspace_token_expires_at")
+    if expires_at is not None:
+        from datetime import datetime, timezone
+        if expires_at <= datetime.now(timezone.utc):
+            log.warning("[Auth] Workspace %s presented an expired token", row["id"])
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Workspace token has expired — rotate it in Connections settings",
+            )
+
+    asyncio.create_task(_touch_workspace_token_last_used(row["id"]))
 
     return dict(row)
 
@@ -322,6 +370,32 @@ async def get_workspace_member(request: Request) -> dict:
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=f"Workspace subscription {status_val} — access denied",
         )
+
+    if workspace_row.get("require_mfa"):
+        # 24-gap-closure Phase 4 -- Enterprise workspace-wide "require MFA"
+        # setting. The Supabase session token itself was already confirmed
+        # valid above via the online get_user() call, so decoding its
+        # claims here without re-verifying the signature is safe -- this
+        # is reading a claim off a token we just proved is live, not
+        # trusting an unverified token on its own. aal2 == the caller
+        # completed a second factor for this session; aal1 == password
+        # only. Supabase issues aal2 automatically once any TOTP factor is
+        # verified for the session.
+        try:
+            from jose import jwt as _jose_jwt
+            claims = _jose_jwt.get_unverified_claims(token)
+            aal = claims.get("aal")
+        except Exception:
+            aal = None
+        if aal != "aal2":
+            log.warning(
+                "[Auth] Workspace %s requires MFA — member session aal=%s rejected",
+                workspace_row["id"], aal,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="mfa_required",
+            )
 
     workspace_row["member_id"] = str(member_row["id"])
     workspace_row["member_role"] = member_row["role"]

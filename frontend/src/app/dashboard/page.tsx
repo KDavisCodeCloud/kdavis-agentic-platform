@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck, Check, Copy, KeyRound } from 'lucide-react'
+import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck, Check, Copy, KeyRound, UserCog } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
 import { ContentPipeline } from '@/components/ContentPipeline'
 import OutreachPipeline from '@/components/OutreachPipeline'
@@ -11,6 +11,7 @@ import { AuditDashboard } from '@/components/AuditDashboard'
 import { FinOpsAgentDashboard } from '@/components/FinOpsAgentDashboard'
 import { ComplianceAgentDashboard } from '@/components/ComplianceAgentDashboard'
 import { ConnectionsPanel } from '@/components/ConnectionsPanel'
+import { MembersPanel } from '@/components/MembersPanel'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getBillingStatus } from '@/lib/api'
@@ -18,7 +19,7 @@ import { getBillingStatus } from '@/lib/api'
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
 
-type DashTab = 'hitl' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent' | 'connections'
+type DashTab = 'hitl' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent' | 'connections' | 'members'
 
 // Stripe's success_url (api/routes/stripe_billing.py) redirects here with
 // ?checkout_success=1 -- the workspace only exists as a locked
@@ -347,6 +348,18 @@ export default function DashboardPage() {
           <KeyRound className="h-3.5 w-3.5" />
           Connections
         </button>
+        <button
+          onClick={() => setActiveTab('members')}
+          className={cn(
+            'flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-colors',
+            activeTab === 'members'
+              ? 'bg-zinc-800 text-zinc-100'
+              : 'text-zinc-500 hover:text-zinc-300',
+          )}
+        >
+          <UserCog className="h-3.5 w-3.5" />
+          Members
+        </button>
         {MOCK_MODE && (
           <span className="ml-auto text-xs text-zinc-700">
             Refresh page to reset demo
@@ -380,6 +393,7 @@ export default function DashboardPage() {
         {activeTab === 'finops-agent'     && <FinOpsAgentDashboard token={token} />}
         {activeTab === 'compliance-agent' && <ComplianceAgentDashboard token={token} />}
         {activeTab === 'connections'      && <ConnectionsPanel token={token} />}
+        {activeTab === 'members'          && <MembersPanel token={token} />}
       </main>
     </div>
   )

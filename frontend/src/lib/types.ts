@@ -300,6 +300,9 @@ export interface ConnectionsStatus {
   // null for a token-authenticated caller (full trust); set only for a
   // logged-in member session. Onboarding completeness build, item 4.
   member_role: string | null
+  // 24-gap-closure Phase 4
+  product_tier?: string | null
+  require_mfa?: boolean
 }
 
 // Onboarding completeness build, item 4. last4/rotated_at are display
@@ -309,12 +312,28 @@ export interface ConnectionsStatus {
 export interface WorkspaceTokenStatus {
   last4: string | null
   rotated_at: string | null
+  // 24-gap-closure Phase 4
+  last_used_at?: string | null
+  expires_at?: string | null
 }
 
 export interface RotateWorkspaceTokenResult {
   workspace_token: string
   last4: string
   rotated_at: string
+}
+
+// 24-gap-closure Phase 4 -- mirrors api/routes/workspace_credentials.py's
+// SetTokenExpiryResponse.
+export interface SetTokenExpiryResult {
+  expires_at: string | null
+}
+
+// 24-gap-closure Phase 4 -- member removal/deactivation + workspace-wide
+// MFA requirement toggle. Mirrors api/routes/workspace_members.py's
+// RequireMfaResponse.
+export interface RequireMfaResult {
+  require_mfa: boolean
 }
 
 // Ticketing integrations (Jira/Linear/GitHub Issues/ServiceNow) -- fires on

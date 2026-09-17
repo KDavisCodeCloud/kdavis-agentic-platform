@@ -18,7 +18,20 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
+from api.middleware.rate_limiter import limiter
 from api.routes import workspace_members as wm
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit():
+    """24-gap-closure Phase 4 added @limiter.limit to invite_member/
+    accept_invite -- slowapi's decorator needs a real starlette Request,
+    which these SimpleNamespace fakes deliberately are not (same
+    convention as tests/test_workspaces.py's own fixture of this name)."""
+    original = limiter.enabled
+    limiter.enabled = False
+    yield
+    limiter.enabled = original
 
 
 def _make_request(conn) -> SimpleNamespace:
@@ -307,3 +320,123 @@ class TestAcceptInvite:
         update_sql = conn.fetchrow.await_args_list[1].args[0]
         assert "UPDATE workspace_members" in update_sql
         assert "supabase_user_id" in update_sql
+
+
+class TestDeactivateMember:
+    def _conn_with_row(self, row, updated_row):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[row, updated_row])
+        conn.execute = AsyncMock(return_value="UPDATE 2")
+        txn_ctx = AsyncMock()
+        txn_ctx.__aenter__ = AsyncMock(return_value=None)
+        txn_ctx.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=txn_ctx)
+        return conn
+
+    async def test_admin_deactivates_member_and_unassigns_incidents(self):
+        workspace_id = uuid4()
+        member_id = uuid4()
+        conn = self._conn_with_row(
+            row={"id": member_id, "workspace_id": workspace_id, "email": "gone@acme.com", "role": "viewer", "status": "active"},
+            updated_row={"id": member_id, "email": "gone@acme.com", "role": "viewer", "status": "deactivated", "invited_at": None, "joined_at": None},
+        )
+        request = _make_request(conn)
+
+        with patch("api.routes.workspace_members.write_audit_event", new=AsyncMock()) as mock_audit:
+            result = await wm.deactivate_member(
+                str(member_id), request, workspace=_member_workspace(workspace_id, "admin"),
+            )
+
+        assert result.status == "deactivated"
+        unassign_sql = conn.execute.await_args.args[0]
+        assert "UPDATE incidents SET assigned_to = NULL" in unassign_sql
+        mock_audit.assert_awaited_once()
+        assert mock_audit.await_args.kwargs["action"] == "member_deactivated"
+
+    async def test_non_admin_rejected(self):
+        workspace_id = uuid4()
+        member_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.deactivate_member(str(member_id), request, workspace=_member_workspace(workspace_id, "viewer"))
+        assert exc.value.status_code == 403
+
+    async def test_cannot_deactivate_self(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+        workspace = _member_workspace(workspace_id, "admin")
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.deactivate_member(workspace["member_id"], request, workspace=workspace)
+        assert exc.value.status_code == 400
+
+    async def test_member_not_found_404(self):
+        workspace_id = uuid4()
+        member_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=None)
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.deactivate_member(str(member_id), request, workspace=_member_workspace(workspace_id, "admin"))
+        assert exc.value.status_code == 404
+
+    async def test_already_deactivated_409(self):
+        workspace_id = uuid4()
+        member_id = uuid4()
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"id": member_id, "workspace_id": workspace_id, "email": "x@acme.com", "role": "viewer", "status": "deactivated"})
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.deactivate_member(str(member_id), request, workspace=_member_workspace(workspace_id, "admin"))
+        assert exc.value.status_code == 409
+
+    async def test_invalid_uuid_400(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.deactivate_member("not-a-uuid", request, workspace=_member_workspace(workspace_id, "admin"))
+        assert exc.value.status_code == 400
+
+
+class TestSetRequireMfa:
+    async def test_admin_enterprise_can_enable(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+        workspace = _member_workspace(workspace_id, "admin")
+        workspace["product_tier"] = "enterprise"
+
+        with patch("api.routes.workspace_members.write_audit_event", new=AsyncMock()):
+            result = await wm.set_require_mfa(wm.RequireMfaRequest(require_mfa=True), request, workspace=workspace)
+
+        assert result.require_mfa is True
+        conn.execute.assert_awaited_once()
+
+    async def test_non_enterprise_rejected(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+        workspace = _member_workspace(workspace_id, "admin")
+        workspace["product_tier"] = "starter"
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.set_require_mfa(wm.RequireMfaRequest(require_mfa=True), request, workspace=workspace)
+        assert exc.value.status_code == 403
+
+    async def test_non_admin_rejected(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)
+        workspace = _member_workspace(workspace_id, "viewer")
+        workspace["product_tier"] = "enterprise"
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.set_require_mfa(wm.RequireMfaRequest(require_mfa=True), request, workspace=workspace)
+        assert exc.value.status_code == 403

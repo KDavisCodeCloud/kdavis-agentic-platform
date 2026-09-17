@@ -386,7 +386,41 @@ const MOCK_MEMBERS: WorkspaceMember[] = [
 ]
 
 export function getMockWorkspaceMembers(): WorkspaceMembersResponse {
-  return { members: MOCK_MEMBERS, seats_used: MOCK_MEMBERS.length, max_seats: 15 }
+  return { members: MOCK_MEMBERS, seats_used: MOCK_MEMBERS.filter(m => m.status !== 'deactivated').length, max_seats: 15 }
+}
+
+// ── 24-gap-closure Phase 4 — member removal, workspace-wide MFA toggle ──
+
+export function mockInviteMember(email: string, role: string): WorkspaceMember {
+  const member: WorkspaceMember = {
+    id: `m1a2b3c4-0000-0000-0000-${String(MOCK_MEMBERS.length + 1).padStart(12, '0')}`,
+    email, role, status: 'invited', invited_at: new Date().toISOString(), joined_at: null,
+  }
+  MOCK_MEMBERS.push(member)
+  return member
+}
+
+export function mockDeactivateMember(memberId: string): WorkspaceMember | null {
+  const member = MOCK_MEMBERS.find(m => m.id === memberId)
+  if (!member) return null
+  member.status = 'deactivated'
+  for (const inc of getStore()) {
+    if (inc.assigned_to === memberId) {
+      inc.assigned_to = null
+      inc.assigned_to_email = null
+    }
+  }
+  return member
+}
+
+export function mockSetRequireMfa(value: boolean): { require_mfa: boolean } {
+  _connectionsStatus = { ..._connectionsStatus, require_mfa: value }
+  return { require_mfa: value }
+}
+
+export function mockSetTokenExpiry(expiresAt: string | null): { expires_at: string | null } {
+  _mockWorkspaceToken = { ..._mockWorkspaceToken, expires_at: expiresAt }
+  return { expires_at: expiresAt }
 }
 
 export function mockAssignIncident(incidentId: string, memberId: string | null): Incident | null {
@@ -712,23 +746,30 @@ let _connectionsStatus: ConnectionsStatus = {
   llm_configured: false,
   llm_provider: null,
   member_role: null,
+  // 24-gap-closure Phase 4 -- 'enterprise' in demo mode so the
+  // Enterprise-gated "require MFA" toggle is actually visible to try.
+  product_tier: 'enterprise',
+  require_mfa: false,
 }
 
 export function getMockConnectionsStatus(): ConnectionsStatus {
   return _connectionsStatus
 }
 
-// Onboarding completeness build, item 4.
-let _mockWorkspaceToken = { last4: 'aZ9k', rotated_at: new Date().toISOString() }
+// Onboarding completeness build, item 4. last_used_at/expires_at added
+// 24-gap-closure Phase 4.
+let _mockWorkspaceToken: { last4: string; rotated_at: string; last_used_at: string | null; expires_at: string | null } = {
+  last4: 'aZ9k', rotated_at: new Date().toISOString(), last_used_at: new Date().toISOString(), expires_at: null,
+}
 
-export function getMockWorkspaceTokenStatus(): { last4: string | null; rotated_at: string | null } {
+export function getMockWorkspaceTokenStatus(): typeof _mockWorkspaceToken {
   return _mockWorkspaceToken
 }
 
 export function mockRotateWorkspaceToken(): { workspace_token: string; last4: string; rotated_at: string } {
   const raw = `cd_ws_demo_${Math.random().toString(36).slice(2, 10)}`
-  _mockWorkspaceToken = { last4: raw.slice(-4), rotated_at: new Date().toISOString() }
-  return { workspace_token: raw, ..._mockWorkspaceToken }
+  _mockWorkspaceToken = { last4: raw.slice(-4), rotated_at: new Date().toISOString(), last_used_at: null, expires_at: null }
+  return { workspace_token: raw, last4: _mockWorkspaceToken.last4, rotated_at: _mockWorkspaceToken.rotated_at }
 }
 
 export function mockGetGithubAppInstallUrl(): { install_url: string } {
