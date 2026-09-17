@@ -327,6 +327,23 @@ export interface ConnectionTestResult {
   incident_id: string
 }
 
+// 24-gap-closure Phase 7 -- mirrors api/routes/llm_usage.py's
+// LlmUsageResponse/AgentUsage.
+export interface AgentUsage {
+  agent_id: string
+  tokens_used: number
+  cost_usd: number
+}
+
+export interface LlmUsage {
+  billing_month: string
+  total_tokens: number
+  total_cost_usd: number
+  budget_usd: number
+  utilization_pct: number
+  by_agent: AgentUsage[]
+}
+
 // there is no raw token to "reveal" after issuance. See
 // db/migrations/040_workspace_token_display_metadata.sql.
 export interface WorkspaceTokenStatus {

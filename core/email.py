@@ -161,3 +161,27 @@ def enterprise_alert_html(company_name: str, workspace_id: str, contact_email: s
   MCP OAuth access, see knowledge/sops/customer-ops/enterprise-mcp-invite.md.</p>
   <p>Contact on file: {contact_email or "(none captured)"}</p>
 </div>"""
+
+
+def payment_failed_dunning_html(company_name: str) -> str:
+    """
+    24-gap-closure Phase 7 -- sent on every Stripe invoice.payment_failed
+    event (api/routes/stripe_billing.py's _handle_payment_failed). Stripe
+    itself retries the charge on its own configured schedule (Smart
+    Retries) -- this email exists so the customer knows to fix their
+    payment method before those retries run out, not to duplicate
+    Stripe's own retry logic.
+    """
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#1a1a1a">
+  <h1 style="font-size:20px">We couldn't charge your card, {company_name}</h1>
+  <p>Your most recent Cloud Decoded payment failed. We'll retry automatically over the
+  next several days, but if your card has expired or changed, update it now to avoid
+  any interruption.</p>
+  <p><a href="https://theclouddecoded.com/billing"
+        style="display:inline-block;background:#2f6fe6;color:#fff;padding:10px 18px;
+               border-radius:8px;text-decoration:none;font-weight:600">
+    Update payment method →</a></p>
+  <p style="font-size:13px;color:#666">If retries are exhausted without a successful
+  charge, access to your workspace will be suspended until payment is resolved.</p>
+</div>"""

@@ -210,6 +210,15 @@ class TestStripeWebhook:
             result = await billing.stripe_webhook(request)
         assert result == {"received": True}
 
+    async def test_payment_failed_dispatches_to_handler(self):
+        """24-gap-closure Phase 7."""
+        request = await self._request_with_body(AsyncMock())
+        fake_event = {"type": "invoice.payment_failed", "id": "evt_5", "data": {"object": {"inv": 1}}}
+        with patch("stripe.Webhook.construct_event", return_value=fake_event):
+            with patch.object(billing, "_handle_payment_failed", new=AsyncMock()) as mock_handler:
+                await billing.stripe_webhook(request)
+        mock_handler.assert_awaited_once_with(request.app.state.db_pool, {"inv": 1})
+
 
 class TestCreateCustomerPortal:
     async def test_no_billing_account_returns_404(self):
@@ -313,6 +322,59 @@ class TestWebhookHandlers:
         mock_welcome.assert_awaited_once()
 
 
+class TestHandlePaymentFailed:
+    """24-gap-closure Phase 7 -- invoice.payment_failed was previously
+    entirely unhandled (fell through to the webhook's 'unhandled event
+    type' no-op branch)."""
+
+    async def test_no_workspace_found_is_a_noop(self):
+        with patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=None)):
+            with patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update:
+                await billing._handle_payment_failed(MagicMock(), {"customer": "cus_ghost"})
+        mock_update.assert_not_called()
+
+    async def test_marks_past_due_and_sends_dunning_email(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"company_name": "Acme", "contact_email": "ops@acme.com"})
+        pool = _pool_with_conn(conn)
+
+        with (
+            patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
+            patch.object(billing, "send_email", new=AsyncMock()) as mock_send,
+        ):
+            await billing._handle_payment_failed(pool, {"customer": "cus_1"})
+
+        assert mock_update.await_args.kwargs["subscription_status"] == "past_due"
+        mock_send.assert_awaited_once()
+        assert mock_send.await_args.args[0] == "ops@acme.com"
+
+    async def test_email_failure_does_not_raise(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"company_name": "Acme", "contact_email": "ops@acme.com"})
+        pool = _pool_with_conn(conn)
+
+        with (
+            patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()),
+            patch.object(billing, "send_email", new=AsyncMock(side_effect=billing.EmailError("down"))),
+        ):
+            await billing._handle_payment_failed(pool, {"customer": "cus_1"})  # must not raise
+
+    async def test_no_contact_email_skips_send(self):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"company_name": "Acme", "contact_email": None})
+        pool = _pool_with_conn(conn)
+
+        with (
+            patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()),
+            patch.object(billing, "send_email", new=AsyncMock()) as mock_send,
+        ):
+            await billing._handle_payment_failed(pool, {"customer": "cus_1"})
+        mock_send.assert_not_awaited()
+
+
 class TestSendWelcomeEmail:
     async def test_sends_when_contact_email_present(self):
         conn = AsyncMock()
@@ -368,10 +430,93 @@ class TestSendWelcomeEmail:
             "status": "active",
             "items": {"data": [{"price": {"id": "price_enterprise"}}]},
         }
-        with patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value="ws-1")):
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"product_tier": "starter"})
+        pool = _pool_with_conn(conn)
+        with patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))):
+            with patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update:
+                await billing._handle_subscription_updated(pool, subscription)
+        assert mock_update.await_args.kwargs["tier"] == "enterprise"
+        assert mock_update.await_args.kwargs["downgrade_blocked_reason"] is None
+
+    async def test_unpaid_status_maps_to_suspended(self):
+        """24-gap-closure Phase 7 -- Stripe's own 'unpaid' (retries
+        exhausted, not canceled) is this platform's 'suspended' terminal
+        state, the actual cutoff of payment failure -> past_due -> suspended."""
+        subscription = {"customer": "cus_1", "status": "unpaid"}
+        with patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))):
             with patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update:
                 await billing._handle_subscription_updated(MagicMock(), subscription)
-        assert mock_update.await_args.kwargs["tier"] == "enterprise"
+        assert mock_update.await_args.kwargs["subscription_status"] == "suspended"
+
+    async def test_downgrade_below_seat_count_is_blocked(self):
+        """24-gap-closure Phase 7 -- downgrading below the current seat
+        count must not apply the lower tier; a clear reason is recorded."""
+        subscription = {
+            "customer": "cus_1", "status": "active",
+            "items": {"data": [{"price": {"id": "price_starter"}}]},  # starter max_seats=3
+        }
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            {"product_tier": "growth"},  # current tier -- growth > starter, this IS a downgrade
+            {"n": 5},  # 5 active/invited members, over starter's cap of 3
+        ])
+        pool = _pool_with_conn(conn)
+        with (
+            patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
+            patch.object(billing, "write_audit_event", new=AsyncMock()) as mock_audit,
+        ):
+            await billing._handle_subscription_updated(pool, subscription)
+
+        kwargs = mock_update.await_args.kwargs
+        assert kwargs["tier"] is None  # NOT applied -- stays at the current (higher) tier
+        assert kwargs["downgrade_blocked_reason"] is not None
+        assert "starter" in kwargs["downgrade_blocked_reason"]
+        mock_audit.assert_awaited_once()
+        assert mock_audit.await_args.kwargs["action"] == "downgrade_blocked"
+
+    async def test_downgrade_within_seat_count_is_applied_and_clears_block(self):
+        subscription = {
+            "customer": "cus_1", "status": "active",
+            "items": {"data": [{"price": {"id": "price_starter"}}]},
+        }
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[
+            {"product_tier": "growth"},
+            {"n": 2},  # within starter's cap of 3
+        ])
+        pool = _pool_with_conn(conn)
+        with (
+            patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
+        ):
+            await billing._handle_subscription_updated(pool, subscription)
+
+        kwargs = mock_update.await_args.kwargs
+        assert kwargs["tier"] == "starter"
+        assert kwargs["downgrade_blocked_reason"] is None
+        assert kwargs["clear_downgrade_block"] is True
+
+    async def test_upgrade_never_checks_seat_count(self):
+        """An upgrade (or same-tier renewal) must not even query seat
+        counts -- only a genuine downgrade does."""
+        subscription = {
+            "customer": "cus_1", "status": "active",
+            "items": {"data": [{"price": {"id": "price_growth"}}]},
+        }
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"product_tier": "starter"})
+        pool = _pool_with_conn(conn)
+        with (
+            patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
+        ):
+            await billing._handle_subscription_updated(pool, subscription)
+
+        assert conn.fetchrow.await_count == 1  # only the current_tier lookup, no seat count query
+        assert mock_update.await_args.kwargs["tier"] == "growth"
+        assert mock_update.await_args.kwargs["clear_downgrade_block"] is True
 
     async def test_subscription_deleted_no_workspace_found_is_a_noop(self):
         with patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=None)):

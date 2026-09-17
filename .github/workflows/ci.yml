@@ -1,0 +1,96 @@
+name: CI
+
+# 24-gap-closure build, Phase 7 -- verified whether the CI/CD pipeline
+# CLAUDE.md's Phase 1 step 15 describes genuinely exists before assuming
+# it did. Two real findings, both confirmed via `gh workflow list` /
+# `gh run list` / `gh pr list` against the live repo, not guessed from
+# the YAML alone:
+#
+#   1. deploy.yml is a real file but has been workflow_dispatch-only
+#      (never auto-triggers) since 2026-08-13, by its own header
+#      comment -- it targets AWS Fargate/ECR/ECS + DASHBOARD_WEBHOOK_*
+#      secrets that were never provisioned. The real deploy path is
+#      Railway (backend) + Vercel (frontend) auto-deploy on push,
+#      entirely outside GitHub Actions. `gh run list` across dozens of
+#      pushes this session shows zero Deploy-workflow runs, confirming
+#      it has not fired even once in practice.
+#   2. code-quality-gate.yml and prompt-version-check.yml both trigger
+#      on `pull_request: branches: [main]` -- but this repo's default
+#      (and only-ever-used) branch is `master`, and `gh pr list --state
+#      all` returns zero PRs, ever. These two gates have never once
+#      fired for the same reason: nothing in this repo's actual workflow
+#      matches their trigger.
+#
+# So: no workflow in this repo actually runs tests on every push, which
+# is what "a CI pipeline" means in practice. This file is that pipeline,
+# built to match how this repo is actually used (direct push to master,
+# no PR flow) rather than a redesign of the two PR-shaped gates above --
+# fixing those to target the right branch is a smaller, separate,
+# lower-risk follow-up flagged for Kelvin rather than done blind here.
+#
+# Deliberately excludes ruff/mypy: deploy.yml's own header notes every
+# push-triggered run there failed at the ruff lint step before ever
+# reaching anything else, meaning ruff currently fails against this
+# codebase as it stands today. Adding a lint gate that starts red on
+# day one teaches everyone to ignore CI failures -- out of this phase's
+# scope to also clean up every existing lint violation just to turn the
+# gate on. Runs the same checks this whole build session's own internal
+# discipline already required before every commit: pytest, tsc --noEmit,
+# next build.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests (pytest)
+        run: pytest tests/ -q
+
+  frontend:
+    name: Frontend type check + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_MOCK_MODE: "true"

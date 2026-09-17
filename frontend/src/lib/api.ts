@@ -9,7 +9,7 @@ import type {
   ServiceNowConnectInput, WorkspaceTokenStatus, RotateWorkspaceTokenResult,
   IncidentFilters, WorkspaceMembersResponse, WorkspaceMember, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
   ExhaustedRetriesResponse, SetTokenExpiryResult, RequireMfaResult,
-  SetupChecklist, ConnectionTestResult,
+  SetupChecklist, ConnectionTestResult, LlmUsage,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -21,7 +21,7 @@ import {
   getMockWorkspaceTokenStatus, mockRotateWorkspaceToken,
   mockAssignIncident, getMockWorkspaceMembers, getMockIncidentComments, mockCreateIncidentComment,
   mockBulkIncidentAction, mockInviteMember, mockDeactivateMember, mockSetRequireMfa, mockSetTokenExpiry,
-  getMockSetupChecklist, mockRunConnectionTest, mockCleanupConnectionTest,
+  getMockSetupChecklist, mockRunConnectionTest, mockCleanupConnectionTest, getMockLlmUsage,
 } from './mock-data'
 
 export const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -296,6 +296,9 @@ export interface BillingStatus {
   tier: string
   subscription_status: string
   has_billing_account: boolean
+  // 24-gap-closure Phase 7 -- non-null only while a Stripe-side
+  // downgrade is blocked pending seat reduction.
+  downgrade_blocked_reason?: string | null
 }
 
 export async function getBillingStatus(token: string): Promise<BillingStatus> {
@@ -978,4 +981,10 @@ export async function runConnectionTest(token: string): Promise<ConnectionTestRe
 export async function cleanupConnectionTest(token: string, incidentId: string): Promise<void> {
   if (MOCK_MODE) return mockCleanupConnectionTest(incidentId)
   await request(`/workspace/setup-checklist/test/${incidentId}`, token, { method: 'DELETE' })
+}
+
+// 24-gap-closure Phase 7 -- LLM usage visibility.
+export async function getLlmUsage(token: string): Promise<LlmUsage> {
+  if (MOCK_MODE) return getMockLlmUsage()
+  return request<LlmUsage>('/workspace/llm-usage', token)
 }

@@ -452,6 +452,23 @@ export function mockCleanupConnectionTest(_incidentId: string): void {
   _mockTestPassed = true
 }
 
+// 24-gap-closure Phase 7 -- LLM usage visibility.
+export function getMockLlmUsage() {
+  const byAgent = [
+    { agent_id: 'agent_01_cicd_triage', tokens_used: 48200, cost_usd: 12.4 },
+    { agent_id: 'agent_02_k8s_alert', tokens_used: 31500, cost_usd: 8.1 },
+    { agent_id: 'agent_06_finops', tokens_used: 9800, cost_usd: 2.6 },
+  ]
+  return {
+    billing_month: new Date().toISOString().slice(0, 7),
+    total_tokens: byAgent.reduce((s, a) => s + a.tokens_used, 0),
+    total_cost_usd: byAgent.reduce((s, a) => s + a.cost_usd, 0),
+    budget_usd: 50,
+    utilization_pct: 46.2,
+    by_agent: byAgent,
+  }
+}
+
 export function mockAssignIncident(incidentId: string, memberId: string | null): Incident | null {
   const inc = getStore().find(i => i.incident_id === incidentId)
   if (!inc) return null

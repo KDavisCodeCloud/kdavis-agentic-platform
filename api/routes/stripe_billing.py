@@ -34,7 +34,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment, get_workspace_any_status
-from core.email import EmailError, send_email, welcome_email_html
+from core.audit import write_audit_event
+from core.compliance import WorkspaceComplianceGuard
+from core.email import EmailError, payment_failed_dunning_html, send_email, welcome_email_html
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -117,6 +119,9 @@ class BillingStatusResponse(BaseModel):
     tier: str
     subscription_status: str
     has_billing_account: bool
+    # 24-gap-closure Phase 7 -- non-None only while a Stripe-side
+    # downgrade is blocked pending seat reduction. See migration 047.
+    downgrade_blocked_reason: str | None = None
 
 
 # ── Database helpers ──────────────────────────────────────────────────────────
@@ -128,10 +133,17 @@ async def _update_workspace_billing(
     stripe_customer_id: Optional[str] = None,
     tier: Optional[str] = None,
     subscription_status: Optional[str] = None,
+    downgrade_blocked_reason: Optional[str] = None,
+    clear_downgrade_block: bool = False,
 ) -> None:
     """
     Update billing-related fields on a workspace row.
     Only non-None kwargs are written so callers can update subsets of fields.
+
+    downgrade_blocked_reason/clear_downgrade_block: 24-gap-closure Phase 7.
+    Separate from the tier/status "only if not None" convention above
+    since clearing a TEXT column to NULL needs its own explicit signal
+    (clear_downgrade_block=True), not just "was None passed."
     """
     sets: list[str] = []
     params: list = []
@@ -149,6 +161,12 @@ async def _update_workspace_billing(
         sets.append(f"stripe_subscription_status = ${i}")
         params.append(subscription_status)
         i += 1
+    if downgrade_blocked_reason is not None:
+        sets.append(f"downgrade_blocked_reason = ${i}")
+        params.append(downgrade_blocked_reason)
+        i += 1
+    elif clear_downgrade_block:
+        sets.append("downgrade_blocked_reason = NULL")
 
     if not sets:
         return
@@ -266,8 +284,20 @@ async def stripe_webhook(request: Request) -> dict:
 
     Handles:
       checkout.session.completed      — activates workspace tier
-      customer.subscription.updated   — reflects tier/status changes
+      customer.subscription.updated   — reflects tier/status changes;
+                                         blocks a downgrade that would
+                                         drop below the new tier's seat
+                                         cap (Phase 7); maps Stripe's
+                                         'unpaid' to this platform's own
+                                         'suspended' terminal state
       customer.subscription.deleted   — marks workspace as canceled (data preserved)
+      invoice.payment_failed          — marks 'past_due' + sends a
+                                         dunning email (Phase 7). Stripe
+                                         runs its own retry schedule
+                                         (Smart Retries, configured in
+                                         the Stripe Dashboard) -- this
+                                         handler does not duplicate that,
+                                         only reflects status and notifies.
     """
     # Read raw bytes BEFORE any JSON parsing — required for signature verification
     payload = await request.body()
@@ -309,6 +339,9 @@ async def stripe_webhook(request: Request) -> dict:
 
     elif event_type == "customer.subscription.deleted":
         await _handle_subscription_deleted(db, event["data"]["object"])
+
+    elif event_type == "invoice.payment_failed":
+        await _handle_payment_failed(db, event["data"]["object"])
 
     else:
         log.debug("[Billing] Unhandled event type: %s", event_type)
@@ -376,6 +409,7 @@ async def billing_status(
         tier=workspace.get("product_tier", "starter"),
         subscription_status=workspace.get("stripe_subscription_status", "trialing"),
         has_billing_account=bool(workspace.get("stripe_customer_id")),
+        downgrade_blocked_reason=workspace.get("downgrade_blocked_reason"),
     )
 
 
@@ -432,6 +466,9 @@ async def _send_welcome_email(db_pool, workspace_id: str) -> None:
         log.warning("[Billing] Welcome email failed for workspace=%s: %s", workspace_id, exc)
 
 
+_TIER_RANK = {"starter": 0, "growth": 1, "enterprise": 2}
+
+
 async def _handle_subscription_updated(db_pool, subscription: dict) -> None:
     """
     customer.subscription.updated — tier change, renewal, or status change.
@@ -439,9 +476,26 @@ async def _handle_subscription_updated(db_pool, subscription: dict) -> None:
     Maps the active price ID back to a tier name. If the price ID is
     unrecognized (e.g. a promotional one-off), we preserve the existing
     tier and only update the status.
+
+    24-gap-closure Phase 7:
+    - Stripe's own 'unpaid' status (its retry schedule exhausted without
+      a successful charge, subscription not canceled) maps to this
+      platform's own 'suspended' terminal state -- the actual cutoff at
+      the end of the "payment failure -> past_due -> suspended" chain.
+    - A downgrade (new tier's rank below the current one) is BLOCKED in
+      our system if the workspace's current active+invited member count
+      exceeds the new tier's seat cap: the tier change is not applied
+      (product_tier stays at its current, higher value) and
+      downgrade_blocked_reason is set so GET /billing/status surfaces a
+      clear reason. Note this only blocks what OUR system serves --
+      Stripe's own subscription record still reflects the lower price;
+      programmatically reverting the Stripe subscription itself is a
+      separate, real financial action not taken here (flagged as a
+      follow-up, not silently assumed safe to automate).
     """
-    customer_id = subscription.get("customer")
-    new_status  = subscription.get("status", "active")
+    customer_id   = subscription.get("customer")
+    stripe_status = subscription.get("status", "active")
+    new_status    = "suspended" if stripe_status == "unpaid" else stripe_status
 
     workspace_id = await _workspace_id_for_customer(db_pool, customer_id)
     if not workspace_id:
@@ -462,12 +516,55 @@ async def _handle_subscription_updated(db_pool, subscription: dict) -> None:
                     price_id, customer_id,
                 )
 
+    downgrade_blocked_reason: Optional[str] = None
+    clear_block = False
+
+    if tier is not None:
+        async with db_pool.acquire() as conn:
+            current_row = await conn.fetchrow(
+                "SELECT product_tier FROM workspaces WHERE id = $1", UUID(workspace_id),
+            )
+            current_tier = (current_row["product_tier"] if current_row else None) or "starter"
+
+            if _TIER_RANK.get(tier, 0) < _TIER_RANK.get(current_tier, 0):
+                new_max_seats = WorkspaceComplianceGuard.TIER_LIMITS.get(
+                    tier, WorkspaceComplianceGuard.TIER_LIMITS["starter"]
+                )["max_seats"]
+                if new_max_seats != -1:
+                    seat_row = await conn.fetchrow(
+                        "SELECT COUNT(*) AS n FROM workspace_members "
+                        "WHERE workspace_id = $1 AND status IN ('invited', 'active')",
+                        UUID(workspace_id),
+                    )
+                    if seat_row["n"] > new_max_seats:
+                        downgrade_blocked_reason = (
+                            f"Downgrade to '{tier}' blocked: {seat_row['n']} active/invited "
+                            f"members exceed the {new_max_seats}-seat cap for that tier. "
+                            f"Remove members first, then downgrade again from the billing portal."
+                        )
+                        tier = None  # keep serving at the current (higher) tier
+                    else:
+                        clear_block = True
+            else:
+                clear_block = True
+
     await _update_workspace_billing(
         db_pool,
         workspace_id,
         tier=tier,  # None = no change; non-None = update
         subscription_status=new_status,
+        downgrade_blocked_reason=downgrade_blocked_reason,
+        clear_downgrade_block=clear_block,
     )
+
+    if downgrade_blocked_reason:
+        log.warning("[Billing] Workspace %s: %s", workspace_id, downgrade_blocked_reason)
+        await write_audit_event(
+            workspace_id=workspace_id,
+            action="downgrade_blocked",
+            status="blocked",
+            metadata={"reason": downgrade_blocked_reason},
+        )
 
 
 async def _handle_subscription_deleted(db_pool, subscription: dict) -> None:
@@ -487,3 +584,42 @@ async def _handle_subscription_deleted(db_pool, subscription: dict) -> None:
         subscription_status="canceled",
     )
     log.info("[Billing] Workspace %s subscription canceled — all data preserved", workspace_id[:8])
+
+
+async def _handle_payment_failed(db_pool, invoice: dict) -> None:
+    """
+    invoice.payment_failed — 24-gap-closure Phase 7. First real signal
+    that a charge failed, generally arriving before (or without ever
+    being followed by) a customer.subscription.updated status change --
+    Stripe's Smart Retries can keep a subscription 'active' through
+    several failed attempts before it ever flips to 'past_due'. Marks
+    'past_due' immediately here rather than waiting on that, and sends
+    one dunning email per failed invoice (Stripe already dedups its own
+    retry cadence -- this fires once per actual failed charge attempt,
+    not on a separate schedule of its own).
+    """
+    customer_id  = invoice.get("customer")
+    workspace_id = await _workspace_id_for_customer(db_pool, customer_id)
+    if not workspace_id:
+        log.warning("[Billing] payment_failed: no workspace for customer %s", customer_id)
+        return
+
+    await _update_workspace_billing(db_pool, workspace_id, subscription_status="past_due")
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT company_name, contact_email FROM workspaces WHERE id = $1", UUID(workspace_id),
+        )
+    if row and row["contact_email"]:
+        try:
+            await send_email(
+                row["contact_email"],
+                "Cloud Decoded — your payment failed",
+                payment_failed_dunning_html(row["company_name"]),
+            )
+        except EmailError as exc:
+            log.warning("[Billing] Dunning email failed for workspace=%s: %s", workspace_id, exc)
+    else:
+        log.warning("[Billing] Workspace %s has no contact_email -- dunning email not sent", workspace_id)
+
+    log.info("[Billing] Workspace %s marked past_due after failed payment", workspace_id[:8])
