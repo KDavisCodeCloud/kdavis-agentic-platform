@@ -34,13 +34,13 @@ def _no_rate_limit():
     limiter.enabled = original
 
 
-def _make_request(conn) -> SimpleNamespace:
+def _make_request(conn, headers: dict | None = None) -> SimpleNamespace:
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)
     pool_ctx.__aexit__ = AsyncMock(return_value=False)
     pool = MagicMock()
     pool.acquire = MagicMock(return_value=pool_ctx)
-    return SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
+    return SimpleNamespace(headers=headers or {}, app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
 
 
 def _token_workspace(workspace_id):
@@ -405,11 +405,17 @@ class TestDeactivateMember:
         assert exc.value.status_code == 400
 
 
+def _bearer_headers_with_aal(aal: str) -> dict:
+    import jose.jwt as jose_jwt
+    token = jose_jwt.encode({"aal": aal}, "unused-secret", algorithm="HS256")
+    return {"Authorization": f"Bearer {token}"}
+
+
 class TestSetRequireMfa:
-    async def test_admin_enterprise_can_enable(self):
+    async def test_admin_enterprise_with_aal2_can_enable(self):
         workspace_id = uuid4()
         conn = AsyncMock()
-        request = _make_request(conn)
+        request = _make_request(conn, headers=_bearer_headers_with_aal("aal2"))
         workspace = _member_workspace(workspace_id, "admin")
         workspace["product_tier"] = "enterprise"
 
@@ -419,10 +425,36 @@ class TestSetRequireMfa:
         assert result.require_mfa is True
         conn.execute.assert_awaited_once()
 
+    async def test_enabling_without_own_aal2_session_rejected(self):
+        """Self-lockout guard: an admin who hasn't stepped up their own
+        session to aal2 (no verified factor enrolled/used yet) must not
+        be able to flip this on and lock themselves out on their next request."""
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn, headers=_bearer_headers_with_aal("aal1"))
+        workspace = _member_workspace(workspace_id, "admin")
+        workspace["product_tier"] = "enterprise"
+
+        with pytest.raises(HTTPException) as exc:
+            await wm.set_require_mfa(wm.RequireMfaRequest(require_mfa=True), request, workspace=workspace)
+        assert exc.value.status_code == 400
+        conn.execute.assert_not_awaited()
+
+    async def test_disabling_never_requires_aal2(self):
+        workspace_id = uuid4()
+        conn = AsyncMock()
+        request = _make_request(conn)  # no Authorization header at all
+        workspace = _member_workspace(workspace_id, "admin")
+        workspace["product_tier"] = "enterprise"
+
+        with patch("api.routes.workspace_members.write_audit_event", new=AsyncMock()):
+            result = await wm.set_require_mfa(wm.RequireMfaRequest(require_mfa=False), request, workspace=workspace)
+        assert result.require_mfa is False
+
     async def test_non_enterprise_rejected(self):
         workspace_id = uuid4()
         conn = AsyncMock()
-        request = _make_request(conn)
+        request = _make_request(conn, headers=_bearer_headers_with_aal("aal2"))
         workspace = _member_workspace(workspace_id, "admin")
         workspace["product_tier"] = "starter"
 
@@ -433,7 +465,7 @@ class TestSetRequireMfa:
     async def test_non_admin_rejected(self):
         workspace_id = uuid4()
         conn = AsyncMock()
-        request = _make_request(conn)
+        request = _make_request(conn, headers=_bearer_headers_with_aal("aal2"))
         workspace = _member_workspace(workspace_id, "viewer")
         workspace["product_tier"] = "enterprise"
 

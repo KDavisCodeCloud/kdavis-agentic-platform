@@ -436,11 +436,38 @@ async def set_require_mfa(
     (core/compliance.py's TIER_LIMITS). Admin-gated same as invite/deactivate.
     Enforcement itself lives in api/middleware/auth.py's get_workspace_member,
     not here -- this endpoint only flips the switch.
+
+    Self-lockout guard on turning it ON: enforcement checks the CALLER's
+    own session aal against the DB value at request time, so an admin
+    who has never enrolled a TOTP factor could flip this on and be
+    rejected by their own very next request with no way back in (no
+    other admin session, no factor to step up with). Require the caller
+    to already be sitting on a verified aal2 session (this call's own
+    Bearer token) before the switch is allowed to flip on -- proves a
+    verified factor exists and this admin has already stepped up with
+    it. Turning it OFF is never blocked.
     """
     if not _caller_is_authorized_to_invite(workspace):
         raise HTTPException(status_code=403, detail="Only a workspace admin can change this setting")
     if (workspace.get("product_tier") or "starter") != "enterprise":
         raise HTTPException(status_code=403, detail="Requiring MFA workspace-wide is an Enterprise feature")
+
+    if body.require_mfa:
+        auth_header = request.headers.get("Authorization", "")
+        caller_token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+        aal = None
+        if caller_token:
+            try:
+                from jose import jwt as _jose_jwt
+                aal = _jose_jwt.get_unverified_claims(caller_token).get("aal")
+            except Exception:
+                aal = None
+        if aal != "aal2":
+            raise HTTPException(
+                status_code=400,
+                detail="Enroll and verify two-factor authentication on your own account first, "
+                       "then turn this on -- otherwise your next request would lock you out.",
+            )
 
     db = request.app.state.db_pool
     async with db.acquire() as conn:
