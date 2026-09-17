@@ -64,11 +64,11 @@ name: CI
 # it just stops a gate this phase built from crying wolf about issues
 # that predate it and aren't this phase's to fix.
 #
-# `npm install`, not `npm ci`, below: frontend/package-lock.json is
-# gitignored (.gitignore:30) -- a real, separate finding flagged for
-# Kelvin (it means npm install isn't actually reproducible for anyone
-# cloning this repo fresh, CI included) but not this phase's call to
-# reverse by force-committing a lockfile that was deliberately excluded.
+# frontend/package-lock.json was gitignored when this workflow first
+# ran (see the npm-install-not-npm-ci workaround this comment used to
+# describe) -- Kelvin's decision 2026-09-17 (item 5) reversed that:
+# the real lockfile is now committed, so `npm ci` below uses it for
+# real, reproducible installs instead of the `npm install` workaround.
 
 on:
   push:
@@ -121,15 +121,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          # cache: npm removed -- actions/setup-node's cache-dependency-path
-          # resolution failed against frontend/package-lock.json in this
-          # workflow's own first real run ("Some specified paths were not
-          # resolved, unable to cache dependencies"); not worth debugging
-          # further for a build-speed optimization that isn't required for
-          # correctness.
+          # cache: npm re-enabled 2026-09-17 -- the original failure
+          # ("Some specified paths were not resolved") was because
+          # frontend/package-lock.json didn't exist in the checked-out
+          # repo at all (it was gitignored); now that it's committed
+          # (Kelvin's item 5) this should resolve for real. Verified by
+          # actually running the workflow again, not assumed.
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Type check
         run: npx tsc --noEmit

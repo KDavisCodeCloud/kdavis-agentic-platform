@@ -95,7 +95,25 @@ service-account token scoped to what the enabled agents need.
 
 **Authentication for the product itself:** a workspace token
 (Starter/Growth) or, for Enterprise, real OAuth 2.1 via Supabase Auth
-with per-user scoped access instead of one shared token.
+with per-user scoped access instead of one shared token. Member accounts
+(Growth+) also support TOTP two-factor authentication, optionally
+required workspace-wide as an Enterprise setting.
+
+**Protection against credential-stuffing / brute-force login attempts
+(24-gap-closure Phase 7 decision, 2026-09-17):** member sign-in,
+signup, and password-reset all call Supabase Auth directly from the
+browser — they never pass through Cloud Decoded's own backend, so
+application-layer rate limiting cannot sit in front of them without
+first proxying every auth call through this backend (a real
+architecture change, deliberately not made). Abuse protection on these
+paths is Supabase's own native, platform-level rate limiting, not a
+custom control this product layers on top. This is a settled decision,
+not a gap awaiting a fix — confirm Supabase's dashboard rate-limit
+settings are configured as expected before representing this control to
+a customer, since that configuration lives outside this codebase.
+Endpoints that do run through this backend (workspace creation, member
+invites, invite acceptance) are rate-limited in application code, in
+addition to whatever Supabase enforces on top.
 
 ## Execution model & human oversight
 

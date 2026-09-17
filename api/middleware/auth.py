@@ -46,7 +46,7 @@ _WORKSPACE_SELECT_COLUMNS = (
     "azure_devops_pat_verified_at, k8s_verified_at, "
     "workspace_token_last4, workspace_token_rotated_at, "
     "workspace_token_last_used_at, workspace_token_expires_at, require_mfa, "
-    "previous_workspace_token_expires_at, downgrade_blocked_reason"
+    "previous_workspace_token_expires_at, downgrade_blocked_reason, contact_email"
 )
 
 # 24-gap-closure Phase 4 -- fire-and-forget: a token-authenticated request

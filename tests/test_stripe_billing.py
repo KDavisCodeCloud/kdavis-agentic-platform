@@ -437,7 +437,7 @@ class TestSendWelcomeEmail:
             with patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update:
                 await billing._handle_subscription_updated(pool, subscription)
         assert mock_update.await_args.kwargs["tier"] == "enterprise"
-        assert mock_update.await_args.kwargs["downgrade_blocked_reason"] is None
+        assert mock_update.await_args.kwargs.get("downgrade_blocked_reason") is None
 
     async def test_unpaid_status_maps_to_suspended(self):
         """24-gap-closure Phase 7 -- Stripe's own 'unpaid' (retries
@@ -449,54 +449,108 @@ class TestSendWelcomeEmail:
                 await billing._handle_subscription_updated(MagicMock(), subscription)
         assert mock_update.await_args.kwargs["subscription_status"] == "suspended"
 
-    async def test_downgrade_below_seat_count_is_blocked(self):
-        """24-gap-closure Phase 7 -- downgrading below the current seat
-        count must not apply the lower tier; a clear reason is recorded."""
+    async def test_downgrade_over_seat_cap_deactivates_newest_members_and_emails_admin(self):
+        """Kelvin's item 3, 2026-09-17 -- replaces the old hard block.
+        The downgrade is applied; the most-recently-added members over
+        the new cap are deactivated (core/member_deactivation.py) and
+        one email lists exactly who."""
+        from datetime import datetime, timezone
         subscription = {
             "customer": "cus_1", "status": "active",
             "items": {"data": [{"price": {"id": "price_starter"}}]},  # starter max_seats=3
         }
+        member_ids = [uuid4() for _ in range(5)]
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(side_effect=[
             {"product_tier": "growth"},  # current tier -- growth > starter, this IS a downgrade
-            {"n": 5},  # 5 active/invited members, over starter's cap of 3
+            # Contact lookup for the notification email, queried after deactivation.
+            {"company_name": "Acme", "contact_email": "ops@acme.com"},
+        ])
+        # 5 members, newest first (ORDER BY created_at DESC) -- the 2 over
+        # starter's 3-seat cap are member_ids[0] and member_ids[1] (the newest).
+        conn.fetch = AsyncMock(return_value=[
+            {"id": member_ids[0], "email": "newest@acme.com"},
+            {"id": member_ids[1], "email": "second-newest@acme.com"},
+            {"id": member_ids[2], "email": "kept1@acme.com"},
+            {"id": member_ids[3], "email": "kept2@acme.com"},
+            {"id": member_ids[4], "email": "kept3@acme.com"},
         ])
         pool = _pool_with_conn(conn)
+
         with (
             patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
             patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
-            patch.object(billing, "write_audit_event", new=AsyncMock()) as mock_audit,
+            patch.object(billing, "deactivate_member_row", new=AsyncMock()) as mock_deactivate,
+            patch.object(billing, "send_email", new=AsyncMock()) as mock_send,
         ):
             await billing._handle_subscription_updated(pool, subscription)
 
+        # Downgrade is APPLIED, not blocked.
         kwargs = mock_update.await_args.kwargs
-        assert kwargs["tier"] is None  # NOT applied -- stays at the current (higher) tier
-        assert kwargs["downgrade_blocked_reason"] is not None
-        assert "starter" in kwargs["downgrade_blocked_reason"]
-        mock_audit.assert_awaited_once()
-        assert mock_audit.await_args.kwargs["action"] == "downgrade_blocked"
+        assert kwargs["tier"] == "starter"
+        assert kwargs["clear_downgrade_block"] is True
 
-    async def test_downgrade_within_seat_count_is_applied_and_clears_block(self):
+        # Exactly the 2 newest members were deactivated, not the 3 oldest.
+        assert mock_deactivate.await_count == 2
+        deactivated_ids = {c.args[2] for c in mock_deactivate.await_args_list}
+        assert deactivated_ids == {member_ids[0], member_ids[1]}
+        for call in mock_deactivate.await_args_list:
+            assert call.kwargs["action"] == "member_deactivated_downgrade"
+
+        # One email, naming exactly those two.
+        mock_send.assert_awaited_once()
+        assert mock_send.await_args.args[0] == "ops@acme.com"
+
+    async def test_downgrade_within_seat_count_deactivates_nobody(self):
         subscription = {
             "customer": "cus_1", "status": "active",
             "items": {"data": [{"price": {"id": "price_starter"}}]},
         }
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(side_effect=[
-            {"product_tier": "growth"},
-            {"n": 2},  # within starter's cap of 3
-        ])
+        conn.fetchrow = AsyncMock(return_value={"product_tier": "growth"})
+        conn.fetch = AsyncMock(return_value=[
+            {"id": uuid4(), "email": "a@acme.com"},
+            {"id": uuid4(), "email": "b@acme.com"},
+        ])  # 2 members, within starter's cap of 3
         pool = _pool_with_conn(conn)
         with (
             patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
             patch.object(billing, "_update_workspace_billing", new=AsyncMock()) as mock_update,
+            patch.object(billing, "deactivate_member_row", new=AsyncMock()) as mock_deactivate,
+            patch.object(billing, "send_email", new=AsyncMock()) as mock_send,
         ):
             await billing._handle_subscription_updated(pool, subscription)
 
         kwargs = mock_update.await_args.kwargs
         assert kwargs["tier"] == "starter"
-        assert kwargs["downgrade_blocked_reason"] is None
         assert kwargs["clear_downgrade_block"] is True
+        mock_deactivate.assert_not_awaited()
+        mock_send.assert_not_awaited()
+
+    async def test_stripe_subscription_itself_is_never_modified_on_downgrade(self):
+        """Explicit regression guard for the constraint carried over from
+        the old block: this handler must never call the Stripe API to
+        change the subscription -- only read the event payload it was
+        already given."""
+        subscription = {
+            "customer": "cus_1", "status": "active",
+            "items": {"data": [{"price": {"id": "price_starter"}}]},
+        }
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[{"product_tier": "growth"}, {"company_name": "Acme", "contact_email": None}])
+        conn.fetch = AsyncMock(return_value=[
+            {"id": uuid4(), "email": "a@acme.com"}, {"id": uuid4(), "email": "b@acme.com"},
+            {"id": uuid4(), "email": "c@acme.com"}, {"id": uuid4(), "email": "d@acme.com"},
+        ])
+        pool = _pool_with_conn(conn)
+        with (
+            patch.object(billing, "_workspace_id_for_customer", new=AsyncMock(return_value=str(uuid4()))),
+            patch.object(billing, "_update_workspace_billing", new=AsyncMock()),
+            patch.object(billing, "deactivate_member_row", new=AsyncMock()),
+            patch("stripe.Subscription.modify") as mock_modify,
+        ):
+            await billing._handle_subscription_updated(pool, subscription)
+        mock_modify.assert_not_called()
 
     async def test_upgrade_never_checks_seat_count(self):
         """An upgrade (or same-tier renewal) must not even query seat

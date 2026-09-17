@@ -313,6 +313,17 @@ class TestGetConnectionsStatus:
         assert result.azure_devops_connected is True
         assert result.k8s_connected is True
 
+    async def test_has_contact_email_reflects_column_presence(self):
+        """Kelvin's item 7, 2026-09-17."""
+        result = await wc_routes.get_connections_status(workspace={"id": uuid4(), "contact_email": "ops@acme.com"})
+        assert result.has_contact_email is True
+
+        result = await wc_routes.get_connections_status(workspace={"id": uuid4(), "contact_email": None})
+        assert result.has_contact_email is False
+
+        result = await wc_routes.get_connections_status(workspace={"id": uuid4()})
+        assert result.has_contact_email is False
+
     async def test_github_app_installation_also_counts_as_connected(self):
         # github_connected must reflect an App-based connection too, not just
         # a legacy PAT's github_pat_verified_at -- a workspace that connected

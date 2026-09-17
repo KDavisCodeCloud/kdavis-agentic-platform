@@ -30,7 +30,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from api.middleware.auth import _hash_token, get_workspace
+from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
 from api.middleware.rate_limiter import limiter
 from security.encryption import encrypt
 
@@ -90,6 +90,22 @@ class SaveLlmKeyRequest(BaseModel):
 
 class SaveLlmKeyResponse(BaseModel):
     status: str = "ok"
+
+
+class SetContactEmailRequest(BaseModel):
+    contact_email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("contact_email")
+    @classmethod
+    def _valid_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL_RE.match(v):
+            raise ValueError("contact_email is not a valid email address")
+        return v
+
+
+class SetContactEmailResponse(BaseModel):
+    contact_email: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -154,3 +170,37 @@ async def save_llm_key(
     log.info("[Workspaces] Stored BYOK key workspace=%s provider=%s", workspace_id, body.provider)
 
     return SaveLlmKeyResponse()
+
+
+@router.patch("/contact-email", response_model=SetContactEmailResponse)
+async def set_contact_email(
+    body: SetContactEmailRequest,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member),
+) -> SetContactEmailResponse:
+    """
+    Kelvin's item 7 (2026-09-17): most workspaces get contact_email at
+    self-serve signup (required there, CreateWorkspaceRequest above), but
+    an Enterprise workspace created via the admin/MCP-invite path
+    (api/routes/internal_workspaces.py) can have it NULL -- that gap is
+    what the dashboard's non-dismissible banner exists to close. Lets
+    whoever can see that banner fix it themselves rather than needing an
+    internal admin to do it for them.
+
+    Admin-gated same convention as every other workspace-settings
+    endpoint (member_role None == token-authenticated bootstrap path,
+    always permitted; a member session needs role 'admin').
+    """
+    member_role = workspace.get("member_role")
+    if member_role is not None and member_role != "admin":
+        raise HTTPException(status_code=403, detail="Only a workspace admin can set the contact email")
+
+    workspace_id = workspace["id"]
+    async with request.app.state.db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE workspaces SET contact_email = $1, updated_at = NOW() WHERE id = $2",
+            body.contact_email, workspace_id,
+        )
+
+    log.info("[Workspaces] contact_email set workspace=%s", workspace_id)
+    return SetContactEmailResponse(contact_email=body.contact_email)

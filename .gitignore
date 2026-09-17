@@ -27,7 +27,13 @@ node_modules/
 .next/
 *.tsbuildinfo
 next-env.d.ts
-package-lock.json
+# frontend/package-lock.json is deliberately tracked (2026-09-17,
+# Kelvin's item 5, 24-gap-closure build) so `npm ci` is reproducible for
+# CI and for anyone cloning this repo fresh -- it was blanket-ignored
+# before, which is what made ci.yml's first real run fail. team-dashboard
+# stays ignored; nobody asked to commit that one and empire-dashboard's
+# lockfile was already tracked before this rule existed.
+/team-dashboard/package-lock.json
 
 # OS
 .DS_Store

@@ -165,3 +165,56 @@ class TestSaveLlmKey:
 
         assert exc.value.status_code == 400
         conn.execute.assert_not_called()
+
+
+class TestSetContactEmail:
+    """Kelvin's item 7, 2026-09-17 -- lets a workspace missing
+    contact_email (possible via the admin/MCP-invite path, unlike
+    self-serve signup where it's required) fix it themselves."""
+
+    async def test_token_authenticated_caller_can_set(self):
+        workspace_id = uuid4()
+        request, conn = _make_app_with_db()
+        fake_workspace = {"id": workspace_id}  # no member_role key -- token path
+
+        result = await workspaces.set_contact_email(
+            workspaces.SetContactEmailRequest(contact_email="ops@acme.com"),
+            request,
+            workspace=fake_workspace,
+        )
+
+        assert result.contact_email == "ops@acme.com"
+        sql, email, bound_workspace_id = conn.execute.await_args.args
+        assert "UPDATE workspaces" in sql
+        assert "contact_email" in sql
+        assert email == "ops@acme.com"
+        assert bound_workspace_id == workspace_id
+
+    async def test_admin_member_can_set(self):
+        workspace_id = uuid4()
+        request, conn = _make_app_with_db()
+        fake_workspace = {"id": workspace_id, "member_role": "admin"}
+
+        result = await workspaces.set_contact_email(
+            workspaces.SetContactEmailRequest(contact_email="ops@acme.com"),
+            request,
+            workspace=fake_workspace,
+        )
+        assert result.contact_email == "ops@acme.com"
+
+    async def test_non_admin_member_rejected(self):
+        request, conn = _make_app_with_db()
+        fake_workspace = {"id": uuid4(), "member_role": "viewer"}
+
+        with pytest.raises(HTTPException) as exc:
+            await workspaces.set_contact_email(
+                workspaces.SetContactEmailRequest(contact_email="ops@acme.com"),
+                request,
+                workspace=fake_workspace,
+            )
+        assert exc.value.status_code == 403
+        conn.execute.assert_not_called()
+
+    async def test_invalid_email_rejected_at_model_level(self):
+        with pytest.raises(ValueError):
+            workspaces.SetContactEmailRequest(contact_email="not-an-email")

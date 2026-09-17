@@ -342,7 +342,7 @@ class TestDeactivateMember:
         )
         request = _make_request(conn)
 
-        with patch("api.routes.workspace_members.write_audit_event", new=AsyncMock()) as mock_audit:
+        with patch("core.member_deactivation.write_audit_event", new=AsyncMock()) as mock_audit:
             result = await wm.deactivate_member(
                 str(member_id), request, workspace=_member_workspace(workspace_id, "admin"),
             )

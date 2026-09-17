@@ -14,6 +14,8 @@ import { ConnectionsPanel } from '@/components/ConnectionsPanel'
 import { MembersPanel } from '@/components/MembersPanel'
 import { SetupChecklistCard } from '@/components/SetupChecklistCard'
 import { LlmUsagePanel } from '@/components/LlmUsagePanel'
+import { PastDueBanner } from '@/components/PastDueBanner'
+import { ContactEmailBanner } from '@/components/ContactEmailBanner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getBillingStatus } from '@/lib/api'
@@ -397,6 +399,8 @@ export default function DashboardPage() {
         </div>
       )}
 
+      <PastDueBanner token={token} />
+      <ContactEmailBanner token={token} />
       <SetupChecklistCard token={token} />
 
       {/* Main content */}

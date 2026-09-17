@@ -3151,6 +3151,13 @@ corrected here since it no longer reflects reality. Full detail lives in
 `CLOUD_DECODED_AUDIT_2026-09-12.md` (this repo's root) and the live audit
 artifact; this is a summary pointer, not a duplicate record.
 
+**Org layer — locked decision (2026-09-17), not yet built:** when a
+multi-workspace org layer is eventually built, organizations are
+identity/grouping only — billing stays strictly per-workspace,
+permanently. Do not re-litigate this; full detail and the concrete
+schema/scope it implies live in `CloudDecoded-Build-Order.md`'s "Org
+Layer — LOCKED DECISION" section.
+
 Phase: Live in production (Phase 1 foundation + Cloud Decoded product
 build, not the theoretical Phase 1-5 sequence outlined earlier in this
 file — that sequencing was superseded by building Cloud Decoded directly

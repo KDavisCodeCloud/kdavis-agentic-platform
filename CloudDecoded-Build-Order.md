@@ -87,6 +87,42 @@ A HITL agentic DevOps automation platform targeting mid-market platform engineer
 
 ---
 
+## Org Layer — LOCKED DECISION, not yet built (2026-09-17)
+
+Surfaced during the 24-gap-closure build's Phase 8 scoping (design-only,
+explicitly not built that session — see that run's final report).
+Kelvin made the following call explicitly; a future session should
+inherit it, not re-litigate it:
+
+**Organizations are identity/grouping only. Billing stays strictly
+per-workspace, permanently — not just for a first version.**
+
+Concretely, when this gets built:
+- Relax `workspace_members.supabase_user_id`'s `UNIQUE` constraint
+  (migration 033) so one Supabase user can belong to multiple
+  workspaces — today it's a hard 1:1, and every member-session auth
+  path (`api/middleware/auth.py`'s `get_workspace_member`) assumes
+  exactly one row per user.
+- New `organizations` table above `workspaces`.
+- A workspace switcher in the dashboard nav.
+- An org-level member list (an aggregate view across a member's
+  workspaces, not a new source of truth for role/permissions).
+
+**Explicitly NOT in scope, ever, per this decision**: no billing, tier,
+or seat-cap logic moves to the org level. Every workspace keeps its own
+Stripe subscription, its own tier, its own seat cap — exactly as built
+through Phase 7 of the 24-gap-closure run (downgrade enforcement,
+credential-expiry, MFA-required, rate limits — all workspace-scoped, all
+staying that way). An org is a grouping/identity layer sitting above
+workspaces that otherwise remain fully independent billing units.
+
+This resolves what the Phase 8 scoping flagged as the single biggest
+open question (whether an org becomes the billing unit) — it does not.
+Don't build shared-billing org logic later without a new, explicit
+decision to reverse this one.
+
+---
+
 ## Build Order — Remaining
 
 ### Priority 2 — done 2026-09-14 (Phases 8-9, same connectivity session)

@@ -53,6 +53,7 @@ from api.middleware.auth import get_workspace_or_member
 from api.middleware.rate_limiter import limiter
 from core.audit import write_audit_event
 from core.compliance import SubscriptionError, WorkspaceComplianceGuard
+from core.member_deactivation import deactivate_member_row
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/workspace-members", tags=["workspace-members"])
@@ -382,36 +383,7 @@ async def deactivate_member(
         if row["status"] == "deactivated":
             raise HTTPException(status_code=409, detail="Member is already deactivated")
 
-        async with conn.transaction():
-            updated = await conn.fetchrow(
-                """
-                UPDATE workspace_members
-                SET status = 'deactivated', deactivated_at = NOW()
-                WHERE id = $1
-                RETURNING id, email, role, status, invited_at, joined_at
-                """,
-                member_uuid,
-            )
-            reassigned = await conn.execute(
-                "UPDATE incidents SET assigned_to = NULL WHERE assigned_to = $1",
-                member_uuid,
-            )
-
-    await write_audit_event(
-        workspace_id=str(workspace["id"]),
-        action="member_deactivated",
-        status="success",
-        metadata={
-            "member_id": member_id,
-            "member_email": row["email"],
-            "incidents_unassigned": reassigned,
-        },
-    )
-
-    log.info(
-        "[WorkspaceMembers] Deactivated member=%s email=%s workspace=%s",
-        member_id, row["email"], workspace["id"],
-    )
+        updated = await deactivate_member_row(conn, workspace["id"], member_uuid, row["email"])
 
     return MemberResponse(
         id=str(updated["id"]),

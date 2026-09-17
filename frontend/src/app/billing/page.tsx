@@ -197,11 +197,6 @@ function BillingContent() {
                       Your last payment failed. Update your payment method to avoid losing access.
                     </p>
                   )}
-                  {status.downgrade_blocked_reason && (
-                    <p className="mb-4 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
-                      {status.downgrade_blocked_reason}
-                    </p>
-                  )}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm text-zinc-400">
                       <CreditCard className="h-4 w-4" />

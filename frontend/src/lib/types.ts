@@ -308,6 +308,8 @@ export interface ConnectionsStatus {
   // 24-gap-closure Phase 4
   product_tier?: string | null
   require_mfa?: boolean
+  // 24-gap-closure Phase 7 follow-up, item 7 (2026-09-17)
+  has_contact_email?: boolean
 }
 
 // Onboarding completeness build, item 4. last4/rotated_at are display

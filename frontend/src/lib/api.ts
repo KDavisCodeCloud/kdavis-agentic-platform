@@ -22,6 +22,7 @@ import {
   mockAssignIncident, getMockWorkspaceMembers, getMockIncidentComments, mockCreateIncidentComment,
   mockBulkIncidentAction, mockInviteMember, mockDeactivateMember, mockSetRequireMfa, mockSetTokenExpiry,
   getMockSetupChecklist, mockRunConnectionTest, mockCleanupConnectionTest, getMockLlmUsage,
+  mockSetContactEmail,
 } from './mock-data'
 
 export const API_URL  = process.env.NEXT_PUBLIC_API_URL  || 'http://localhost:8000'
@@ -296,9 +297,6 @@ export interface BillingStatus {
   tier: string
   subscription_status: string
   has_billing_account: boolean
-  // 24-gap-closure Phase 7 -- non-null only while a Stripe-side
-  // downgrade is blocked pending seat reduction.
-  downgrade_blocked_reason?: string | null
 }
 
 export async function getBillingStatus(token: string): Promise<BillingStatus> {
@@ -799,6 +797,15 @@ export async function getComplianceReport(token: string): Promise<ComplianceRepo
 export async function getConnectionsStatus(token: string): Promise<ConnectionsStatus> {
   if (MOCK_MODE) return getMockConnectionsStatus()
   return request<ConnectionsStatus>('/workspace/credentials/status', token)
+}
+
+// Kelvin's item 7, 2026-09-17.
+export async function setContactEmail(token: string, contactEmail: string): Promise<{ contact_email: string }> {
+  if (MOCK_MODE) return mockSetContactEmail(contactEmail)
+  return request<{ contact_email: string }>('/workspaces/contact-email', token, {
+    method: 'PATCH',
+    body: JSON.stringify({ contact_email: contactEmail }),
+  })
 }
 
 // Onboarding completeness build, item 4 -- self-serve token view/rotate.

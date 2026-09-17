@@ -3,12 +3,23 @@ name: Code Quality Gate
 # Runs code_quality_agent against changed files on every PR.
 # BLOCKING issues fail the PR and create a HITL dashboard card.
 # NON-BLOCKING issues pass the PR and are logged to the tech_debt table.
-# Trigger: any PR opened or updated targeting main.
+# Trigger: any PR opened or updated targeting master.
 # CLAUDE.md Phase 2, step 26.
+#
+# Repointed from `main` to `master` 2026-09-17 (Kelvin's item 4,
+# 24-gap-closure build) -- this repo's default and only-ever-used branch
+# is master; the gate never fired even once before this since it was
+# wired for a branch name that doesn't exist here. This is the one of
+# the two PR-triggered workflows Kelvin decided to keep (the other,
+# prompt-version-check.yml, was deleted entirely -- PR-specific and this
+# repo has never used PRs and, per that decision, never will). Note this
+# still only fires on an actual pull_request event -- ci.yml (Phase 7)
+# remains the real gate that runs on every push to master regardless of
+# whether a PR exists.
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read

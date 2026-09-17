@@ -423,6 +423,12 @@ export function mockSetTokenExpiry(expiresAt: string | null): { expires_at: stri
   return { expires_at: expiresAt }
 }
 
+// Kelvin's item 7, 2026-09-17.
+export function mockSetContactEmail(contactEmail: string): { contact_email: string } {
+  _connectionsStatus = { ..._connectionsStatus, has_contact_email: true }
+  return { contact_email: contactEmail }
+}
+
 // 24-gap-closure Phase 6 -- setup completeness checklist. alert_source_
 // verified stays false in demo mode by design -- there is no real
 // webhook receiver here to ever flip it, same as production's own
@@ -796,6 +802,9 @@ let _connectionsStatus: ConnectionsStatus = {
   // Enterprise-gated "require MFA" toggle is actually visible to try.
   product_tier: 'enterprise',
   require_mfa: false,
+  // 24-gap-closure Phase 7 follow-up, item 7 -- true in demo mode so the
+  // non-dismissible missing-contact-email banner never nags a prospect.
+  has_contact_email: true,
 }
 
 export function getMockConnectionsStatus(): ConnectionsStatus {

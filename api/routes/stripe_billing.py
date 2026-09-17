@@ -34,9 +34,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment, get_workspace_any_status
-from core.audit import write_audit_event
 from core.compliance import WorkspaceComplianceGuard
-from core.email import EmailError, payment_failed_dunning_html, send_email, welcome_email_html
+from core.email import EmailError, downgrade_deactivation_html, payment_failed_dunning_html, send_email, welcome_email_html
+from core.member_deactivation import deactivate_member_row
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -119,9 +119,6 @@ class BillingStatusResponse(BaseModel):
     tier: str
     subscription_status: str
     has_billing_account: bool
-    # 24-gap-closure Phase 7 -- non-None only while a Stripe-side
-    # downgrade is blocked pending seat reduction. See migration 047.
-    downgrade_blocked_reason: str | None = None
 
 
 # ── Database helpers ──────────────────────────────────────────────────────────
@@ -409,7 +406,6 @@ async def billing_status(
         tier=workspace.get("product_tier", "starter"),
         subscription_status=workspace.get("stripe_subscription_status", "trialing"),
         has_billing_account=bool(workspace.get("stripe_customer_id")),
-        downgrade_blocked_reason=workspace.get("downgrade_blocked_reason"),
     )
 
 
@@ -482,16 +478,19 @@ async def _handle_subscription_updated(db_pool, subscription: dict) -> None:
       a successful charge, subscription not canceled) maps to this
       platform's own 'suspended' terminal state -- the actual cutoff at
       the end of the "payment failure -> past_due -> suspended" chain.
-    - A downgrade (new tier's rank below the current one) is BLOCKED in
-      our system if the workspace's current active+invited member count
-      exceeds the new tier's seat cap: the tier change is not applied
-      (product_tier stays at its current, higher value) and
-      downgrade_blocked_reason is set so GET /billing/status surfaces a
-      clear reason. Note this only blocks what OUR system serves --
-      Stripe's own subscription record still reflects the lower price;
-      programmatically reverting the Stripe subscription itself is a
-      separate, real financial action not taken here (flagged as a
-      follow-up, not silently assumed safe to automate).
+
+    Kelvin's item 3 (2026-09-17), replacing Phase 7's hard downgrade
+    block: a downgrade (new tier's rank below the current one) is now
+    ALWAYS applied. If it drops the workspace below the new tier's seat
+    cap, the most-recently-added active/invited members over the cap are
+    deactivated automatically (core/member_deactivation.py -- the exact
+    same mechanism Phase 4's admin-triggered deactivation uses: assigned
+    incidents return to unassigned, one audit row per member), and the
+    workspace's contact_email gets one email listing who was deactivated
+    and the two ways to get them back. We still never touch the Stripe
+    subscription itself from our side either direction -- Stripe's own
+    record and ours now simply agree on the tier, which they didn't
+    while the block existed.
     """
     customer_id   = subscription.get("customer")
     stripe_status = subscription.get("status", "active")
@@ -516,8 +515,7 @@ async def _handle_subscription_updated(db_pool, subscription: dict) -> None:
                     price_id, customer_id,
                 )
 
-    downgrade_blocked_reason: Optional[str] = None
-    clear_block = False
+    deactivated: list[dict] = []
 
     if tier is not None:
         async with db_pool.acquire() as conn:
@@ -531,40 +529,56 @@ async def _handle_subscription_updated(db_pool, subscription: dict) -> None:
                     tier, WorkspaceComplianceGuard.TIER_LIMITS["starter"]
                 )["max_seats"]
                 if new_max_seats != -1:
-                    seat_row = await conn.fetchrow(
-                        "SELECT COUNT(*) AS n FROM workspace_members "
-                        "WHERE workspace_id = $1 AND status IN ('invited', 'active')",
+                    # Newest first -- the members to deactivate are the
+                    # most-recently-added ones over the cap, so they're a
+                    # simple prefix slice of this order, not an OFFSET
+                    # (OFFSET new_max_seats would skip the newest rows and
+                    # keep them, deactivating the OLDEST members instead --
+                    # backwards from what this is supposed to do).
+                    all_rows = await conn.fetch(
+                        "SELECT id, email FROM workspace_members "
+                        "WHERE workspace_id = $1 AND status IN ('invited', 'active') "
+                        "ORDER BY created_at DESC",
                         UUID(workspace_id),
                     )
-                    if seat_row["n"] > new_max_seats:
-                        downgrade_blocked_reason = (
-                            f"Downgrade to '{tier}' blocked: {seat_row['n']} active/invited "
-                            f"members exceed the {new_max_seats}-seat cap for that tier. "
-                            f"Remove members first, then downgrade again from the billing portal."
+                    over_count = len(all_rows) - new_max_seats
+                    over_cap_rows = all_rows[:over_count] if over_count > 0 else []
+                    for member_row in over_cap_rows:
+                        await deactivate_member_row(
+                            conn, workspace_id, member_row["id"], member_row["email"],
+                            action="member_deactivated_downgrade",
                         )
-                        tier = None  # keep serving at the current (higher) tier
-                    else:
-                        clear_block = True
-            else:
-                clear_block = True
+                        deactivated.append({"id": str(member_row["id"]), "email": member_row["email"]})
 
     await _update_workspace_billing(
         db_pool,
         workspace_id,
         tier=tier,  # None = no change; non-None = update
         subscription_status=new_status,
-        downgrade_blocked_reason=downgrade_blocked_reason,
-        clear_downgrade_block=clear_block,
+        clear_downgrade_block=True,  # this system no longer ever blocks a downgrade
     )
 
-    if downgrade_blocked_reason:
-        log.warning("[Billing] Workspace %s: %s", workspace_id, downgrade_blocked_reason)
-        await write_audit_event(
-            workspace_id=workspace_id,
-            action="downgrade_blocked",
-            status="blocked",
-            metadata={"reason": downgrade_blocked_reason},
+    if deactivated:
+        emails = [m["email"] for m in deactivated]
+        log.warning(
+            "[Billing] Workspace %s downgraded to '%s' -- deactivated %d member(s) over the new seat cap: %s",
+            workspace_id, tier, len(deactivated), emails,
         )
+        async with db_pool.acquire() as conn:
+            contact_row = await conn.fetchrow(
+                "SELECT company_name, contact_email FROM workspaces WHERE id = $1", UUID(workspace_id),
+            )
+        if contact_row and contact_row["contact_email"]:
+            try:
+                await send_email(
+                    contact_row["contact_email"],
+                    f"Cloud Decoded — plan changed to {tier}, some members were removed",
+                    downgrade_deactivation_html(contact_row["company_name"], tier, emails),
+                )
+            except EmailError as exc:
+                log.warning("[Billing] Downgrade-deactivation email failed for workspace=%s: %s", workspace_id, exc)
+        else:
+            log.warning("[Billing] Workspace %s has no contact_email -- downgrade-deactivation email not sent", workspace_id)
 
 
 async def _handle_subscription_deleted(db_pool, subscription: dict) -> None:

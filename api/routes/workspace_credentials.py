@@ -152,6 +152,11 @@ class ConnectionsStatusResponse(BaseModel):
     # and what state it's currently in.
     product_tier: str | None = None
     require_mfa: bool = False
+    # 24-gap-closure Phase 7 follow-up (Kelvin's item 7) -- lets the
+    # dashboard show a non-dismissible banner when missing, since
+    # credential-expiry (Phase 5) and payment-failure (Phase 7)
+    # notifications both depend on a contact_email existing.
+    has_contact_email: bool = False
 
 
 class WorkspaceTokenStatusResponse(BaseModel):
@@ -262,6 +267,7 @@ async def get_connections_status(
         member_role=workspace.get("member_role"),
         product_tier=workspace.get("product_tier"),
         require_mfa=bool(workspace.get("require_mfa")),
+        has_contact_email=bool(workspace.get("contact_email")),
     )
 
 

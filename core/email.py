@@ -163,6 +163,38 @@ def enterprise_alert_html(company_name: str, workspace_id: str, contact_email: s
 </div>"""
 
 
+def downgrade_deactivation_html(company_name: str, new_tier: str, deactivated_emails: list[str]) -> str:
+    """
+    Kelvin's item 3, 2026-09-17 -- replaces the Phase 7 hard downgrade
+    block: a Stripe downgrade that drops a workspace below its new
+    tier's seat cap is now applied, and the most-recently-added members
+    over the cap are deactivated automatically
+    (api/routes/stripe_billing.py's _handle_subscription_updated, via
+    core/member_deactivation.py -- the same mechanism Phase 4's manual
+    deactivation uses). This email is the only notice the workspace
+    gets that it happened.
+    """
+    members_list = "".join(f"<li>{email}</li>" for email in deactivated_emails)
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#1a1a1a">
+  <h1 style="font-size:20px">Your plan changed to {new_tier} — some members were removed</h1>
+  <p>{company_name} downgraded to the <strong>{new_tier}</strong> plan, which has a lower seat limit
+  than your previous plan. The most recently added members over that limit have been
+  deactivated to bring you within it:</p>
+  <ul>{members_list}</ul>
+  <p>Their assigned incidents were returned to unassigned — nothing was lost, just
+  reassigned. To restore access:</p>
+  <ul>
+    <li>Remove other members to make room, then re-invite them, or</li>
+    <li>Upgrade your plan again to fit everyone</li>
+  </ul>
+  <p><a href="https://theclouddecoded.com/dashboard?tab=members"
+        style="display:inline-block;background:#2f6fe6;color:#fff;padding:10px 18px;
+               border-radius:8px;text-decoration:none;font-weight:600">
+    Manage members →</a></p>
+</div>"""
+
+
 def payment_failed_dunning_html(company_name: str) -> str:
     """
     24-gap-closure Phase 7 -- sent on every Stripe invoice.payment_failed
