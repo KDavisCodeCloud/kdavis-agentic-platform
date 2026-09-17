@@ -63,6 +63,12 @@ name: CI
 # pre-existing bugs; deselecting them from CI doesn't fix or hide them,
 # it just stops a gate this phase built from crying wolf about issues
 # that predate it and aren't this phase's to fix.
+#
+# `npm install`, not `npm ci`, below: frontend/package-lock.json is
+# gitignored (.gitignore:30) -- a real, separate finding flagged for
+# Kelvin (it means npm install isn't actually reproducible for anyone
+# cloning this repo fresh, CI included) but not this phase's call to
+# reverse by force-committing a lockfile that was deliberately excluded.
 
 on:
   push:
@@ -123,7 +129,7 @@ jobs:
           # correctness.
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Type check
         run: npx tsc --noEmit
