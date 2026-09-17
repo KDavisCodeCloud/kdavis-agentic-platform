@@ -362,6 +362,22 @@ export interface AwsRoleSetup {
   instructions: string
 }
 
+// 24-gap-closure Phase 3 -- mirrors api/routes/workspace_notifications.py's
+// ExhaustedRetryResponse/ExhaustedRetriesResponse.
+export interface ExhaustedRetry {
+  id: string
+  channel_type: string
+  send_kind: string
+  attempt_count: number
+  last_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ExhaustedRetriesResponse {
+  retries: ExhaustedRetry[]
+}
+
 
 // ── FinOps agent (mirrors kdavis-finops-agent's api/routes/tenants.py +
 // scans.py + hitl.py, proxied through api/routes/finops_agent.py) ─────────

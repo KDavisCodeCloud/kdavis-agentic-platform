@@ -14,8 +14,9 @@ import {
   getConnectionsStatus, getGithubAppInstallUrl, setupAwsRole, connectAwsRole, connectAzureServicePrincipal,
   connectAzureDevOps, connectK8sCluster, saveLlmKey, getTicketingStatus, connectJira, connectLinear, connectGithubIssues,
   connectServiceNow, getWorkspaceTokenStatus, rotateWorkspaceToken, isMemberSessionToken, API_URL,
+  listExhaustedRetries,
 } from '@/lib/api'
-import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus, WorkspaceTokenStatus } from '@/lib/types'
+import type { ConnectionsStatus, AwsRoleSetup, TicketingStatus, WorkspaceTokenStatus, ExhaustedRetry } from '@/lib/types'
 
 // Onboarding completeness build, item 3: the real webhook URL a customer
 // pastes into Azure/AWS/GitHub/Azure DevOps. Only ever shown with a real
@@ -176,6 +177,10 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [tokenBusy, setTokenBusy] = useState(false)
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
 
+  // 24-gap-closure Phase 3 -- "flagged in dashboard" when an outbound
+  // notification/ticketing send exhausted all 5 retry attempts.
+  const [exhaustedRetries, setExhaustedRetries] = useState<ExhaustedRetry[]>([])
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -206,6 +211,13 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
         ticketing.channel?.channel_type === 'servicenow'
       ) {
         setTicketingProvider(ticketing.channel.channel_type)
+      }
+
+      try {
+        const retries = await listExhaustedRetries(token)
+        setExhaustedRetries(retries.retries)
+      } catch {
+        setExhaustedRetries([])  // non-fatal -- this is a flag, not a core connection status
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load connection status')
@@ -434,6 +446,18 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
           <p className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
             {error}
           </p>
+        )}
+
+        {exhaustedRetries.length > 0 && (
+          <div className="flex items-start gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              {exhaustedRetries.length} outbound notification{exhaustedRetries.length > 1 ? 's' : ''} failed
+              after 5 retry attempts and gave up
+              {' '}({[...new Set(exhaustedRetries.map(r => r.channel_type))].join(', ')}).
+              Check that channel&apos;s credentials are still valid.
+            </span>
+          </div>
         )}
 
         <SectionCard

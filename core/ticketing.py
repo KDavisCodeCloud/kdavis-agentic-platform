@@ -505,7 +505,7 @@ async def _dispatch_pagerduty_resolve(conn, workspace_id: str, incident_summary:
         )
     except Exception as exc:
         log.warning(
-            "[Ticketing] PagerDuty resolve-event failed for workspace=%s: %s", workspace_id, exc,
+            "[Ticketing] PagerDuty resolve-event failed for workspace=%s: %s -- queued for retry", workspace_id, exc,
             extra={"workspace_id": workspace_id},
         )
         try:
@@ -519,6 +519,8 @@ async def _dispatch_pagerduty_resolve(conn, workspace_id: str, incident_summary:
             )
         except Exception:
             pass
+        from core.notification_retry import enqueue_retry
+        await enqueue_retry(workspace_id, "pagerduty", "resolve", incident_summary, str(exc))
 
 
 async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_by: Optional[str] = None) -> None:
@@ -597,7 +599,7 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
             )
         except Exception as exc:
             log.warning(
-                "[Ticketing] Failed to create ticket for workspace=%s provider=%s: %s",
+                "[Ticketing] Failed to create ticket for workspace=%s provider=%s: %s -- queued for retry",
                 workspace_id, channel_type, exc,
                 extra={"workspace_id": workspace_id, "channel_type": channel_type},
             )
@@ -612,6 +614,8 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
                 )
             except Exception:
                 pass
+            from core.notification_retry import enqueue_retry
+            await enqueue_retry(workspace_id, channel_type, "resolve", incident_summary, str(exc), resolved_by=resolved_by)
     finally:
         await conn.close()
 

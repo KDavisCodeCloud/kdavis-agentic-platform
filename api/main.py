@@ -231,11 +231,25 @@ async def lifespan(app: FastAPI):
     # retention's) keeps all 4 --workers processes from double-sending.
     app.state.onboarding_task = asyncio.create_task(_onboarding_sequence_loop(app.state.db_pool))
 
+    # 24-gap-closure Phase 3: outbound notification retry queue + quiet-
+    # hours digest (core/notification_retry.py). Same in-process periodic
+    # pattern as the two loops above -- no separate cron service exists.
+    # Retries checked every minute (the shortest backoff step is 1 minute
+    # -- checking less often would make that first retry late by
+    # design); digests checked every 10 minutes (quiet-hours windows are
+    # hour-granularity, so a 10-minute check cadence keeps a digest
+    # landing within a few minutes of its window closing without
+    # hammering the DB every minute for something that changes rarely).
+    app.state.notification_retry_task = asyncio.create_task(_notification_retry_loop(app.state.db_pool))
+    app.state.notification_digest_task = asyncio.create_task(_notification_digest_loop(app.state.db_pool))
+
     yield
 
     # Shutdown
     app.state.retention_task.cancel()
     app.state.onboarding_task.cancel()
+    app.state.notification_retry_task.cancel()
+    app.state.notification_digest_task.cancel()
     await app.state.db_pool.close()
     await lg_conn.close()
     log.info("[API] Shutdown complete")
@@ -271,6 +285,36 @@ async def _onboarding_sequence_loop(pool) -> None:
         except Exception:
             log.exception("[Onboarding] Sequence check failed — will retry next cycle")
         await asyncio.sleep(_ONBOARDING_SEQUENCE_INTERVAL_SECONDS)
+
+
+_NOTIFICATION_RETRY_INTERVAL_SECONDS = 60
+_NOTIFICATION_DIGEST_INTERVAL_SECONDS = 10 * 60
+
+
+async def _notification_retry_loop(pool) -> None:
+    from core.notification_retry import run_pending_retries
+
+    while True:
+        try:
+            await run_pending_retries(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[NotificationRetry] Retry pass failed — will retry next cycle")
+        await asyncio.sleep(_NOTIFICATION_RETRY_INTERVAL_SECONDS)
+
+
+async def _notification_digest_loop(pool) -> None:
+    from core.notification_retry import run_quiet_hours_digests
+
+    while True:
+        try:
+            await run_quiet_hours_digests(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[NotificationRetry] Digest pass failed — will retry next cycle")
+        await asyncio.sleep(_NOTIFICATION_DIGEST_INTERVAL_SECONDS)
 
 
 # ──────────────────────────────────────────────

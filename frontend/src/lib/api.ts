@@ -8,6 +8,7 @@ import type {
   ConnectionsStatus, AwsRoleSetup, TicketingStatus, JiraConnectInput, LinearConnectInput, GithubIssuesConnectInput,
   ServiceNowConnectInput, WorkspaceTokenStatus, RotateWorkspaceTokenResult,
   IncidentFilters, WorkspaceMembersResponse, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
+  ExhaustedRetriesResponse,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -770,6 +771,14 @@ export async function getWorkspaceTokenStatus(token: string): Promise<WorkspaceT
 export async function rotateWorkspaceToken(token: string): Promise<RotateWorkspaceTokenResult> {
   if (MOCK_MODE) return mockRotateWorkspaceToken()
   return request<RotateWorkspaceTokenResult>('/workspace/credentials/token/rotate', token, { method: 'POST' })
+}
+
+// 24-gap-closure Phase 3 -- "flagged in dashboard" for exhausted outbound
+// notification/ticketing retries. No mock-data fixture needed: this is a
+// flag surface, not a core connection-status feature demoed in sandbox mode.
+export async function listExhaustedRetries(token: string): Promise<ExhaustedRetriesResponse> {
+  if (MOCK_MODE) return { retries: [] }
+  return request<ExhaustedRetriesResponse>('/workspace/notifications/retry-queue/exhausted', token)
 }
 
 // Item 4 GitHub App migration -- PATCH /workspace/credentials/github is

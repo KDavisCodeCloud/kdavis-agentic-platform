@@ -90,6 +90,32 @@ async def send_pagerduty_notification(routing_key: str, incident_summary: dict) 
         response.raise_for_status()
 
 
+async def send_email_notification(to_address: str, incident_summary: dict) -> None:
+    """
+    24-gap-closure Phase 3 -- email as a third notification channel type.
+    Reuses core/email.py's send_email exactly as Kelvin's spec asked
+    ("reuse core/email.py"), rather than a second Resend-calling
+    implementation. Raises EmailError on failure (send_email's own
+    contract) -- callers here follow the same "caller catches" discipline
+    as send_slack_notification/send_pagerduty_notification.
+    """
+    from core.email import send_email
+
+    status = incident_summary.get("execution_status")
+    subject = (
+        "Cloud Decoded — run failed" if status == "failed"
+        else "Cloud Decoded — quiet hours digest" if status == "digest"
+        else "Cloud Decoded — incident needs approval"
+    )
+    body_lines = [incident_summary.get("summary", "")]
+    if incident_summary.get("resource_name"):
+        body_lines.append(f"Resource: {incident_summary['resource_name']}")
+    if incident_summary.get("incident_id"):
+        body_lines.append(f"Incident: {incident_summary['incident_id']}")
+    html = "<br>".join(l for l in body_lines if l)
+    await send_email(to_address, subject, html)
+
+
 async def send_pagerduty_resolve_event(routing_key: str, incident_summary: dict) -> None:
     """
     Ticketing build, Phase 3 (2026-09-15): sends the resolve event this
@@ -158,7 +184,8 @@ async def notify_incident_channels(workspace_id: str, incident_summary: dict) ->
 
     try:
         rows = await conn.fetch(
-            "SELECT channel_type, config_encrypted FROM workspace_notification_channels "
+            "SELECT channel_type, config_encrypted, min_severity, quiet_hours_start, "
+            "quiet_hours_end, quiet_hours_timezone FROM workspace_notification_channels "
             "WHERE workspace_id = $1 AND enabled = true",
             workspace_id,
         )
@@ -171,14 +198,36 @@ async def notify_incident_channels(workspace_id: str, incident_summary: dict) ->
     finally:
         await conn.close()
 
+    from core.notification_retry import enqueue_retry, is_channel_in_quiet_hours
+    from core.severity import SEVERITY_SORT_RANK
+
     for row in rows:
         channel_type = row["channel_type"]
+
+        # Severity floor -- Kelvin's own example: "PagerDuty critical-only,
+        # Slack all". min_severity NULL means every severity, unchanged
+        # from this channel's pre-Phase-3 behavior. An incident with no
+        # severity at all (create_failed_incident's path never sets one)
+        # is never filtered out by a floor -- there's nothing to compare.
+        min_severity = row["min_severity"]
+        incident_severity = incident_summary.get("severity")
+        if min_severity and incident_severity:
+            if SEVERITY_SORT_RANK.get(incident_severity, 99) > SEVERITY_SORT_RANK.get(min_severity, -1):
+                continue  # below this channel's floor -- not even suppressed, just not this channel's concern
+
+        if await is_channel_in_quiet_hours(dict(row)):
+            from core.notification_retry import suppress_for_quiet_hours
+            await suppress_for_quiet_hours(workspace_id, channel_type, incident_summary)
+            continue
+
         try:
             config = json.loads(decrypt(row["config_encrypted"]))
             if channel_type == "slack":
                 await send_slack_notification(config["webhook_url"], incident_summary)
             elif channel_type == "pagerduty":
                 await send_pagerduty_notification(config["routing_key"], incident_summary)
+            elif channel_type == "email":
+                await send_email_notification(config["to"], incident_summary)
             else:
                 log.warning(
                     "[Notifications] Unknown channel_type=%s for workspace=%s — skipping",
@@ -187,7 +236,8 @@ async def notify_incident_channels(workspace_id: str, incident_summary: dict) ->
                 )
         except Exception as exc:
             log.warning(
-                "[Notifications] Failed to notify workspace=%s channel_type=%s: %s",
+                "[Notifications] Failed to notify workspace=%s channel_type=%s: %s -- queued for retry",
                 workspace_id, channel_type, exc,
                 extra={"workspace_id": workspace_id, "channel_type": channel_type},
             )
+            await enqueue_retry(workspace_id, channel_type, "create", incident_summary, str(exc))

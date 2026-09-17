@@ -12,6 +12,22 @@ import pytest
 from core import notifications
 
 
+def _channel_row(channel_type: str, config_encrypted: str, **overrides) -> dict:
+    """24-gap-closure Phase 3 added min_severity/quiet_hours_* to this
+    SELECT -- every mock row needs all of them present now, same class
+    of fixture gap Phase 1/2's own SOPs already caught and fixed once."""
+    base = {
+        "channel_type": channel_type,
+        "config_encrypted": config_encrypted,
+        "min_severity": None,
+        "quiet_hours_start": None,
+        "quiet_hours_end": None,
+        "quiet_hours_timezone": None,
+    }
+    base.update(overrides)
+    return base
+
+
 def _mock_httpx_client(status_code: int = 200):
     response = MagicMock()
     response.raise_for_status = MagicMock()
@@ -149,8 +165,8 @@ class TestNotifyIncidentChannels:
         conn = AsyncMock()
         conn.fetch = AsyncMock(
             return_value=[
-                {"channel_type": "slack", "config_encrypted": "enc-slack"},
-                {"channel_type": "pagerduty", "config_encrypted": "enc-pd"},
+                _channel_row("slack", "enc-slack"),
+                _channel_row("pagerduty", "enc-pd"),
             ]
         )
         conn.close = AsyncMock()
@@ -185,8 +201,8 @@ class TestNotifyIncidentChannels:
         conn = AsyncMock()
         conn.fetch = AsyncMock(
             return_value=[
-                {"channel_type": "slack", "config_encrypted": "enc-slack"},
-                {"channel_type": "pagerduty", "config_encrypted": "enc-pd"},
+                _channel_row("slack", "enc-slack"),
+                _channel_row("pagerduty", "enc-pd"),
             ]
         )
         conn.close = AsyncMock()
@@ -206,3 +222,106 @@ class TestNotifyIncidentChannels:
             await notifications.notify_incident_channels("ws-1", {})
 
         mock_pd.assert_awaited_once()
+
+    async def test_failed_send_is_queued_for_retry(self):
+        """24-gap-closure Phase 3: a failure no longer just logs a
+        warning and disappears -- it reaches core.notification_retry.enqueue_retry."""
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[_channel_row("slack", "enc-slack")])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.notifications.os.environ.get", return_value="postgresql://x"),
+            patch("core.notifications.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.notifications.decrypt", return_value=json.dumps({"webhook_url": "https://x"})),
+            patch("core.notifications.send_slack_notification", new=AsyncMock(side_effect=Exception("boom"))),
+            patch("core.notification_retry.enqueue_retry", new=AsyncMock()) as mock_enqueue,
+        ):
+            await notifications.notify_incident_channels("ws-1", {"summary": "x"})
+
+        mock_enqueue.assert_awaited_once_with("ws-1", "slack", "create", {"summary": "x"}, "boom")
+
+    async def test_dispatches_to_email_channel(self):
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[_channel_row("email", "enc-email")])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.notifications.os.environ.get", return_value="postgresql://x"),
+            patch("core.notifications.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.notifications.decrypt", return_value=json.dumps({"to": "ops@acme.com"})),
+            patch("core.notifications.send_email_notification", new=AsyncMock()) as mock_email,
+        ):
+            await notifications.notify_incident_channels("ws-1", {"summary": "x"})
+
+        mock_email.assert_awaited_once_with("ops@acme.com", {"summary": "x"})
+
+    async def test_severity_below_channel_floor_is_skipped_entirely(self):
+        """Kelvin's own example: PagerDuty critical-only. A 'medium'
+        incident must not even attempt the send, not be suppressed
+        (suppression is quiet-hours' job, not the severity floor's)."""
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[_channel_row("pagerduty", "enc-pd", min_severity="critical")])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.notifications.os.environ.get", return_value="postgresql://x"),
+            patch("core.notifications.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.notifications.decrypt", return_value=json.dumps({"routing_key": "k"})),
+            patch("core.notifications.send_pagerduty_notification", new=AsyncMock()) as mock_pd,
+        ):
+            await notifications.notify_incident_channels("ws-1", {"summary": "x", "severity": "medium"})
+
+        mock_pd.assert_not_awaited()
+
+    async def test_severity_meeting_channel_floor_sends(self):
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[_channel_row("pagerduty", "enc-pd", min_severity="high")])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.notifications.os.environ.get", return_value="postgresql://x"),
+            patch("core.notifications.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.notifications.decrypt", return_value=json.dumps({"routing_key": "k"})),
+            patch("core.notifications.send_pagerduty_notification", new=AsyncMock()) as mock_pd,
+        ):
+            await notifications.notify_incident_channels("ws-1", {"summary": "x", "severity": "critical"})
+
+        mock_pd.assert_awaited_once()
+
+    async def test_no_severity_on_incident_is_never_filtered_by_a_floor(self):
+        """create_failed_incident's path never sets a severity -- nothing
+        to compare against, so a floor must not silently drop it."""
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[_channel_row("slack", "enc-slack", min_severity="critical")])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.notifications.os.environ.get", return_value="postgresql://x"),
+            patch("core.notifications.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.notifications.decrypt", return_value=json.dumps({"webhook_url": "https://x"})),
+            patch("core.notifications.send_slack_notification", new=AsyncMock()) as mock_slack,
+        ):
+            await notifications.notify_incident_channels("ws-1", {"summary": "x"})
+
+        mock_slack.assert_awaited_once()
+
+    async def test_channel_in_quiet_hours_is_suppressed_not_sent(self):
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[_channel_row(
+            "slack", "enc-slack",
+            quiet_hours_start="22:00", quiet_hours_end="07:00", quiet_hours_timezone="UTC",
+        )])
+        conn.close = AsyncMock()
+
+        with (
+            patch("core.notifications.os.environ.get", return_value="postgresql://x"),
+            patch("core.notifications.asyncpg.connect", new=AsyncMock(return_value=conn)),
+            patch("core.notification_retry.is_channel_in_quiet_hours", new=AsyncMock(return_value=True)),
+            patch("core.notification_retry.suppress_for_quiet_hours", new=AsyncMock()) as mock_suppress,
+            patch("core.notifications.send_slack_notification", new=AsyncMock()) as mock_slack,
+        ):
+            await notifications.notify_incident_channels("ws-1", {"summary": "x", "incident_id": "abc"})
+
+        mock_slack.assert_not_awaited()
+        mock_suppress.assert_awaited_once_with("ws-1", "slack", {"summary": "x", "incident_id": "abc"})
