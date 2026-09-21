@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment, get_workspace_any_status
 from core.compliance import WorkspaceComplianceGuard
 from core.email import EmailError, downgrade_deactivation_html, payment_failed_dunning_html, send_email, welcome_email_html
+from core.email_enrollment import enroll_by_email, exit_all_by_email, exit_by_email, get_subscriber_id_by_email
 from core.member_deactivation import deactivate_member_row
 
 log = logging.getLogger(__name__)
@@ -438,6 +439,64 @@ async def _handle_checkout_completed(db_pool, session: dict) -> None:
     )
 
     await _send_welcome_email(db_pool, workspace_id)
+    await _enroll_onboarding_email_sequence(db_pool, workspace_id)
+
+
+async def _enroll_onboarding_email_sequence(db_pool, workspace_id: str) -> None:
+    """
+    Email lifecycle system (migration 051): a completed checkout is the
+    'onboarding' sequence's enrollment trigger, and exits 'abandoned_checkout'
+    (the workspace didn't abandon it after all) and 'trust_drip' (the
+    prompt's own build spec calls this exit target 'nurture', but Cloud
+    Decoded's real sequence list has no sequence by that name --
+    'trust_drip' is the actual pre-sale trust-building sequence a
+    converting prospect should stop receiving; 'newsletter' is left
+    running since a paying customer can still want the content
+    relationship). Also stamps first/last-touch attribution
+    if this contact_email was a subscriber who clicked a marketing email in
+    the prior 90 days -- Phase 7. Best-effort: never allowed to fail the
+    webhook, same discipline as the welcome email above.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT contact_email FROM workspaces WHERE id = $1", UUID(workspace_id),
+            )
+            if not row or not row["contact_email"]:
+                return
+            email = row["contact_email"]
+
+            await enroll_by_email(conn, email, "onboarding", source="checkout", workspace_id=workspace_id)
+            await exit_by_email(conn, email, "abandoned_checkout", "converted")
+            await exit_by_email(conn, email, "trust_drip", "converted")
+
+            subscriber_id = await get_subscriber_id_by_email(conn, email)
+            if subscriber_id:
+                touch = await conn.fetchrow(
+                    """
+                    SELECT s.template_key FROM cd_email_clicks c
+                    JOIN cd_email_sends s ON s.id = c.send_id
+                    WHERE s.recipient = $1 AND c.clicked_at >= NOW() - INTERVAL '90 days'
+                    ORDER BY c.clicked_at ASC
+                    """,
+                    email,
+                )
+                if touch:
+                    last_touch = await conn.fetchrow(
+                        """
+                        SELECT s.template_key FROM cd_email_clicks c
+                        JOIN cd_email_sends s ON s.id = c.send_id
+                        WHERE s.recipient = $1 AND c.clicked_at >= NOW() - INTERVAL '90 days'
+                        ORDER BY c.clicked_at DESC
+                        """,
+                        email,
+                    )
+                    await conn.execute(
+                        "UPDATE workspaces SET first_touch_template = $2, last_touch_template = $3 WHERE id = $1",
+                        UUID(workspace_id), touch["template_key"], last_touch["template_key"],
+                    )
+    except Exception:
+        log.warning("[Billing] Email lifecycle enrollment failed for workspace=%s", workspace_id, exc_info=True)
 
 
 async def _send_welcome_email(db_pool, workspace_id: str) -> None:
@@ -599,6 +658,19 @@ async def _handle_subscription_deleted(db_pool, subscription: dict) -> None:
     )
     log.info("[Billing] Workspace %s subscription canceled — all data preserved", workspace_id[:8])
 
+    try:
+        async with db_pool.acquire() as conn:
+            contact_row = await conn.fetchrow(
+                "SELECT contact_email FROM workspaces WHERE id = $1", UUID(workspace_id),
+            )
+            if contact_row and contact_row["contact_email"]:
+                email = contact_row["contact_email"]
+                await enroll_by_email(conn, email, "winback", source="checkout", workspace_id=workspace_id)
+                # "A canceled workspace exits everything except winback."
+                await exit_all_by_email(conn, email, "workspace_canceled", except_sequences=("winback",))
+    except Exception:
+        log.warning("[Billing] Winback enrollment failed for workspace=%s", workspace_id, exc_info=True)
+
 
 async def _handle_payment_failed(db_pool, invoice: dict) -> None:
     """
@@ -633,6 +705,12 @@ async def _handle_payment_failed(db_pool, invoice: dict) -> None:
             )
         except EmailError as exc:
             log.warning("[Billing] Dunning email failed for workspace=%s: %s", workspace_id, exc)
+
+        try:
+            async with db_pool.acquire() as conn:
+                await enroll_by_email(conn, row["contact_email"], "dunning", source="checkout", workspace_id=workspace_id)
+        except Exception:
+            log.warning("[Billing] Dunning sequence enrollment failed for workspace=%s", workspace_id, exc_info=True)
     else:
         log.warning("[Billing] Workspace %s has no contact_email -- dunning email not sent", workspace_id)
 

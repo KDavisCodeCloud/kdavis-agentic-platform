@@ -53,10 +53,46 @@ from api.middleware.auth import get_workspace_or_member
 from api.middleware.rate_limiter import limiter
 from core.audit import write_audit_event
 from core.compliance import SubscriptionError, WorkspaceComplianceGuard
+from core.email_enrollment import enroll_by_email
 from core.member_deactivation import deactivate_member_row
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/workspace-members", tags=["workspace-members"])
+
+# Email lifecycle system (migration 051) -- one expansion email per
+# threshold per 60 days. Checked against cd_email_sends rather than
+# re-enrolling on every capped invite attempt, which would otherwise
+# reset the sequence to step 0 (core.email_enrollment.enroll's own
+# semantics) and re-send its first email every time someone retries.
+_EXPANSION_DEDUPE_WINDOW_DAYS = 60
+
+
+async def _enroll_seat_cap_expansion_email(conn, workspace_id: str) -> None:
+    """Best-effort, matching core/email.py's own "a broken email path must
+    never break the caller's real operation" discipline -- a failure here
+    (including an unexpected DB shape) must never turn a seat-cap 403 into
+    a 500."""
+    try:
+        row = await conn.fetchrow("SELECT contact_email FROM workspaces WHERE id = $1", UUID(workspace_id))
+        if not row or not row["contact_email"]:
+            return
+        email = row["contact_email"]
+
+        already_sent = await conn.fetchrow(
+            """
+            SELECT 1 FROM cd_email_sends s
+            JOIN cd_email_templates t ON t.key = s.template_key
+            WHERE s.recipient = $1 AND t.sequence_key = 'expansion_seat_cap'
+              AND s.sent_at >= NOW() - MAKE_INTERVAL(days => $2)
+            LIMIT 1
+            """,
+            email, _EXPANSION_DEDUPE_WINDOW_DAYS,
+        )
+        if already_sent:
+            return
+        await enroll_by_email(conn, email, "expansion_seat_cap", source="checkout", workspace_id=workspace_id)
+    except Exception:
+        log.warning("[WorkspaceMembers] Expansion email enrollment failed for workspace=%s", workspace_id, exc_info=True)
 
 _VALID_ROLES = frozenset({"admin", "approver", "viewer"})
 
@@ -154,6 +190,7 @@ async def invite_member(
         try:
             await WorkspaceComplianceGuard(conn).assert_seat_available(str(workspace["id"]))
         except SubscriptionError as exc:
+            await _enroll_seat_cap_expansion_email(conn, str(workspace["id"]))
             raise HTTPException(status_code=403, detail=exc.reason) from exc
 
         existing = await conn.fetchrow(

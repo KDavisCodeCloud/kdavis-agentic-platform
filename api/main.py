@@ -71,6 +71,8 @@ from api.routes import github_app_admin
 from api.routes import setup_checklist
 from api.routes import llm_usage
 from api.routes import policies
+from api.routes import email_public
+from api.routes import internal_email_campaigns
 from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
 from core.json_logging import configure_logging
@@ -186,6 +188,14 @@ async def lifespan(app: FastAPI):
     # docstring and GAPS.md #20.
     await log_security_posture(app.state.db_pool)
 
+    # Cloud Decoded email lifecycle system (migration 051) -- idempotent
+    # seed of sequences/templates from core/email_content/*.py. Cheap
+    # (under 100 rows, ON CONFLICT DO NOTHING per row) and guarantees the
+    # approval queue is populated without a manual step. See
+    # core/email_seed.py's own docstring.
+    from core.email_seed import seed_all as _seed_email_templates
+    await _seed_email_templates(app.state.db_pool)
+
     # LangGraph Postgres checkpointer — persists agent workflow state
     # Uses psycopg (separate from asyncpg) — both connect to the same Postgres DB
     #
@@ -253,6 +263,26 @@ async def lifespan(app: FastAPI):
     # gain from checking more often.
     app.state.credential_expiry_task = asyncio.create_task(_credential_expiry_loop(app.state.db_pool))
 
+    # Cloud Decoded email lifecycle system, migration 051 -- periodic
+    # enrollment-advancing pass (core/email_scheduler.py). Same in-process
+    # periodic pattern as every loop above -- no separate worker service
+    # exists. 15-minute cadence per the build spec; pg_try_advisory_xact_lock
+    # keeps all 4 --workers processes from double-sending a batch.
+    app.state.email_scheduler_task = asyncio.create_task(_email_scheduler_loop(app.state.db_pool))
+
+    # Cloud Decoded email lifecycle system -- 24h/72h abandoned-checkout
+    # scan (core/email_triggers.py). No Stripe event exists for "still
+    # pending_payment N hours after workspace creation", so this is a
+    # scheduled scan rather than an event hook, same reasoning as
+    # retention/onboarding above. Checked hourly so a workspace crosses
+    # the 24h/72h boundary within an hour of it actually happening.
+    app.state.abandoned_checkout_task = asyncio.create_task(_abandoned_checkout_loop(app.state.db_pool))
+
+    # Cloud Decoded email lifecycle system -- stall-nudge scan
+    # (core/email_triggers.py's run_stall_nudge_scan). Same hourly cadence
+    # and reasoning as the abandoned-checkout scan above.
+    app.state.stall_nudge_task = asyncio.create_task(_stall_nudge_loop(app.state.db_pool))
+
     yield
 
     # Shutdown
@@ -261,6 +291,9 @@ async def lifespan(app: FastAPI):
     app.state.notification_retry_task.cancel()
     app.state.notification_digest_task.cancel()
     app.state.credential_expiry_task.cancel()
+    app.state.email_scheduler_task.cancel()
+    app.state.abandoned_checkout_task.cancel()
+    app.state.stall_nudge_task.cancel()
     await app.state.db_pool.close()
     await lg_conn.close()
     log.info("[API] Shutdown complete")
@@ -342,6 +375,49 @@ async def _credential_expiry_loop(pool) -> None:
         except Exception:
             log.exception("[CredentialExpiry] Check pass failed — will retry next cycle")
         await asyncio.sleep(_CREDENTIAL_EXPIRY_INTERVAL_SECONDS)
+
+
+_EMAIL_SCHEDULER_INTERVAL_SECONDS = 15 * 60
+_ABANDONED_CHECKOUT_INTERVAL_SECONDS = 60 * 60
+
+
+async def _email_scheduler_loop(pool) -> None:
+    from core.email_scheduler import run_pending_sends
+
+    while True:
+        try:
+            await run_pending_sends(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[EmailScheduler] Pass failed — will retry next cycle")
+        await asyncio.sleep(_EMAIL_SCHEDULER_INTERVAL_SECONDS)
+
+
+async def _abandoned_checkout_loop(pool) -> None:
+    from core.email_triggers import run_abandoned_checkout_scan
+
+    while True:
+        try:
+            await run_abandoned_checkout_scan(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[EmailTriggers] Abandoned-checkout scan failed — will retry next cycle")
+        await asyncio.sleep(_ABANDONED_CHECKOUT_INTERVAL_SECONDS)
+
+
+async def _stall_nudge_loop(pool) -> None:
+    from core.email_triggers import run_stall_nudge_scan
+
+    while True:
+        try:
+            await run_stall_nudge_scan(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[EmailTriggers] Stall-nudge scan failed — will retry next cycle")
+        await asyncio.sleep(_ABANDONED_CHECKOUT_INTERVAL_SECONDS)
 
 
 # ──────────────────────────────────────────────
@@ -433,6 +509,8 @@ app.include_router(compliance_agent.router, prefix="/api/v1")
 app.include_router(github_app_admin.router, prefix="/api/v1")
 app.include_router(setup_checklist.router,  prefix="/api/v1")
 app.include_router(llm_usage.router,        prefix="/api/v1")
+app.include_router(email_public.router,     prefix="/api/v1")
+app.include_router(internal_email_campaigns.router, prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────
