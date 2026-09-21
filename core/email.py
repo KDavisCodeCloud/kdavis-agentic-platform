@@ -25,11 +25,12 @@ response path -- same discipline as sop_agent's "SOP push is non-fatal"
 pattern elsewhere in this codebase.
 
 `stream` (added for the email lifecycle system, core/marketing_email.py)
-selects the from-domain: 'transactional' (default, unchanged) sends from
-RESEND_FROM_EMAIL / hello@theclouddecoded.com; 'marketing' sends from
-RESEND_MARKETING_FROM_EMAIL / news@theclouddecoded.com -- Kelvin still
-needs to verify SPF/DKIM for that subdomain in the Resend dashboard
-before any real marketing send goes out (see GAPS.md).
+selects the From: mailbox, not a separate domain: 'transactional'
+(default, unchanged) sends from RESEND_FROM_EMAIL / hello@theclouddecoded.com;
+'marketing' sends from RESEND_MARKETING_FROM_EMAIL / news@theclouddecoded.com.
+Both are the same root domain (theclouddecoded.com) already verified in
+Resend for hello@ -- SPF/DKIM/DMARC apply at the domain level, so no
+additional domain verification is needed for news@ to send for real.
 """
 
 import logging
