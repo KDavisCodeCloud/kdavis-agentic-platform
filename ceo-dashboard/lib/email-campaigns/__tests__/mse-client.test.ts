@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import jwt from "jsonwebtoken";
 import { listMseTemplates, getMseCampaignStatus } from "../mse-client";
+
+const TEST_JWT_SECRET = "test-mse-supabase-jwt-secret";
 
 const RAW_TEMPLATE = {
   template_key: "seq-1", sequence_key: "seq-1", step_count: 5,
@@ -13,7 +16,7 @@ const RAW_TEMPLATE = {
 describe("mse-client", () => {
   beforeEach(() => {
     vi.stubEnv("NEXT_PUBLIC_MSE_API_URL", "https://mse.example.test");
-    vi.stubEnv("MSE_API_KEY", "static-service-jwt");
+    vi.stubEnv("MSE_SUPABASE_JWT_SECRET", TEST_JWT_SECRET);
     vi.stubEnv("EMAIL_CAMPAIGNS_MSE_ENABLED", "true");
   });
 
@@ -48,23 +51,26 @@ describe("mse-client", () => {
     }
   });
 
-  it("uses the static MSE_API_KEY, not a forwarded user session token", async () => {
+  it("signs its own admin JWT with the shared MSE Supabase secret, not a forwarded user session token", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ templates: [] }) });
     vi.stubGlobal("fetch", fetchMock);
 
     await listMseTemplates();
 
     const [, init] = fetchMock.mock.calls[0];
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer static-service-jwt");
+    const token = (init.headers as Record<string, string>).Authorization.replace("Bearer ", "");
+    const decoded = jwt.verify(token, TEST_JWT_SECRET) as jwt.JwtPayload;
+    expect(decoded.aud).toBe("authenticated");
+    expect(decoded.app_metadata).toEqual({ role: "admin" });
   });
 
-  it("500s when MSE_API_KEY is not configured, rather than sending an unauthenticated request", async () => {
-    vi.stubEnv("MSE_API_KEY", "");
+  it("500s when MSE_SUPABASE_JWT_SECRET is not configured, rather than sending an unauthenticated request", async () => {
+    vi.stubEnv("MSE_SUPABASE_JWT_SECRET", "");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await listMseTemplates();
-    expect(result).toEqual({ ok: false, status: 500, error: "MSE_API_KEY is not configured on this deployment" });
+    expect(result).toEqual({ ok: false, status: 500, error: "MSE_SUPABASE_JWT_SECRET is not configured on this deployment" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

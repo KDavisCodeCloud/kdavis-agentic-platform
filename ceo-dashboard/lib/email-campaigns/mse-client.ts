@@ -1,5 +1,6 @@
 import type { EmailCampaignTemplate, EmailCampaignTemplateDetail, EmailCampaignMetrics, MseCampaignStatus } from "@/lib/types";
 import { backendFetch, type BackendResult } from "./http";
+import { signMseAdminJwt } from "./mse-auth";
 
 // MSE's backend (kdavis-microsaas-engine, a separate repo/Supabase project),
 // contract documented in that repo's docs/internal/email-approval-api.md.
@@ -8,10 +9,12 @@ import { backendFetch, type BackendResult } from "./http";
 // per-step schema the original build plan assumed -- normalizeTemplate
 // below reflects that reality, not the plan's aspiration.
 //
-// Auth: a static admin-role Supabase session JWT (MSE_API_KEY) minted
-// against mse-api's own Supabase project -- ceo-dashboard's signed-in
-// user's session JWT is for a DIFFERENT Supabase project and cannot be
-// forwarded here the way the Cloud Decoded feed forwards its own.
+// Auth: a self-signed admin-role JWT (see mse-auth.ts), signed with
+// MSE_SUPABASE_JWT_SECRET -- a copy of the SAME secret already
+// provisioned on mse-api, not a newly minted credential -- rather than a
+// separate static API key. ceo-dashboard's signed-in user's session JWT
+// is for a DIFFERENT Supabase project and cannot be forwarded here the
+// way the Cloud Decoded feed forwards its own.
 const BASE_PATH = "/marketing/internal";
 
 export function isMseEnabled(): boolean {
@@ -67,15 +70,14 @@ function guard(): { ok: false; status: number; error: string } | null {
   if (!baseUrl()) {
     return { ok: false, status: 500, error: "NEXT_PUBLIC_MSE_API_URL is not configured on this deployment" };
   }
-  const apiKey = process.env.MSE_API_KEY;
-  if (!apiKey) {
-    return { ok: false, status: 500, error: "MSE_API_KEY is not configured on this deployment" };
+  if (!process.env.MSE_SUPABASE_JWT_SECRET) {
+    return { ok: false, status: 500, error: "MSE_SUPABASE_JWT_SECRET is not configured on this deployment" };
   }
   return null;
 }
 
 function authHeaders(): HeadersInit {
-  return { Authorization: `Bearer ${process.env.MSE_API_KEY}`, "Content-Type": "application/json" };
+  return { Authorization: `Bearer ${signMseAdminJwt()}`, "Content-Type": "application/json" };
 }
 
 export async function listMseTemplates(
