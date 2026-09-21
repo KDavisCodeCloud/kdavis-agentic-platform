@@ -100,11 +100,37 @@ Full Kelvin-only action list is in the session's final chat summary, not
 duplicated here — it changes as items get done and shouldn't rot in two
 places.
 
+## Post-release fix: MSE_SUPABASE_JWT_SECRET copied, CD_UNSUBSCRIBE_SECRET generated
+Same day, after Kelvin started using the live queue:
+- Copied the existing `SUPABASE_JWT_SECRET` value from mse-api's Railway
+  env into ceo-dashboard's Vercel production env as
+  `MSE_SUPABASE_JWT_SECRET`, redeployed (`vercel redeploy`, since the
+  local-upload path hits the same rootDirectory-relative confusion
+  Railway did — redeploying a known-good prior build is the reliable
+  path for this project too). MSE panel confirmed populated afterward.
+- Kelvin reported "requests not coming in" on the Approval Queue.
+  Traced via live Railway logs to a real 500:
+  `GET /api/v1/internal/email/templates/{key}` (single-template detail,
+  used for the queue's expand/preview) crashes with
+  `UnsubscribeConfigError: CD_UNSUBSCRIBE_SECRET is not set` — the detail
+  endpoint renders a real compliance-footer preview including an
+  unsubscribe link, and `core/unsubscribe_token.py` fails closed by
+  design when that secret is missing (same as the scheduler). This was
+  always going to block real sends too, so not just a preview-only bug.
+  `CD_COMPLIANCE_MAILING_ADDRESS` degrades gracefully by contrast (blank
+  line, no crash) — only the unsubscribe secret is a hard dependency.
+  Generated a random secret (`secrets.token_urlsafe(48)`) and set it via
+  Railway MCP directly — this is a pure cryptographic value with no
+  business decision attached (unlike the mailing address, a real fact
+  only Kelvin has), so no reason to make it a Kelvin-only action. Service
+  redeployed automatically on the variable set; detail endpoint confirmed
+  fixed (401 on a bad token instead of 500).
+
 ## If this fails next time
-- If the MSE panel in `/dashboard/email-campaigns` 500s with "
-  MSE_SUPABASE_JWT_SECRET is not configured," that's the expected
-  failure mode until Kelvin copies the existing secret value from
-  mse-api's Railway env into ceo-dashboard's Vercel env — not a bug.
+- If the MSE panel in `/dashboard/email-campaigns` 500s with
+  "MSE_SUPABASE_JWT_SECRET is not configured," check Vercel production
+  env first — the fix above should already cover this, but a redeploy
+  target/environment mismatch could un-set it.
 - If mse-api fails to deploy again with a `railpack prepare` error,
   check `rootDirectory` first (should be `kdavis-microsaas-engine`) before
   assuming it's a code issue — this exact failure mode already burned
