@@ -515,6 +515,33 @@ async def publish_queue_row(conn, queue_id: str) -> dict:
     if row["status"] != "approved":
         raise PublishError(409, f"Queue row status is '{row['status']}' — must be 'approved' before publishing")
 
+    # Real bug found live 2026-09-21: document_carousel posts have NEVER
+    # had a real publish path. carousel_slides/carousel_pdf_brief are
+    # only ever drafted (agents/marketing/mkt_li1_linkedin_brand.py,
+    # mkt_v1_content_multiplier.py, scripts/generate_showing_signal_week.py)
+    # -- nothing anywhere in this codebase renders them into an actual PDF/
+    # image set, and core/publishers/linkedin.py has no document-post
+    # function (only post_text/post_image exist). This function's own
+    # image_brief check below (carousels never populate image_brief --
+    # they use the separate carousel_pdf_brief field) fell through to the
+    # else branch and silently published the caption alone via post_text,
+    # used_image=False, with no error -- a carousel post going out with
+    # none of its slides/visual content, and no signal anywhere that
+    # anything was wrong. dispatch_scheduled_posts.py's cron reported
+    # every one of these as a success.
+    #
+    # Fail loud instead, matching this function's own "never silently
+    # swallows a failure" contract -- row stays 'approved' so it can be
+    # retried once real document/carousel publishing exists (see GAPS.md).
+    if row["format"] == "document_carousel":
+        raise PublishError(
+            501,
+            "document_carousel publishing is not implemented — no code path renders "
+            "carousel_slides/carousel_pdf_brief into a postable artifact, and "
+            "core/publishers/linkedin.py has no document-post function. Re-approve as "
+            "text_post with a generated image, or build real carousel publishing first.",
+        )
+
     li_access_token, author_urn = await _get_linkedin_connection(conn)
     if not author_urn:
         raise PublishError(409, "LinkedIn connection has no author_urn — reconnect")

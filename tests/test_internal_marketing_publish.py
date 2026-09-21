@@ -122,6 +122,29 @@ async def test_publish_falls_back_to_text_when_no_canva_connection():
     assert result["used_image"] is False
 
 
+async def test_publish_rejects_document_carousel_instead_of_silently_publishing_as_text():
+    """Real bug found live 2026-09-21: document_carousel posts never had a
+    real publish path -- carousel_slides/carousel_pdf_brief are drafted
+    but nothing renders or posts them, so this function's image_brief
+    check (carousels never populate image_brief) fell through to
+    post_text(), silently publishing the caption alone with none of the
+    carousel's actual content. Must now fail loud instead."""
+    carousel_row = {**QUEUE_ROW, "format": "document_carousel", "image_brief": None}
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=carousel_row)
+    request = _fake_request(conn)
+
+    with patch("core.publishers.linkedin.post_text", new=AsyncMock()) as mock_post_text, \
+         patch("core.publishers.linkedin.post_image", new=AsyncMock()) as mock_post_image:
+        with pytest.raises(HTTPException) as exc_info:
+            await publish_linkedin_post("q-1", request, user={"sub": "kelvin"})
+
+    assert exc_info.value.status_code == 501
+    mock_post_text.assert_not_awaited()
+    mock_post_image.assert_not_awaited()
+    conn.execute.assert_not_awaited()  # row must stay 'approved', never marked 'published'
+
+
 async def test_publish_rejects_a_row_that_is_not_approved():
     pending_row = {**QUEUE_ROW, "status": "pending_review"}
     conn = AsyncMock()

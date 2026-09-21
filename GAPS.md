@@ -1469,3 +1469,48 @@ go-ahead before building:
    consulting's lead generation is Google-CSE-job-posting-signal-only
    and the "Run Lead Finder Now" button should be disabled/relabeled
    for that product until #1 above is decided.
+
+### 30. `document_carousel` LinkedIn posts have never had a real publish path -- silently went out as caption-only text, no error, every time (2026-09-21)
+
+Found investigating Kelvin's report: "LinkedIn content created without
+images." Root cause traced to `api/routes/internal_marketing.py`'s
+`publish_queue_row` (the function both the manual publish button and
+`scripts/dispatch_scheduled_posts.py`'s cron call): it only knows how to
+post via `image_brief.image_path` (a single generated/vault image) or a
+dormant Canva Autofill branch — anything else falls through to
+`post_text()`, `used_image=False`, no error. `document_carousel`-format
+posts never populate `image_brief` at all; they carry `carousel_slides`
+(per-slide text) and `carousel_pdf_brief` (`{concept, slide_count,
+style}`) instead — fields that are drafted in three separate places
+(`agents/marketing/mkt_li1_linkedin_brand.py`,
+`mkt_v1_content_multiplier.py`, `scripts/generate_showing_signal_week.py`)
+but read by **nothing** downstream: no code anywhere renders them into an
+actual PDF or image set, and `core/publishers/linkedin.py` has no
+document-post function (only `post_text`/`post_image` exist). Every
+approved carousel post — and the format rule
+(`mkt_li1_linkedin_brand.py`: "use document_carousel when content has
+3-8 discrete points") means this is a real, regular fraction of posts,
+not an edge case — published as a bare caption with none of its actual
+slide content, silently, with the cron reporting success every time.
+
+**Fixed this session:** `publish_queue_row` now raises `PublishError(501,
+...)` for `document_carousel` rows instead of silently degrading to
+text — the row stays `approved` (retriable) but every dispatch attempt
+now fails loud, in both the dashboard and the cron's GitHub Actions log,
+until it's resolved. This stops the silent bad outcome; it does not
+build real carousel publishing.
+
+**Not built here — surfaced, not built mid-session, per this file's own
+rule.** Two separate follow-ups, either needs Kelvin's go-ahead:
+1. Build real document/carousel publishing: render `carousel_slides` +
+   `carousel_pdf_brief` into an actual multi-page PDF (no renderer
+   exists anywhere in this codebase today — this is new, from scratch),
+   then post it via LinkedIn's Documents API (register-upload, upload
+   the PDF, reference the resulting URN in the post) — a new function in
+   `core/publishers/linkedin.py` alongside `post_text`/`post_image`.
+2. Or: retire `document_carousel` as a choosable format until #1 is
+   built — remove the format rule from the three drafting prompts above
+   so the LLM never produces a post this pipeline can't actually
+   publish, and manually re-triage whatever `document_carousel` rows
+   currently sit `pending_review`/`approved` (re-approve as `text_post`
+   with a generated image, or reject).
