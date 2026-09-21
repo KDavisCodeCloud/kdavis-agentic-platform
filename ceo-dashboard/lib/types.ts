@@ -277,6 +277,7 @@ export const DEPT_ROUTES = [
   { id: "empire",    label: "Decoded Empire",   path: "/dashboard/empire",     roles: ["admin"] },
   { id: "agents",    label: "Voice Agents",     path: "/dashboard/agents",    roles: ["admin"] },
   { id: "customers", label: "Customers",        path: "/dashboard/customers", roles: ["admin"] },
+  { id: "email-campaigns", label: "Email Campaigns", path: "/dashboard/email-campaigns", roles: ["admin"] },
 ] as const;
 
 export type DeptId = typeof DEPT_ROUTES[number]["id"];
@@ -334,4 +335,84 @@ export interface MseContentSurface {
   status: SurfaceStatus;
   reject_reason: string | null;
   created_at: string;
+}
+
+// Email Campaign HITL queue (app/dashboard/email-campaigns), 2026-09-21.
+// Merges two structurally different backends into one shape for the
+// dashboard to render:
+//   - Cloud Decoded (cd_email_templates): one row per sequence STEP,
+//     step_number/skip_if/cta_url are real fields.
+//   - MSE (mse_email_sequences, wrapped by api/routers/marketing_internal.py
+//     in kdavis-microsaas-engine): one row per whole SEQUENCE (no per-step
+//     rows exist), step_number/skip_if/cta_url don't apply -- always null.
+// See docs/internal/email-approval-api.md (this repo) and the MSE repo's
+// equivalent doc for the real, current backend shapes this is normalized
+// from -- both documents are the source of truth, not this comment.
+export type EmailFeedSource = "cloud-decoded" | "mse";
+export type EmailTemplateStatus =
+  | "pending_approval" | "approved" | "retired"
+  | "pending_hitl" | "loaded_unactivated" | "activated" | "failed";
+
+export interface EmailCampaignTemplate {
+  source: EmailFeedSource;
+  templateKey: string;
+  sequenceKey: string;
+  stepNumber: number | null;
+  subject: string | null;
+  preheader: string | null;
+  status: EmailTemplateStatus;
+  origin: "generated" | "adapted_from_script";
+  sourceScript: string | null;
+  ctaUrl: string | null;
+  skipIf: string | null;
+  approvedAt: string | null;
+  approvedBy: string | null;
+  productLabel: string;
+  productResolved: boolean;
+  createdAt: string | null;
+}
+
+export interface EmailCampaignTemplateDetail extends EmailCampaignTemplate {
+  bodyHtml: string | null;
+  bodyText: string | null;
+  renderedHtml: string | null;
+  renderedText: string | null;
+  steps: unknown[] | null;
+}
+
+export interface EmailCampaignMetrics {
+  source: EmailFeedSource;
+  sequenceKey: string | null;
+  sends: number | null;
+  clicks: number | null;
+  unsubscribes: number | null;
+  conversions: number | null;
+  revenueUsd: number | null;
+  note: string | null;
+}
+
+export interface MseCampaignStatusProduct {
+  productId: string;
+  slug: string;
+  name: string;
+  productStatus: string;
+  positioningStatus: string;
+  positioningVersion: number | null;
+}
+
+export interface MseCampaignStatus {
+  products: MseCampaignStatusProduct[];
+  emailSequencesTotal: number;
+  emailSequencesUnattributable: number;
+  note: string | null;
+}
+
+// Feed reachability, surfaced per-panel so one backend being down never
+// blanks the other feed's data (plan requirement: 503 degrades the panel,
+// not the page).
+export interface EmailFeedHealth {
+  source: EmailFeedSource;
+  enabled: boolean;
+  reachable: boolean;
+  error: string | null;
 }

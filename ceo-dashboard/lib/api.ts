@@ -272,7 +272,7 @@ export interface IcpProduct {
 // via a .catch and look like an empty/"Not Found" result). res.redirected
 // catches this before either happens, with a message that actually tells
 // the user what to do.
-function assertNotRedirectedToLogin(res: Response): void {
+export function assertNotRedirectedToLogin(res: Response): void {
   if (res.redirected && new URL(res.url).pathname.startsWith("/login")) {
     throw new Error("Your session needs a refresh -- reload the page and sign in again.");
   }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { DEPT_ROUTES, EXTERNAL_LINKS, type Role } from "@/lib/types";
+import { EmailCampaignsNavBadge } from "./EmailCampaignsNavBadge";
 
 export function Sidebar({ role }: { role: Role }) {
   const pathname = usePathname();
@@ -60,6 +61,7 @@ export function Sidebar({ role }: { role: Role }) {
                   }}
                 />
                 <span className="truncate-text">{dept.label}</span>
+                {dept.id === "email-campaigns" && <EmailCampaignsNavBadge />}
               </Link>
             </li>
           );

@@ -22,3 +22,16 @@ export async function requireRole(allowed: Role[]): Promise<{ ok: true } | { ok:
 
   return { ok: true };
 }
+
+// The Cloud Decoded Email Campaign feed's backend
+// (api/middleware/internal_auth.py, kdavis-agentic-platform root) validates
+// the signed-in admin's OWN Supabase session JWT directly -- ceo-dashboard
+// and Cloud Decoded share the same Supabase project (see
+// docs/internal/email-approval-api.md's Auth section), so its proxy routes
+// forward this token as-is rather than using a static server-side API key.
+// Call requireRole() first; this assumes a session already exists.
+export async function getSupabaseAccessToken(): Promise<string | null> {
+  const supabase = await createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
+}
