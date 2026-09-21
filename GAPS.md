@@ -1514,3 +1514,91 @@ rule.** Two separate follow-ups, either needs Kelvin's go-ahead:
    publish, and manually re-triage whatever `document_carousel` rows
    currently sit `pending_review`/`approved` (re-approve as `text_post`
    with a generated image, or reject).
+
+### 31. Cloud Decoded email lifecycle system — honest gaps from this build (migration 051, 2026-09-21)
+
+Built the full onboarding/dunning/winback/newsletter/etc. email engine
+(`core/email_scheduler.py`, `core/marketing_email.py`,
+`core/email_content/*.py`). Real, tested, deployed — but several pieces
+are deliberately incomplete or unverifiable without Kelvin's own action:
+
+1. **Resend webhook signature verification is unverified against a real
+   delivery.** `core/resend_webhook.py` implements Svix's documented
+   HMAC scheme from memory (no live docs access this session) and is
+   tested against itself (`tests/test_resend_webhook.py`), not against
+   an actual Resend webhook payload. Kelvin still needs to configure the
+   webhook in the Resend dashboard (pointed at
+   `{API_BASE_URL}/api/v1/email/resend-webhook`) before this can be
+   exercised for real — if Resend's actual header names or signed-content
+   format differ, every real webhook will be rejected until corrected
+   against a live delivery.
+2. **Quiet-hours timezone is a platform-wide default, not per-recipient.**
+   `CD_EMAIL_QUIET_HOURS_TZ` defaults to `America/Phoenix` — the build
+   has no way to know an individual subscriber's real timezone, so every
+   marketing send observes one shared 06:00-18:00 window regardless of
+   where the recipient actually is.
+3. **Exit-rules engine vocabulary is limited to two conditions**
+   (`workspace_active`, `workspace_canceled`) — `core/email_scheduler.py`'s
+   `_evaluate_exit_rules`. The jsonb column supports more, but nothing
+   else is implemented or needed by this build's 8 sequences.
+4. **`skip_if` for onboarding step 3 (day-4 "fire a test incident") and
+   stall-nudge step 2 (day-7 "no first incident") both use
+   `has_first_incident`, which checks for ANY incident ever, not
+   specifically a test/synthetic one** — a workspace with a real incident
+   already (before the email would fire) correctly skips, but there's no
+   way to distinguish "fired a real incident" from "fired the specific
+   test incident the email asked for." Accepted as good enough for this
+   build; a dedicated `is_test` flag on `incidents` would close it.
+5. **Stall-nudge step 2's trigger is NOT independently evaluated** — per
+   the original build spec's letter, day-7 "no first incident" should be
+   its own trigger condition; this build fires it via step 1's
+   `delay_days` instead (documented in
+   `core/email_content/stall_nudges.py` and `core/email_triggers.py`).
+   Practical effect: step 2 fires exactly 4 days after step 1 regardless
+   of the workspace's actual signup date, which is close to but not
+   exactly "day 7 since signup."
+6. **`expansion_agent_ceiling` and `expansion_enterprise_upsell` have no
+   wired trigger.** Only `expansion_seat_cap` actually enrolls anyone
+   (from `api/routes/workspace_members.py`'s invite endpoint hitting the
+   seat cap). No existing "agent-limit ceiling hit" signal exists in this
+   codebase to hook (tier gating is a hard block per-call, not a
+   countable ceiling a workspace approaches), and "Enterprise upsell"
+   criteria was never concretely specified beyond the template copy
+   itself. Both templates exist, can be approved/activated, and are
+   documented in `docs/internal/email-approval-api.md` — they just never
+   fire.
+7. **Dunning copy corrects an assumption in the original build spec.**
+   The spec assumed "access stays open" while `past_due` — checked
+   against `core/compliance.py`'s real `WorkspaceComplianceGuard`, which
+   blocks agent execution immediately at `past_due` (not just at eventual
+   suspension). `core/email_content/dunning.py`'s copy reflects the real
+   behavior instead of the spec's incorrect assumption.
+8. **Phase 5 capture is partial.** The newsletter signup block ships on
+   every marketing page via the shared footer
+   (`frontend/src/components/marketing/SiteChrome.tsx` →
+   `NewsletterSignup.tsx`). A dedicated `/newsletter` landing page and the
+   lead-magnet-gated security-questionnaire-download flow were **not**
+   built this session (time-boxed out of an already large build) — the
+   backend (`source='lead_magnet'` → `trust_drip` enrollment) is ready
+   for it, but nothing on the frontend gates a real document behind it
+   yet.
+9. **The old Brevo lead-nurture stack
+   (`agents/internal/email_sequence_agent.py`,
+   `leads/integrations/brevo_client.py`, `leads/capture/signup_handler.py`
+   /`trial_handler.py`, migration 039's `email_sequences` table) was
+   confirmed to have zero real callers anywhere in this codebase outside
+   its own tests** — not wired to any HTTP route, so "retiring" it this
+   session meant leaving it exactly as untouched/dead as it already was,
+   not migrating live traffic off of it. Flagged DEPRECATED in
+   `DECISIONS.md`, not deleted (its tables and tests still exist).
+10. **`hitl` role does not exist in `api/middleware/internal_auth.py`'s
+    auth model.** Every `/internal/email/*` endpoint is admin-only in
+    practice — Kelvin's plan for his wife to approve templates under a
+    `hitl` role needs that role added to `get_internal_user`'s check
+    first (a shared dependency other `/internal/*` routes also use — not
+    changed here without being asked, see that file's own comment).
+11. **Metrics endpoint's `revenue_usd_estimate` is static list pricing,
+    not Stripe-accurate** — a workspace's real price can differ from list
+    (promo codes, grandfathering). Documented as an estimate in
+    `docs/internal/email-approval-api.md`, not fixed to read live Stripe
+    prices this build.

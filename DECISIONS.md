@@ -144,3 +144,50 @@ Principle #7 (struck through, dated, reasoned — not silently deleted,
 matching this file's own established correction convention) plus its
 two other now-dead references in the "GitHub Actions — daily visibility"
 guide section. GitHub is the sole repo for this project going forward.
+
+## 2026-09-21 — Cloud Decoded email lifecycle system (migration 051), and retiring the systems it supersedes
+
+Built the full onboarding/nurture/dunning/winback/newsletter email engine
+(`core/email_scheduler.py`, `core/marketing_email.py`,
+`core/email_content/*.py`, `api/routes/email_public.py`,
+`api/routes/internal_email_campaigns.py`) per Kelvin's build spec. Two
+existing systems directly overlapped with its scope; both were surfaced
+to Kelvin before building, and he chose to retire both rather than run
+two competing systems:
+
+**Retired: the Brevo lead-nurture stack** —
+`agents/internal/email_sequence_agent.py`, `leads/integrations/brevo_client.py`,
+`leads/capture/signup_handler.py`/`trial_handler.py`'s Brevo sync calls,
+and migration 039's `email_sequences`/`email_sequence_steps` tables.
+Investigation found these had **zero real callers anywhere outside their
+own tests** — never wired to an HTTP route, so no live traffic or
+customer-facing behavior actually changes by retiring them. Flagged
+DEPRECATED in code comments, not deleted (tables, historical test
+coverage, and the files themselves stay intact). New capture
+(`POST /email/subscribe`) uses the new `cd_email_subscribers` table
+directly, on the Resend-based engine, per the new build's own locked
+decision ("no new email provider, no Brevo").
+
+**Retired: `core/onboarding_sequence.py`'s day-2/day-5 cron** — this
+module's 6-hourly loop was real, live, and sending (day0 remains a
+separate, unchanged, synchronous transactional welcome email in
+`core/email.py`). Its content and skip_if logic (real setup-checklist
+signals) were folded into the new engine's `onboarding` sequence as
+steps 1-2 (`core/email_content/onboarding.py` calls the same HTML-builder
+functions directly rather than rewriting the copy). `run_onboarding_sequence_check`
+is now a documented no-op — kept, not deleted, so `api/main.py`'s
+existing task registration and the `workspace_onboarding_emails` table
+don't need touching, and a rollback is reverting one file.
+
+**Architecture correction vs. the original build spec:** the spec
+assumed three separate repos/codebases (Cloud Decoded, an "MSE repo",
+and a "CEO Decoded repo"). Recon found `ceo-dashboard/` is a
+subdirectory of *this* repo, not a separate one, and the real MSE
+campaign-factory code lives in a genuinely separate repo
+(`kdavis-microsaas-engine`) unrelated to `agents/mse/` in this repo
+(which is a different, pre-existing agent set — opportunity finder,
+demand validator, product-spec writer). See
+`docs/internal/email-approval-api.md` for the corrected cross-repo
+contract this build publishes for the CEO Decoded dashboard to consume.
+
+Full honest gap list: GAPS.md #31.
