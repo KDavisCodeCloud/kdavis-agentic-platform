@@ -11,11 +11,31 @@ pillar sequence, and that every row is tagged source="on_demand".
 """
 import json
 from datetime import date
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import agents.marketing.mkt_li1_linkedin_brand as li1
+
+_FAKE_ASSETS_ROOT = Path("/fake/assets_library")
+_FAKE_IMAGE_RESULT = {
+    "image_path": _FAKE_ASSETS_ROOT / "my_originals" / "x" / "x.png",
+    "scene_description": "fake scene", "scene_type": "TECHNICAL",
+    "attempts": 1, "relevant": True, "reason": "ok", "flagged_for_review": False,
+}
+
+
+@pytest.fixture(autouse=True)
+def _mock_image_generation():
+    """2026-09-21: MKT-LI1 now generates a real image at draft time (see
+    test_mkt_li1_asset_vault_wiring.py) — this file's own fake Anthropic
+    client's finite side_effect lists would otherwise be consumed by
+    generate_relevant_image's internal LLM calls instead of the next
+    draft, which is unrelated to what these tests are checking."""
+    with patch("assets_library.scene_image_gen.generate_relevant_image", return_value=_FAKE_IMAGE_RESULT), \
+         patch("assets_library.gemini_image_gen.ASSETS_ROOT", _FAKE_ASSETS_ROOT):
+        yield
 
 
 def _response_for_pillar(pillar_num: int, stance: str = "BUILD_IN_PUBLIC"):

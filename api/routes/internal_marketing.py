@@ -614,23 +614,34 @@ async def publish_linkedin_post(
 
 # ── Batch review, scheduling, and bulk approval (dashboard) ────────────────
 #
-# Image generation moved here — fires once, synchronously, the moment a
-# row's status flips to 'approved' — per Kelvin's 2026-09-15 directive
-# fixing two problems in the old flow (agents/marketing/
-# mkt_li1_linkedin_brand.py used to draft image_description in the same
-# LLM call as post_copy, then select/generate an image immediately,
-# before any human ever saw the post):
+# FALLBACK ONLY as of 2026-09-21 (v2.7 of agents/marketing/
+# mkt_li1_linkedin_brand.py): the primary image generation point moved
+# back to draft/queue time — mkt_li1_linkedin_brand.py's
+# _attach_generated_image now runs before a row ever reaches
+# pending_review, using this same assets_library/scene_image_gen.py
+# pipeline, so Kelvin reviews and approves the image together with the
+# post text (his explicit correction of the 2026-09-15 change below,
+# which had moved generation to fire only after approval — he was
+# approving text blind and never got to review or reject the image).
 #
-#   1. Sequencing: an image now only ever gets generated from POST TEXT A
-#      HUMAN HAS ALREADY APPROVED, via assets_library/scene_image_gen.py's
-#      two-step scene-extraction pipeline — never from a draft that could
-#      still be rejected or rewritten.
-#   2. Relevance: that same module gates the result (subject match +
-#      text legibility) before it's ever attached, regenerating once on a
-#      failure and, if still failing, reverting the row back to
-#      'pending_review' with hitl_notes explaining why rather than
-#      leaving 'approved' status pointing at a bad or missing image that
-#      scripts/dispatch_scheduled_posts.py could otherwise publish as-is.
+# This function is left wired into the approval endpoints below purely
+# as a safety net: if a row somehow reaches pending_review with no
+# image (a draft-time generation failure, or a legacy row), approving
+# it will still fill one in rather than leaving a permanently-blank
+# row. Its own `existing_brief` guard makes it a no-op whenever an
+# image already exists, which is the normal case now.
+#
+# Original 2026-09-15 rationale (kept for history — the sequencing part
+# is superseded, the relevance-gating part is not): an image now only
+# ever gets generated from real post text via assets_library/
+# scene_image_gen.py's two-step scene-extraction pipeline (never from
+# the old asset_selector.py vault-matching), and that same module gates
+# the result (subject match + text legibility) before it's ever
+# attached, regenerating once on a failure and, if still failing,
+# reverting the row to 'pending_review' with hitl_notes explaining why
+# rather than leaving 'approved' status pointing at a bad or missing
+# image that scripts/dispatch_scheduled_posts.py could otherwise
+# publish as-is.
 #
 # Runs inside the same request that flips status to 'approved' (not a
 # background job) specifically so there is no window where a row is
@@ -687,7 +698,7 @@ async def _generate_and_gate_image_for_approved_row(conn, queue_id: str) -> None
         "image_path": f"assets_library/{result['image_path'].relative_to(ASSETS_ROOT)}",
         "credit_line": None,
         "is_original": True,
-        "selected_because": f"scene-gated generation, {result['scene_type'].lower()}, post-approval",
+        "selected_because": f"scene-gated generation, {result['scene_type'].lower()}, post-approval fallback",
         "generation_available": True,
     }
 

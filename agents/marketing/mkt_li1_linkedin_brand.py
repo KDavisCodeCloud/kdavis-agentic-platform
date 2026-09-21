@@ -15,6 +15,29 @@ distribution channel for every product launch. Distinct from product
 marketing (MKT-V1). Full spec: knowledge/Marketing/Marketing-Engine-Agent-Specs.md.
 System prompt: knowledge/Marketing/MKT-LI1-System-Prompt-v2.md.
 
+v2.7 (2026-09-21, image generation moved back to draft time): reverts
+v2.5's "generate the image only after approval" sequencing. Kelvin's
+correction, verbatim: "I need to be able to approve the images and I
+was able to do so in previous deployments. that needs to continue to
+take place before approval, not after." v2.5 was reasoning from a real
+incident (see its own entry below) but drew the wrong conclusion —
+the bug was asset_selector.py's weak topic-word matching picking the
+wrong image, not the fact that an image existed at review time.
+scene_image_gen.py (built the same day as v2.5, for the backlog-repair
+half of that session) already replaced vault-matching with bespoke,
+relevance-gated generation — that fix stands. What v2.5 additionally
+did, moving generation to fire only after Kelvin clicks approve, meant
+he was approving post text blind and never got to review or reject the
+image itself before it went live. New `_attach_generated_image` calls
+scene_image_gen.generate_relevant_image() for every text_post draft,
+before queue_for_review, so the image is already on the row by the
+time it reaches pending_review and Kelvin can approve or reject the
+post (and, by extension, its image) as one decision, same as every
+deployment before 2026-09-15. api/routes/internal_marketing.py's
+post-approval generation hook is left in place as a fallback for the
+rare case a row reaches pending_review with no image (a draft-time
+generation failure) — it's a no-op once an image already exists.
+
 v2.6 (2026-09-15, closing line replaces CTA ROTATION): every post now ends
 with one of two code-enforced closing lines (_apply_closing_line) instead
 of the model choosing its own ask — CTA_CLOSING_LINE ("Link in the
@@ -155,21 +178,26 @@ then fires on its own scheduled_for timestamp across the month via
 scripts/dispatch_scheduled_posts.py (cron), not an immediate bulk-publish —
 see db/migrations/013_linkedin_batch_scheduling.sql.
 
-Image handling (rewritten 2026-09-15 — see the v2.5 changelog entry
-above for why): MKT-LI1 no longer selects or generates any image at
-draft/queue time. image_brief and image_description are always written
-null on the queued row, for every format. post_copy still runs through
-post_formatter.format_post() here, but always with credit_line=None/
-is_original=False — there is no image yet to credit. The real image
-(scene-extracted from the post text a human has since approved,
-Gemini-generated, relevance-and-legibility-gated) is attached later, by
-api/routes/internal_marketing.py's approval endpoints calling
-assets_library/scene_image_gen.py — never by this agent, and never
-before a human has approved the copy. The old vault-matching path
-(assets_library/asset_selector.py) is no longer called from this file;
-it was the direct cause of the 2026-09-15 image-relevance incident (10
-of 22 unpublished posts sharing another post's image via loose
-topic-word matching) and nothing here re-introduces it.
+Image handling (reverted 2026-09-21 — see the v2.7 changelog entry
+above): for every text_post draft, MKT-LI1 now generates and attaches a
+real image via assets_library/scene_image_gen.py's scene-extraction +
+Gemini + relevance-gate pipeline BEFORE the row is queued for review
+(_attach_generated_image, called from every entry point below that
+produces a text_post: run_li1_brand_agent, generate_on_demand_posts,
+generate_builder_post, generate_product_launch_post). Kelvin reviews
+and approves the image together with the caption — the post never
+reaches pending_review without one (barring an infra failure, in which
+case the row still queues, image_brief stays null, and
+api/routes/internal_marketing.py's approval-time hook — kept as a
+fallback, see its own comments — will fill it in on approval). The old
+vault-matching path (assets_library/asset_selector.py) is still never
+called from this file; that loose topic-word matching, not the
+draft-time timing itself, was the direct cause of the 2026-09-15
+image-relevance incident (10 of 22 unpublished posts sharing another
+post's image). scene_image_gen.py's bespoke, relevance-gated generation
+replaced vault-matching entirely that same day — moving the trigger
+back to draft time restores review-what-you-approve without
+reintroducing the actual bug.
 """
 
 import json
@@ -755,6 +783,52 @@ def _compute_ondemand_schedule(count: int, start_from: Optional[date] = None) ->
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
 
+def _attach_generated_image(post: dict, anthropic_client: Optional[Any] = None) -> None:
+    """Generates and attaches a real image to a text_post draft BEFORE it
+    queues for review (see this file's v2.7 changelog entry above for
+    why). Mutates `post` in place: sets image_brief/image_description on
+    success, leaves them null and appends a note on failure — an image
+    pipeline problem must never block drafting or reviewing the post
+    text itself.
+
+    Only runs for format == "text_post" — document_carousel posts carry
+    their visual content in carousel_pdf_brief, not a single generated
+    image, and this function is a no-op for them.
+    """
+    if post.get("format") != "text_post":
+        return
+
+    from assets_library.gemini_image_gen import ASSETS_ROOT
+    from assets_library.scene_image_gen import generate_relevant_image
+
+    try:
+        result = generate_relevant_image(
+            post_text=post["post_copy"],
+            pillar=post.get("pillar_name") or post.get("topic") or "general",
+            post_topic=post.get("topic") or "",
+            anthropic_client=anthropic_client,
+        )
+    except Exception as exc:  # noqa: BLE001 -- image pipeline failure must never block drafting
+        log.error("MKT-LI1: image generation failed for draft %r: %s", post.get("topic"), exc)
+        note = f"IMAGE GENERATION FAILED: {exc}"
+        post["notes"] = (post["notes"] + " | " if post.get("notes") else "") + note
+        return
+
+    post["image_brief"] = {
+        "image_id": None,
+        "image_path": f"assets_library/{result['image_path'].relative_to(ASSETS_ROOT)}",
+        "credit_line": None,
+        "is_original": True,
+        "selected_because": f"scene-gated generation, {result['scene_type'].lower()}, pre-review",
+        "generation_available": True,
+    }
+    post["image_description"] = result["scene_description"]
+
+    if result["flagged_for_review"]:
+        note = f"IMAGE RELEVANCE GATE FAILED after regeneration: {result['reason']} — review the image carefully before approving"
+        post["hitl_notes"] = (post.get("hitl_notes", "") + " | " if post.get("hitl_notes") else "") + note
+
+
 def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: dict, last_stance: Optional[str] = None) -> dict:
     pillar_name = PILLAR_NAMES.get(pillar_key, pillar_key)
     # Each post is drafted via its own independent LLM call with no memory
@@ -874,13 +948,15 @@ def run_li1_brand_agent(
             post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"))
 
             if post["format"] == "text_post":
-                # No image yet -- see this file's v2.5 changelog entry. credit_line/is_original
-                # are always None/False here since there is nothing to credit until
-                # api/routes/internal_marketing.py generates one post-approval.
+                # credit_line=None/is_original=False here since format_post's job is
+                # sentence-per-line body structure, not the image credit line -- the
+                # real image (attached below) is always an original Gemini generation
+                # with no external credit anyway.
                 formatted_copy, format_warnings = format_post(post["post_copy"], credit_line=None, is_original=False)
                 post["post_copy"] = formatted_copy
                 if format_warnings:
                     post["notes"] = (post["notes"] + " | " if post["notes"] else "") + "post_formatter: " + "; ".join(format_warnings)
+                _attach_generated_image(post, anthropic_client=client)
 
             if compliance["flags"]:
                 post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
@@ -989,13 +1065,15 @@ def generate_on_demand_posts(
             post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"))
 
             if post["format"] == "text_post":
-                # No image yet -- see this file's v2.5 changelog entry. credit_line/is_original
-                # are always None/False here since there is nothing to credit until
-                # api/routes/internal_marketing.py generates one post-approval.
+                # credit_line=None/is_original=False here since format_post's job is
+                # sentence-per-line body structure, not the image credit line -- the
+                # real image (attached below) is always an original Gemini generation
+                # with no external credit anyway.
                 formatted_copy, format_warnings = format_post(post["post_copy"], credit_line=None, is_original=False)
                 post["post_copy"] = formatted_copy
                 if format_warnings:
                     post["notes"] = (post["notes"] + " | " if post["notes"] else "") + "post_formatter: " + "; ".join(format_warnings)
+                _attach_generated_image(post, anthropic_client=client)
 
             if compliance["flags"]:
                 post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
@@ -1070,6 +1148,8 @@ def generate_builder_post(
     if compliance["flags"]:
         post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
         hitl_tier = 3  # MKT-10 flag always escalates to Tier 3, same rule as the evergreen batch
+
+    _attach_generated_image(post, anthropic_client=client)
 
     try:
         content_item = {**post, "agent_id": AGENT_ID}
@@ -1151,6 +1231,8 @@ def generate_product_launch_post(
     }
     if compliance["flags"]:
         post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+
+    _attach_generated_image(post, anthropic_client=client)
 
     try:
         content_item = {**post, "agent_id": AGENT_ID}
@@ -1311,6 +1393,8 @@ def generate_product_content(
     }
     if compliance["flags"]:
         post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
+
+    _attach_generated_image(post, anthropic_client=client)
 
     try:
         content_item = {**post, "agent_id": AGENT_ID}

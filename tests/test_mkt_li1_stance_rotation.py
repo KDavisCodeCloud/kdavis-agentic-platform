@@ -8,9 +8,31 @@ the next draft call. This covers that threading, not real LLM stance
 selection quality.
 """
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import agents.marketing.mkt_li1_linkedin_brand as li1
+
+_FAKE_ASSETS_ROOT = Path("/fake/assets_library")
+_FAKE_IMAGE_RESULT = {
+    "image_path": _FAKE_ASSETS_ROOT / "my_originals" / "x" / "x.png",
+    "scene_description": "fake scene", "scene_type": "TECHNICAL",
+    "attempts": 1, "relevant": True, "reason": "ok", "flagged_for_review": False,
+}
+
+
+@pytest.fixture(autouse=True)
+def _mock_image_generation():
+    """2026-09-21: run_li1_brand_agent now generates a real image at
+    draft time for each post (see test_mkt_li1_asset_vault_wiring.py) --
+    mock it so the fake Anthropic client's finite side_effect list here
+    isn't consumed by generate_relevant_image's internal LLM calls
+    instead of the next draft."""
+    with patch("assets_library.scene_image_gen.generate_relevant_image", return_value=_FAKE_IMAGE_RESULT), \
+         patch("assets_library.gemini_image_gen.ASSETS_ROOT", _FAKE_ASSETS_ROOT):
+        yield
 
 # _build_slots pops from the pillar_1 pool for its own quota AND as the
 # fallback for pillar_2/3 (both empty here, see _build_slots' own
