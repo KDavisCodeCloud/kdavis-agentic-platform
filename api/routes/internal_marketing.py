@@ -975,20 +975,32 @@ _ASSETS_LIBRARY_ROOT = (_REPO_ROOT / "assets_library").resolve()
 
 
 @router.get("/assets/{asset_path:path}")
-async def get_asset(asset_path: str, user: dict = Depends(get_internal_user)) -> FileResponse:
+async def get_asset(asset_path: str, _: None = Depends(require_marketing_api_key)) -> FileResponse:
     """
-    Serves one file from assets_library/ for the dashboard's image
-    thumbnails — image_brief.image_path is stored as
-    "assets_library/my_originals/foo.png"; the frontend strips the
-    "assets_library/" prefix before requesting {asset_path} here.
+    Serves one file from assets_library/ live off this backend's own
+    filesystem, for the dashboard's image thumbnails — image_brief.
+    image_path is stored as "assets_library/my_originals/foo.png"; the
+    frontend strips the "assets_library/" prefix before requesting
+    {asset_path} here.
 
-    Gated by get_internal_user, same as every other route in this file —
-    a plain <img src="..."> can't carry a Bearer token, so the frontend
-    fetches this authenticated and renders the bytes as a blob URL rather
-    than this endpoint being left open (these are pre-publish marketing
-    images, low sensitivity, but there's no reason to be the one
-    unauthenticated hole in this router when the fetch-and-blob pattern
-    costs only a few more lines client-side).
+    Real bug found live 2026-09-21: ceo-dashboard's own app/api/asset/
+    [...path]/route.ts used to serve these from a git-committed snapshot
+    bundled into its Vercel deployment at build time (outputFileTracingIncludes),
+    a 2026-07-24 workaround from when this backend "had never been
+    deployed anywhere reachable." It has been live on Railway since
+    before 2026-09-16 (see generate_linkedin_queue_images's docstring
+    below), making that workaround both obsolete and actively broken —
+    any image generated after ceo-dashboard's last Vercel build (which is
+    every image from a live run, since nothing auto-commits generated
+    PNGs to git) 404'd as "image failed to load" in the review queue.
+    ceo-dashboard's route.ts now proxies here server-to-server instead.
+
+    Gated by require_marketing_api_key (same shared secret as this
+    file's other server-to-server bridge, generate_linkedin_queue_images)
+    rather than get_internal_user — the caller is now always
+    ceo-dashboard's own Next.js route handler (which does its own session
+    check via requireRole before proxying), never a browser request
+    carrying a Supabase session token directly.
 
     Path traversal is blocked by resolving the requested path and
     confirming it's still inside _ASSETS_LIBRARY_ROOT before serving —

@@ -295,7 +295,7 @@ async def test_get_asset_serves_a_real_file(tmp_path, monkeypatch):
     image_file.parent.mkdir(parents=True)
     image_file.write_bytes(b"\x89PNG...")
 
-    response = await get_asset("my_originals/foo.png", user={"sub": "kelvin"})
+    response = await get_asset("my_originals/foo.png")
 
     assert str(response.path) == str(image_file)
     assert response.media_type == "image/png"
@@ -305,7 +305,7 @@ async def test_get_asset_404s_for_a_missing_file(tmp_path, monkeypatch):
     monkeypatch.setattr("api.routes.internal_marketing._ASSETS_LIBRARY_ROOT", (tmp_path / "assets_library").resolve())
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_asset("my_originals/does-not-exist.png", user={"sub": "kelvin"})
+        await get_asset("my_originals/does-not-exist.png")
 
     assert exc_info.value.status_code == 404
 
@@ -318,6 +318,6 @@ async def test_get_asset_blocks_path_traversal_outside_the_vault(tmp_path, monke
     monkeypatch.setattr("api.routes.internal_marketing._ASSETS_LIBRARY_ROOT", assets_root.resolve())
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_asset("../.env", user={"sub": "kelvin"})
+        await get_asset("../.env")
 
     assert exc_info.value.status_code == 400
