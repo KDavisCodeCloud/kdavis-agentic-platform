@@ -23,10 +23,18 @@ provider must never break checkout or a tier change. Callers catch
 EmailError and log it, they don't let it propagate into their own
 response path -- same discipline as sop_agent's "SOP push is non-fatal"
 pattern elsewhere in this codebase.
+
+`stream` (added for the email lifecycle system, core/marketing_email.py)
+selects the from-domain: 'transactional' (default, unchanged) sends from
+RESEND_FROM_EMAIL / hello@theclouddecoded.com; 'marketing' sends from
+RESEND_MARKETING_FROM_EMAIL / news@theclouddecoded.com -- Kelvin still
+needs to verify SPF/DKIM for that subdomain in the Resend dashboard
+before any real marketing send goes out (see GAPS.md).
 """
 
 import logging
 import os
+from typing import Optional
 
 import httpx
 
@@ -34,6 +42,7 @@ log = logging.getLogger(__name__)
 
 _RESEND_API = "https://api.resend.com/emails"
 _DEFAULT_FROM = "Cloud Decoded <hello@theclouddecoded.com>"
+_DEFAULT_MARKETING_FROM = "Cloud Decoded <news@theclouddecoded.com>"
 _MAX_HTTP_TIMEOUT = 15
 
 
@@ -43,23 +52,49 @@ class EmailError(Exception):
     operation (a checkout webhook, a tier change)."""
 
 
-async def send_email(to: str, subject: str, html: str, from_addr: str | None = None) -> None:
+def _default_from_for_stream(stream: str) -> str:
+    if stream == "marketing":
+        return os.environ.get("RESEND_MARKETING_FROM_EMAIL", _DEFAULT_MARKETING_FROM)
+    return os.environ.get("RESEND_FROM_EMAIL", _DEFAULT_FROM)
+
+
+async def send_email(
+    to: str,
+    subject: str,
+    html: str,
+    from_addr: str | None = None,
+    *,
+    stream: str = "transactional",
+    headers: Optional[dict] = None,
+    text: Optional[str] = None,
+) -> Optional[str]:
+    """Returns Resend's message id on success (None if RESEND_API_KEY is
+    unset -- send skipped, not failed). `headers` is passed straight
+    through to Resend's own `headers` field -- core/marketing_email.py
+    uses it for the RFC 8058 List-Unsubscribe / List-Unsubscribe-Post
+    headers required on every marketing send."""
     api_key = os.environ.get("RESEND_API_KEY", "")
     if not api_key:
         log.warning("[Email] RESEND_API_KEY not set -- skipping send to=%s subject=%r", to, subject)
-        return
+        return None
+
+    payload: dict = {
+        "from": from_addr or _default_from_for_stream(stream),
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    }
+    if text:
+        payload["text"] = text
+    if headers:
+        payload["headers"] = headers
 
     async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
         try:
             resp = await client.post(
                 _RESEND_API,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "from": from_addr or os.environ.get("RESEND_FROM_EMAIL", _DEFAULT_FROM),
-                    "to": [to],
-                    "subject": subject,
-                    "html": html,
-                },
+                json=payload,
             )
         except httpx.RequestError as exc:
             raise EmailError(f"Could not reach Resend: {exc}") from exc
@@ -67,7 +102,11 @@ async def send_email(to: str, subject: str, html: str, from_addr: str | None = N
     if resp.status_code >= 300:
         raise EmailError(f"Resend rejected the send ({resp.status_code}): {resp.text[:300]}")
 
-    log.info("[Email] Sent to=%s subject=%r", to, subject)
+    log.info("[Email] Sent to=%s subject=%r stream=%s", to, subject, stream)
+    try:
+        return resp.json().get("id")
+    except Exception:
+        return None
 
 
 def welcome_email_html(company_name: str) -> str:
@@ -87,12 +126,11 @@ def welcome_email_html(company_name: str) -> str:
 
 def onboarding_day2_checklist_html(company_name: str) -> str:
     """
-    Onboarding completeness build, item 5. Sent ~2 days after checkout
-    ONLY if core/onboarding_sequence.py's real signal says this workspace
-    hasn't connected anything yet -- see that module's own docstring for
-    exactly what "connected anything" means today (a stand-in for the
-    real 5/5 setup checklist field, which doesn't exist in the schema
-    yet as of this build).
+    Content source for the Cloud Decoded email lifecycle system's
+    'onboarding' sequence, step 2 (core/email_content/onboarding.py's seed
+    data calls this directly rather than re-writing the copy) --
+    core/onboarding_sequence.py, which originally owned this content on
+    its own day-2 cron, is now retired (see that module's docstring).
     """
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#1a1a1a">
@@ -110,11 +148,10 @@ def onboarding_day2_checklist_html(company_name: str) -> str:
 
 def onboarding_day5_setup_help_html(company_name: str) -> str:
     """
-    Onboarding completeness build, item 5. Sent ~5 days after checkout
-    ONLY if core/onboarding_sequence.py's real signal says no alert
-    source has ever actually delivered a webhook to this workspace (a
-    real alert_ingestion_log row, not a self-report). Inlines the exact,
-    live-verified Azure/AWS setup steps from
+    Content source for the Cloud Decoded email lifecycle system's
+    'onboarding' sequence, step 3 (core/email_content/onboarding.py) --
+    same retirement note as onboarding_day2_checklist_html above. Inlines
+    the exact, live-verified Azure/AWS setup steps from
     agents/agent_11_resource_health/sop.md rather than a generic
     "check your webhook config" nudge.
     """

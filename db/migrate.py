@@ -175,7 +175,7 @@ async def log_security_posture(pool: asyncpg.Pool) -> None:
         log.warning(
             "[Security] DATABASE_URL's role bypasses row-level security "
             "entirely for this application's own queries — RLS policies on "
-            "workspaces/incidents/audit_events/token_usage protect other "
+            "workspaces/incidents/audit_events/token_usage/cd_email_* protect other "
             "access paths (Supabase Studio, anon/authenticated keys, future "
             "tools connecting as a different role), not this app's own "
             "connection. Application-layer workspace_id scoping remains the "
