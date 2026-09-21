@@ -6,6 +6,8 @@
 // it's already live and hand-tuned; these pages just match its visual
 // language (same fonts, same #070910/#5a96ff/#f5a623/#3fd17a tokens).
 
+import { NewsletterSignup } from './NewsletterSignup'
+
 const LINK: React.CSSProperties = { color: 'rgba(232,236,242,.62)', textDecoration: 'none' }
 
 export function MarketingHead() {
@@ -118,6 +120,7 @@ export function MarketingFooter() {
           <a href="/#faq" style={LINK}>FAQ</a>
         </nav>
       </div>
+      <NewsletterSignup />
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,.05)' }}>
         <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.4)' }}>© 2026 · Built for the 2am page</span>
         <nav style={{ display: 'flex', gap: 16, fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
