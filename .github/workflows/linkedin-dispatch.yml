@@ -12,11 +12,19 @@ name: LinkedIn Scheduled Dispatch
 #
 # Requires these repo secrets (same DATABASE_URL as weekly-sweep.yml,
 # plus the credentials scripts/dispatch_scheduled_posts.py needs to
-# actually post — none are set as of this writing):
+# actually post — all set as of 2026-09-22):
 #   DATABASE_URL       - same Supabase pooler connection string as local .env
 #   ENCRYPTION_KEY      - decrypts the stored LinkedIn/Canva tokens
 #   SUPABASE_URL         - used by assets_library/asset_logger.py on a
 #   SUPABASE_KEY         successful post with an asset-vault image
+#   API_BASE_URL        - this runner has no access to Railway's persistent
+#   MARKETING_API_KEY    volume, so publish_queue_row fetches asset_library
+#                        images live from GET /internal/marketing/assets/*
+#                        instead of local disk (added 2026-09-22, real bug:
+#                        "Asset vault image not found on disk" for every
+#                        image-bearing post published from this workflow
+#                        until fixed — see api/routes/internal_marketing.py's
+#                        _fetch_asset_bytes)
 
 on:
   schedule:
@@ -50,4 +58,6 @@ jobs:
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          API_BASE_URL: https://kdavis-agentic-platform-production.up.railway.app
+          MARKETING_API_KEY: ${{ secrets.MARKETING_API_KEY }}
         run: python scripts/dispatch_scheduled_posts.py

@@ -12,12 +12,14 @@ mock_db fixture for the connection object itself.
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
 from api.routes.internal_marketing import (
     BrandTemplateMap,
     _build_autofill_data,
+    _fetch_asset_bytes,
     get_asset,
     publish_linkedin_post,
     set_brand_templates,
@@ -225,6 +227,31 @@ async def test_set_brand_templates_succeeds_and_merges_only_provided_keys():
     assert json.loads(args[1]) == {"linkedin_square": "BT-999"}
 
 
+async def test_fetch_asset_bytes_calls_the_assets_route_over_http(monkeypatch):
+    """2026-09-22 fix: must fetch live, not read local disk -- the
+    dispatch cron runs in GitHub Actions, which has no access to
+    Railway's persistent volume where generated images actually live."""
+    monkeypatch.setattr("api.routes.internal_marketing._API_BASE", "https://api.example.test")
+    monkeypatch.setenv("MARKETING_API_KEY", "secret-key")
+
+    mock_response = MagicMock()
+    mock_response.content = b"\x89PNG..."
+    mock_response.raise_for_status = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await _fetch_asset_bytes("assets_library/ai_agents/foo.png")
+
+    assert result == b"\x89PNG..."
+    mock_client.get.assert_awaited_once_with(
+        "https://api.example.test/api/v1/internal/marketing/assets/ai_agents/foo.png",
+        headers={"X-API-Key": "secret-key"},
+    )
+
+
 # ── Asset vault image path (2026-07-22) — takes priority over Canva ──
 
 ASSET_VAULT_QUEUE_ROW = {
@@ -237,21 +264,23 @@ ASSET_VAULT_QUEUE_ROW = {
 }
 
 
-async def test_publish_uses_asset_vault_image_in_preference_to_canva(tmp_path, monkeypatch):
-    image_file = tmp_path / "assets_library" / "ai_agents" / "foo.png"
-    image_file.parent.mkdir(parents=True)
-    image_file.write_bytes(b"\x89PNG...")
-    monkeypatch.setattr("api.routes.internal_marketing._REPO_ROOT", tmp_path)
-
+async def test_publish_uses_asset_vault_image_in_preference_to_canva():
+    """2026-09-22: asset vault images are now fetched live over HTTP from
+    this backend's own /assets/{path} route (_fetch_asset_bytes), not read
+    off local disk -- scripts/dispatch_scheduled_posts.py runs in GitHub
+    Actions, which has no access to Railway's persistent volume where
+    generated images actually live. See _fetch_asset_bytes's docstring."""
     conn = _connected_conn(ASSET_VAULT_QUEUE_ROW, LI_ROW, CANVA_ROW)  # Canva IS connected+configured too
     request = _fake_request(conn)
 
     with _patched_decrypt(), \
+         patch("api.routes.internal_marketing._fetch_asset_bytes", new=AsyncMock(return_value=b"\x89PNG...")) as mock_fetch, \
          patch("core.publishers.canva.render_brand_template_to_image", new=AsyncMock()) as mock_render, \
          patch("core.publishers.linkedin.post_image", new=AsyncMock(return_value={"post_id": "urn:li:share:1", "url": "https://li/1"})) as mock_post_image, \
          patch("assets_library.asset_logger.log_usage") as mock_log_usage:
         result = await publish_linkedin_post("q-1", request, user={"sub": "kelvin"})
 
+    mock_fetch.assert_awaited_once_with("assets_library/ai_agents/foo.png")
     mock_render.assert_not_awaited()  # Canva never touched -- asset vault took priority
     mock_post_image.assert_awaited_once()
     assert mock_post_image.call_args.args[3] == b"\x89PNG..."
@@ -259,17 +288,20 @@ async def test_publish_uses_asset_vault_image_in_preference_to_canva(tmp_path, m
     assert result["used_image"] is True
 
 
-async def test_publish_raises_clearly_when_asset_vault_file_missing_on_disk(tmp_path, monkeypatch):
-    monkeypatch.setattr("api.routes.internal_marketing._REPO_ROOT", tmp_path)  # file deliberately not created
+async def test_publish_raises_clearly_when_asset_fetch_fails():
     conn = _connected_conn(ASSET_VAULT_QUEUE_ROW, LI_ROW, CANVA_ROW)
     request = _fake_request(conn)
+    fetch_error = httpx.HTTPStatusError(
+        "404", request=MagicMock(), response=MagicMock(status_code=404),
+    )
 
-    with _patched_decrypt():
+    with _patched_decrypt(), \
+         patch("api.routes.internal_marketing._fetch_asset_bytes", new=AsyncMock(side_effect=fetch_error)):
         with pytest.raises(HTTPException) as exc_info:
             await publish_linkedin_post("q-1", request, user={"sub": "kelvin"})
 
     assert exc_info.value.status_code == 502
-    assert "not found on disk" in exc_info.value.detail
+    assert "Publish failed" in exc_info.value.detail
     conn.execute.assert_not_awaited()  # status must stay 'approved'
 
 

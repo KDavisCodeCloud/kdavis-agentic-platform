@@ -488,6 +488,35 @@ async def _get_canva_connection(conn) -> tuple[str, dict]:
 _REPO_ROOT = Path(__file__).resolve().parents[2]  # api/routes/internal_marketing.py -> repo root
 
 
+async def _fetch_asset_bytes(image_path: str) -> bytes:
+    """
+    Fetches an assets_library image live over HTTP from this backend's own
+    /assets/{path} route (get_asset above) rather than reading local disk.
+
+    Real bug found live 2026-09-22, same class as get_asset's own 2026-09-21
+    one: publish_queue_row used to read `_REPO_ROOT / image_path` directly,
+    which only works for the caller that IS this Railway app (the
+    dashboard's manual publish button, in-process). scripts/dispatch_scheduled_posts.py
+    runs in GitHub Actions -- a different machine entirely, with no access
+    to Railway's persistent volume where generated images actually live --
+    so every image-bearing post published via the 15-min dispatch cron
+    failed "Asset vault image not found on disk," non-obviously, since text
+    posts and the dashboard's own manual publish both worked fine. Fetching
+    over HTTP unifies both callers on one path that works from anywhere,
+    matching the same fix direction ceo-dashboard's asset proxy already took
+    (see get_asset's docstring) rather than branching in-process-vs-remote.
+    """
+    relative = image_path.removeprefix("assets_library/")
+    api_key = os.environ.get("MARKETING_API_KEY", "")
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{_API_BASE}/api/v1/internal/marketing/assets/{relative}",
+            headers={"X-API-Key": api_key},
+        )
+        resp.raise_for_status()
+        return resp.content
+
+
 class PublishError(Exception):
     """Raised by publish_queue_row for any failure that should map to an
     HTTP error when called from the route — kept as a plain exception
@@ -588,10 +617,7 @@ async def publish_queue_row(conn, queue_id: str) -> dict:
     used_image_id = None
     try:
         if image_brief and image_brief.get("image_path"):
-            image_path = _REPO_ROOT / image_brief["image_path"]
-            if not image_path.exists():
-                raise FileNotFoundError(f"Asset vault image not found on disk: {image_path}")
-            image_bytes = image_path.read_bytes()
+            image_bytes = await _fetch_asset_bytes(image_brief["image_path"])
             result = await post_image(li_access_token, author_urn, row["post_copy"], image_bytes)
             used_image = True
             used_image_id = image_brief.get("image_id")
