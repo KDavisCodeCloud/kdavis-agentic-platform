@@ -33,12 +33,36 @@ What this file validates:
     - Unknown payload format does not raise and returns non-empty log_excerpt
     - Sanitizes log_excerpt via DataSanitizationShield
 
+  _classify_alert_category():
+    - Maps alert_type strings to evidence categories (crashloop, oomkill,
+      imagepull, pending, dns, pvc, service, generic fallback)
+
+  K8sTools.gather_evidence() (read-only pre-diagnose evidence step):
+    - crashloop category fetches describe + previous logs + events
+    - imagepull category fetches describe + events
+    - pending category fetches describe + node conditions
+    - oomkill category fetches describe + metrics
+    - service category fetches endpoints + service + ingress describe
+    - pvc category fetches PVC describe + storageclass
+    - dns category fetches CoreDNS logs from kube-system
+    - generic category (unrecognized alert_type) fetches describe + events
+    - Missing cluster credentials returns available=False, no HTTP calls made
+    - A failed individual check degrades to an "[unavailable: ...]" section
+      without failing the whole gather
+    - Evidence text is truncated to _MAX_EVIDENCE_CHARS
+
+  K8sAlertWorkflow._evidence_node():
+    - Reachable cluster returns live_evidence_text populated from gather_evidence
+    - Unreachable/unconfigured cluster returns a "[live evidence unavailable: ...]" note
+    - Skips (returns {}) when state["error"] is already set upstream
+
   K8sAlertWorkflow._diagnose_node():
     - Calls router.complete() with task_type="k8s_triage"
     - Parses valid LLM JSON response into parsed_error + options
     - Handles LLM JSON parse error and sets state["error"]
     - Calls budget.assert_budget_available() before the LLM call
     - Includes deployment_name and alert_type in LLM message
+    - Includes live_evidence_text (available or unavailable-note) in LLM message
 
   K8sAlertWorkflow._hitl_gate_node():
     - Calls hitl.create_incident() with correct fields
@@ -54,7 +78,7 @@ from uuid import uuid4
 import pytest
 
 from agents.agent_02_k8s_alert.tools import K8sTools, _halve_memory
-from agents.agent_02_k8s_alert.workflow import K8sAlertWorkflow, K8sAlertState
+from agents.agent_02_k8s_alert.workflow import K8sAlertWorkflow, K8sAlertState, _classify_alert_category
 from core.repo_tools import NoRepoCredentialError
 
 
@@ -87,6 +111,7 @@ def _base_k8s_state(workspace_id: str, payload: dict | None = None) -> K8sAlertS
         "current_memory_limit": "512Mi",
         "current_cpu_limit": "500m",
         "log_excerpt": "Alert: KubePodCrashLooping\nPod: payment-service-7d9f8b-xkq2p",
+        "live_evidence_text": "",
         "incident_id": None,
         "parsed_error": None,
         "remediation_options": None,
@@ -503,6 +528,230 @@ class TestK8sToolsExecuteOption:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# K8sTools — gather_evidence() (read-only pre-diagnose evidence step)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestK8sToolsGatherEvidence:
+    @pytest.fixture
+    def tools(self) -> K8sTools:
+        return K8sTools(
+            k8s_api_url="https://prod-aks.azmk8s.io",
+            k8s_token="sa_token_abc",
+        )
+
+    async def test_no_credentials_returns_unavailable_without_http_calls(self):
+        tools_no_config = K8sTools(k8s_api_url="", k8s_token="")
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient") as mock_cls:
+            result = await tools_no_config.gather_evidence(
+                "production", "payment-service-7d9f8b-xkq2p", "payment-service",
+                "payment-service", "crashloop",
+            )
+        mock_cls.assert_not_called()
+        assert result == {
+            "available": False, "text": "",
+            "unavailable_reason": "no cluster credentials configured for this workspace",
+        }
+
+    async def test_crashloop_fetches_describe_previous_logs_and_events(self, tools):
+        describe_resp = _mock_k8s_resp(200, {"status": {"phase": "Running"}})
+        logs_resp = MagicMock(status_code=200, text="panic: out of memory")
+        events_resp = _mock_k8s_resp(200, {"items": [{"reason": "BackOff"}]})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, logs_resp, events_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "payment-service-7d9f8b-xkq2p", "payment-service",
+                "payment-service", "crashloop",
+            )
+
+        assert result["available"] is True
+        assert "Pod describe" in result["text"]
+        assert "Previous container logs" in result["text"]
+        assert "panic: out of memory" in result["text"]
+        assert "Namespace events" in result["text"]
+        assert "BackOff" in result["text"]
+
+    async def test_imagepull_fetches_describe_and_events_only(self, tools):
+        describe_resp = _mock_k8s_resp(200, {"status": {"phase": "Pending"}})
+        events_resp = _mock_k8s_resp(200, {"items": [{"reason": "ErrImagePull"}]})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, events_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "worker-abc-123", "worker", "worker", "imagepull",
+            )
+
+        assert "Pod describe" in result["text"]
+        assert "Namespace events" in result["text"]
+        assert "Previous container logs" not in result["text"]
+
+    async def test_pending_fetches_describe_and_node_conditions(self, tools):
+        describe_resp = _mock_k8s_resp(200, {"status": {"phase": "Pending"}})
+        nodes_resp = _mock_k8s_resp(200, {"items": [{"metadata": {"name": "node-1"}, "status": {"conditions": []}}]})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, nodes_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "worker-abc-123", "worker", "worker", "pending",
+            )
+
+        assert "Pod describe" in result["text"]
+        assert "Node conditions" in result["text"]
+        assert "node-1" in result["text"]
+
+    async def test_oomkill_fetches_describe_and_metrics(self, tools):
+        describe_resp = _mock_k8s_resp(200, {"status": {"phase": "Running"}})
+        metrics_resp = _mock_k8s_resp(200, {"containers": [{"usage": {"memory": "1000Mi"}}]})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, metrics_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "payment-service-7d9f8b-xkq2p", "payment-service",
+                "payment-service", "oomkill",
+            )
+
+        assert "Pod describe" in result["text"]
+        assert "Pod metrics" in result["text"]
+        assert "1000Mi" in result["text"]
+
+    async def test_oomkill_metrics_server_absent_degrades_without_failing(self, tools):
+        """metrics-server is routinely absent on smaller clusters -- a 404
+        here must not take down the pod describe evidence gathered
+        alongside it."""
+        describe_resp = _mock_k8s_resp(200, {"status": {"phase": "Running"}})
+        metrics_404 = _mock_k8s_resp(404, {"message": "the server could not find the requested resource"})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, metrics_404])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "payment-service-7d9f8b-xkq2p", "payment-service",
+                "payment-service", "oomkill",
+            )
+
+        assert result["available"] is True
+        assert "Pod describe" in result["text"]
+        assert "[unavailable:" in result["text"]
+
+    async def test_service_fetches_endpoints_service_and_ingress(self, tools):
+        endpoints_resp = _mock_k8s_resp(200, {"subsets": []})
+        service_resp = _mock_k8s_resp(200, {"spec": {"type": "ClusterIP"}})
+        ingress_resp = _mock_k8s_resp(200, {"spec": {"rules": []}})
+        mock_cls, ctx = _make_k8s_client_ctx([endpoints_resp, service_resp, ingress_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "checkout-abc-123", "checkout", "checkout", "service",
+            )
+
+        assert "Endpoints" in result["text"]
+        assert "Service describe" in result["text"]
+        assert "Ingress describe" in result["text"]
+
+    async def test_pvc_fetches_describe_then_storageclass_when_present(self, tools):
+        pvc_resp = _mock_k8s_resp(200, {"spec": {"storageClassName": "fast-ssd"}})
+        sc_resp = _mock_k8s_resp(200, {"provisioner": "kubernetes.io/aws-ebs"})
+        mock_cls, ctx = _make_k8s_client_ctx([pvc_resp, sc_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "db-abc-123", "db", "db", "pvc",
+            )
+
+        assert "PVC describe" in result["text"]
+        assert "StorageClass (fast-ssd)" in result["text"]
+        assert "aws-ebs" in result["text"]
+
+    async def test_pvc_skips_storageclass_lookup_when_pvc_fetch_fails(self, tools):
+        pvc_404 = _mock_k8s_resp(404, {"message": "not found"})
+        mock_cls, ctx = _make_k8s_client_ctx([pvc_404])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "db-abc-123", "db", "db", "pvc",
+            )
+
+        assert "PVC describe" in result["text"]
+        assert "[unavailable:" in result["text"]
+        assert "StorageClass" not in result["text"]
+
+    async def test_dns_fetches_coredns_logs_by_label_selector(self, tools):
+        pods_list_resp = _mock_k8s_resp(200, {"items": [{"metadata": {"name": "coredns-abc123"}}]})
+        logs_resp = MagicMock(status_code=200, text="[ERROR] plugin/errors: query refused")
+        mock_cls, ctx = _make_k8s_client_ctx([pods_list_resp, logs_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "app-abc-123", "app", "app", "dns",
+            )
+
+        assert "CoreDNS logs" in result["text"]
+        assert "query refused" in result["text"]
+
+    async def test_dns_no_coredns_pods_found_degrades_without_failing(self, tools):
+        pods_list_resp = _mock_k8s_resp(200, {"items": []})
+        mock_cls, ctx = _make_k8s_client_ctx([pods_list_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "app-abc-123", "app", "app", "dns",
+            )
+
+        assert result["available"] is True
+        assert "[unavailable: no CoreDNS pods found" in result["text"]
+
+    async def test_generic_fallback_fetches_describe_and_events(self, tools):
+        """Evicted, or any alert_type the classifier doesn't recognize,
+        falls back to the cheap, broadly-useful describe+events pair."""
+        describe_resp = _mock_k8s_resp(200, {"status": {"phase": "Failed"}})
+        events_resp = _mock_k8s_resp(200, {"items": [{"reason": "Evicted"}]})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, events_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "worker-abc-123", "worker", "worker", "generic",
+            )
+
+        assert "Pod describe" in result["text"]
+        assert "Namespace events" in result["text"]
+
+    async def test_never_issues_a_write_verb(self, tools):
+        """Governance Rule 11: this step must be read-only. Assert directly
+        against the httpx client that no PATCH/POST/PUT/DELETE is ever
+        wired up as reachable from gather_evidence."""
+        describe_resp = _mock_k8s_resp(200, {"status": {}})
+        events_resp = _mock_k8s_resp(200, {"items": []})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, events_resp])
+        ctx.patch = AsyncMock(side_effect=AssertionError("write verb called"))
+        ctx.post  = AsyncMock(side_effect=AssertionError("write verb called"))
+        ctx.put   = AsyncMock(side_effect=AssertionError("write verb called"))
+        ctx.delete = AsyncMock(side_effect=AssertionError("write verb called"))
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "worker-abc-123", "worker", "worker", "generic",
+            )
+
+        assert result["available"] is True
+
+    async def test_evidence_text_truncated_to_max_chars(self, tools):
+        from agents.agent_02_k8s_alert.tools import _MAX_EVIDENCE_CHARS
+
+        huge_log = "x" * (_MAX_EVIDENCE_CHARS * 2)
+        describe_resp = _mock_k8s_resp(200, {"status": {}})
+        logs_resp = MagicMock(status_code=200, text=huge_log)
+        events_resp = _mock_k8s_resp(200, {"items": []})
+        mock_cls, ctx = _make_k8s_client_ctx([describe_resp, logs_resp, events_resp])
+
+        with patch("agents.agent_02_k8s_alert.tools.httpx.AsyncClient", mock_cls):
+            result = await tools.gather_evidence(
+                "production", "worker-abc-123", "worker", "worker", "crashloop",
+            )
+
+        assert len(result["text"]) <= _MAX_EVIDENCE_CHARS + len("\n... [truncated]")
+        assert result["text"].endswith("[truncated]")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # K8sTools — _halve_memory() helper
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -636,6 +885,97 @@ class TestK8sIngestUnknownFormat:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# _classify_alert_category()
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestClassifyAlertCategory:
+    @pytest.mark.parametrize("alert_type,expected", [
+        ("CrashLoopBackOff", "crashloop"),
+        ("OOMKilled", "oomkill"),
+        ("ImagePullBackOff", "imagepull"),
+        ("ErrImagePull", "imagepull"),
+        ("Pending", "pending"),
+        ("FailedScheduling", "pending"),
+        ("CoreDNSDown", "dns"),
+        ("ServiceUnavailable", "service"),
+        ("IngressDegraded", "service"),
+        ("Evicted", "generic"),
+        ("SomethingNeverSeenBefore", "generic"),
+        ("", "generic"),
+    ])
+    def test_maps_known_alert_types(self, alert_type, expected):
+        assert _classify_alert_category(alert_type) == expected
+
+    def test_pvc_keyword_variants(self):
+        assert _classify_alert_category("PersistentVolumeClaimPending") == "pvc"
+        assert _classify_alert_category("VolumeMountFailed") == "pvc"
+
+    def test_case_insensitive(self):
+        assert _classify_alert_category("crashloopbackoff") == "crashloop"
+        assert _classify_alert_category("OOMKILLED") == "oomkill"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# K8sAlertWorkflow._evidence_node()
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestK8sEvidenceNode:
+    async def test_reachable_cluster_populates_live_evidence_text(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+        state["alert_type"] = "OOMKilled"
+
+        with patch.object(
+            wf._tools, "gather_evidence",
+            return_value={"available": True, "text": "### Pod describe\n{...}", "unavailable_reason": None},
+        ) as mock_gather:
+            result = await wf._evidence_node(state)
+
+        mock_gather.assert_called_once()
+        kwargs = mock_gather.call_args.kwargs
+        assert kwargs["alert_category"] == "oomkill"
+        assert kwargs["namespace"] == state["namespace"]
+        assert kwargs["pod_name"] == state["pod_name"]
+        assert result["live_evidence_text"] == "### Pod describe\n{...}"
+
+    async def test_unreachable_cluster_notes_unavailable(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+
+        with patch.object(
+            wf._tools, "gather_evidence",
+            return_value={"available": False, "text": "", "unavailable_reason": "no cluster credentials configured for this workspace"},
+        ):
+            result = await wf._evidence_node(state)
+
+        assert result["live_evidence_text"] == "[live evidence unavailable: no cluster credentials configured for this workspace]"
+
+    async def test_gather_evidence_raising_still_degrades_gracefully(self, mock_db, workspace_id, mock_router):
+        """Belt-and-braces: even though K8sTools.gather_evidence's own
+        fetchers never raise, _evidence_node must not propagate an
+        unexpected exception up into the graph."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+
+        with patch.object(wf._tools, "gather_evidence", side_effect=RuntimeError("boom")):
+            result = await wf._evidence_node(state)
+
+        assert "[live evidence unavailable:" in result["live_evidence_text"]
+        assert "boom" in result["live_evidence_text"]
+
+    async def test_skips_when_upstream_error_already_set(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+        state["error"] = "ingest failed"
+
+        with patch.object(wf._tools, "gather_evidence") as mock_gather:
+            result = await wf._evidence_node(state)
+
+        mock_gather.assert_not_called()
+        assert result == {}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # K8sAlertWorkflow._diagnose_node()
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -696,6 +1036,45 @@ class TestK8sDiagnoseNode:
         combined = " ".join(m["content"] for m in messages)
         assert "billing-worker" in combined
         assert "ImagePullBackOff" in combined
+
+    @pytest.mark.parametrize("alert_type,evidence_text", [
+        ("CrashLoopBackOff", "### Pod describe (payment-service-7d9f8b-xkq2p)\n{\"status\": {\"phase\": \"Running\"}}"),
+        ("OOMKilled", "### Pod metrics (payment-service-7d9f8b-xkq2p)\n{\"usage\": {\"memory\": \"900Mi\"}}"),
+        ("ImagePullBackOff", "### Pod describe (payment-service-7d9f8b-xkq2p)\n{\"status\": {\"phase\": \"Pending\"}}"),
+        ("Pending", "### Node conditions\n{\"items\": []}"),
+    ])
+    async def test_live_evidence_reaches_llm_message_per_alert_type(
+        self, mock_db, workspace_id, mock_router, alert_type, evidence_text,
+    ):
+        """_evidence_node's output must actually land in the diagnose
+        prompt -- this is what makes the read-only evidence step matter,
+        not just exist. One fixture per alert category."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+        state["alert_type"] = alert_type
+        state["live_evidence_text"] = evidence_text
+
+        with patch.object(wf.budget, "assert_budget_available", return_value=None):
+            await wf._diagnose_node(state)
+
+        call_args = mock_router.complete.call_args
+        messages = call_args.kwargs.get("messages") or call_args.args[1]
+        combined = " ".join(m["content"] for m in messages)
+        assert "Live Cluster Evidence" in combined
+        assert evidence_text in combined
+
+    async def test_live_evidence_unavailable_note_reaches_llm_message(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_k8s_state(workspace_id)
+        state["live_evidence_text"] = "[live evidence unavailable: cluster unreachable: connection refused]"
+
+        with patch.object(wf.budget, "assert_budget_available", return_value=None):
+            await wf._diagnose_node(state)
+
+        call_args = mock_router.complete.call_args
+        messages = call_args.kwargs.get("messages") or call_args.args[1]
+        combined = " ".join(m["content"] for m in messages)
+        assert "live evidence unavailable" in combined
 
 
 # ──────────────────────────────────────────────────────────────────────────────

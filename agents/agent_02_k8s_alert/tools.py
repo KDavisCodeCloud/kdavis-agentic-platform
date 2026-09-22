@@ -14,15 +14,24 @@ These tools are called ONLY after operator approval via POST /incidents/{id}/app
 They never execute autonomously. Governance Rule 11.
 """
 
+import json
 import logging
 import tempfile
 from typing import Optional, Union
+from urllib.parse import quote
 
 import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
 log = logging.getLogger(__name__)
+
+# Evidence text fed into the diagnose prompt (agents/agent_02_k8s_alert/
+# workflow.py's _diagnose_node) is char-truncated to this budget before it
+# ever reaches the LLM -- same discipline as agent_04/agent_07's
+# _MAX_*_CHARS constants elsewhere in this codebase (char count, not a real
+# tokenizer; a sane proxy, not an exact token budget).
+_MAX_EVIDENCE_CHARS = 6000
 
 
 class K8sTools:
@@ -79,6 +88,218 @@ class K8sTools:
                 f.write(self._k8s_ca_cert)
                 self._k8s_ca_cert_path = f.name
         return self._k8s_ca_cert_path
+
+    # ──────────────────────────────────────────────
+    # Read-only evidence fetchers (pre-diagnose, GAPS.md scale-readiness
+    # build) -- every method in this section issues GET requests only. No
+    # write verb (PATCH/POST/PUT/DELETE) ever appears here, so this whole
+    # section needs no operator approval -- Governance Rule 11 only gates
+    # cluster *mutation*, and there is none in this section to gate.
+    # ──────────────────────────────────────────────
+
+    async def _get(self, path: str) -> dict:
+        """Generic read-only GET against the K8s API, returning parsed JSON.
+        Never raises -- returns {"error": ...} on any failure (unreachable
+        cluster, non-200, non-JSON body), same "capture, don't raise"
+        discipline as _capture_container_resources/_capture_hpa above --
+        this is evidence for the LLM prompt, not a precondition for
+        anything, so a failure here must never block diagnosis."""
+        if not self.k8s_api_url or not self.k8s_token:
+            return {"error": "K8S_API_URL and K8S_TOKEN not configured for this workspace"}
+        url = f"{self.k8s_api_url}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=20, verify=self._verify) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {self.k8s_token}"})
+        except httpx.RequestError as exc:
+            return {"error": f"cluster unreachable: {exc}"}
+        if resp.status_code != 200:
+            return {"error": f"GET {path} returned {resp.status_code}: {resp.text[:200]}"}
+        try:
+            return resp.json()
+        except ValueError:
+            return {"error": f"GET {path} returned a non-JSON body"}
+
+    async def _get_text(self, path: str) -> str:
+        """Same contract as _get, for endpoints that return a plain-text
+        body (pod logs) instead of JSON. Never raises -- a failure comes
+        back as a bracketed "[unavailable: ...]" string so callers can
+        drop it straight into the evidence text without a branch."""
+        if not self.k8s_api_url or not self.k8s_token:
+            return "[unavailable: K8S_API_URL and K8S_TOKEN not configured for this workspace]"
+        url = f"{self.k8s_api_url}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=20, verify=self._verify) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {self.k8s_token}"})
+        except httpx.RequestError as exc:
+            return f"[unavailable: cluster unreachable: {exc}]"
+        if resp.status_code != 200:
+            return f"[unavailable: GET {path} returned {resp.status_code}: {resp.text[:200]}]"
+        return resp.text
+
+    async def _describe_pod(self, namespace: str, pod_name: str) -> dict:
+        """The structured pod object (status.conditions, containerStatuses
+        incl. lastState.terminated, spec) -- this is what a `kubectl
+        describe pod` narrative is actually built from, and structured
+        JSON is a better prompt input than re-flattening it to text."""
+        return await self._get(f"/api/v1/namespaces/{quote(namespace)}/pods/{quote(pod_name)}")
+
+    async def _pod_events(self, namespace: str, pod_name: str) -> dict:
+        selector = quote(f"involvedObject.name={pod_name},involvedObject.namespace={namespace}")
+        return await self._get(f"/api/v1/namespaces/{quote(namespace)}/events?fieldSelector={selector}&limit=20")
+
+    async def _pod_logs(self, namespace: str, pod_name: str, container: str, previous: bool = False) -> str:
+        prev_qs = "&previous=true" if previous else ""
+        return await self._get_text(
+            f"/api/v1/namespaces/{quote(namespace)}/pods/{quote(pod_name)}/log"
+            f"?container={quote(container)}&tailLines=200{prev_qs}"
+        )
+
+    async def _node_conditions(self) -> dict:
+        """No specific node name is known for a Pending pod (it hasn't
+        been scheduled yet) -- lists every node's status.conditions so the
+        LLM can spot a NotReady/DiskPressure/MemoryPressure node itself,
+        rather than this code guessing which node matters."""
+        return await self._get("/api/v1/nodes")
+
+    async def _pod_metrics(self, namespace: str, pod_name: str) -> dict:
+        """metrics.k8s.io requires metrics-server -- absent on many
+        clusters, so a failure here is routine, not exceptional. Same
+        {"error": ...} contract as every other fetcher in this section."""
+        return await self._get(f"/apis/metrics.k8s.io/v1beta1/namespaces/{quote(namespace)}/pods/{quote(pod_name)}")
+
+    async def _endpoints(self, namespace: str, name: str) -> dict:
+        return await self._get(f"/api/v1/namespaces/{quote(namespace)}/endpoints/{quote(name)}")
+
+    async def _service(self, namespace: str, name: str) -> dict:
+        return await self._get(f"/api/v1/namespaces/{quote(namespace)}/services/{quote(name)}")
+
+    async def _ingress(self, namespace: str, name: str) -> dict:
+        return await self._get(f"/apis/networking.k8s.io/v1/namespaces/{quote(namespace)}/ingresses/{quote(name)}")
+
+    async def _pvc(self, namespace: str, name: str) -> dict:
+        return await self._get(f"/api/v1/namespaces/{quote(namespace)}/persistentvolumeclaims/{quote(name)}")
+
+    async def _storageclass(self, name: str) -> dict:
+        return await self._get(f"/apis/storage.k8s.io/v1/storageclasses/{quote(name)}")
+
+    async def _coredns_logs(self) -> str:
+        """CoreDNS runs in kube-system, not the alerting workload's own
+        namespace -- find it by its standard k8s-app=kube-dns label rather
+        than assuming a pod name, then tail its logs."""
+        pods = await self._get("/api/v1/namespaces/kube-system/pods?labelSelector=k8s-app%3Dkube-dns")
+        if "error" in pods:
+            return f"[unavailable: {pods['error']}]"
+        items = pods.get("items") or []
+        if not items:
+            return "[unavailable: no CoreDNS pods found in kube-system]"
+        first_name = (items[0].get("metadata") or {}).get("name", "")
+        if not first_name:
+            return "[unavailable: CoreDNS pod name missing from list response]"
+        return await self._get_text(f"/api/v1/namespaces/kube-system/pods/{quote(first_name)}/log?tailLines=100")
+
+    async def gather_evidence(
+        self,
+        namespace: str,
+        pod_name: str,
+        deployment_name: str,
+        container_name: str,
+        alert_category: str,
+    ) -> dict:
+        """
+        Read-only pre-diagnosis evidence gathering. Runs from
+        K8sAlertWorkflow._evidence_node, between ingest and diagnose, so
+        the diagnose LLM call sees live cluster state instead of the alert
+        payload alone. Dispatches to the read-verb checks that match
+        alert_category (see agents/agent_02_k8s_alert/workflow.py's
+        _classify_alert_category):
+          crashloop -> previous logs + describe + events
+          imagepull -> describe + events
+          pending   -> describe + node conditions
+          oomkill   -> describe + metrics ("top")
+          service   -> endpoints + describe svc/ingress
+          pvc       -> describe pvc + storageclass
+          dns       -> coredns logs (kube-system)
+          generic   -> describe + events (fallback for anything else,
+                       e.g. Evicted, or an alert_type this classifier
+                       doesn't recognize)
+
+        Never raises. Returns {"available": bool, "text": str,
+        "unavailable_reason": Optional[str]} -- available=False (cluster
+        not configured) means the caller should diagnose from the alert
+        payload alone; a per-check failure (e.g. metrics-server absent)
+        instead shows up as an "[unavailable: ...]" line inside `text`,
+        since the other checks in the same category may still have
+        succeeded.
+        """
+        if not self.k8s_api_url or not self.k8s_token:
+            return {
+                "available": False, "text": "",
+                "unavailable_reason": "no cluster credentials configured for this workspace",
+            }
+
+        sections: list[str] = []
+
+        async def _add(label: str, value) -> None:
+            if isinstance(value, dict) and "error" in value:
+                sections.append(f"### {label}\n[unavailable: {value['error']}]")
+            elif isinstance(value, dict):
+                sections.append(f"### {label}\n{json.dumps(value)[:2000]}")
+            else:
+                sections.append(f"### {label}\n{value}")
+
+        if alert_category == "crashloop":
+            await _add(f"Pod describe ({pod_name})", await self._describe_pod(namespace, pod_name))
+            await _add(
+                f"Previous container logs ({container_name})",
+                await self._pod_logs(namespace, pod_name, container_name, previous=True),
+            )
+            await _add("Namespace events", await self._pod_events(namespace, pod_name))
+
+        elif alert_category == "imagepull":
+            await _add(f"Pod describe ({pod_name})", await self._describe_pod(namespace, pod_name))
+            await _add("Namespace events", await self._pod_events(namespace, pod_name))
+
+        elif alert_category == "pending":
+            await _add(f"Pod describe ({pod_name})", await self._describe_pod(namespace, pod_name))
+            await _add("Node conditions", await self._node_conditions())
+
+        elif alert_category == "oomkill":
+            await _add(f"Pod describe ({pod_name})", await self._describe_pod(namespace, pod_name))
+            await _add(f"Pod metrics ({pod_name})", await self._pod_metrics(namespace, pod_name))
+
+        elif alert_category == "service":
+            # No dedicated service/ingress name is extracted at ingest
+            # today -- deployment_name is the closest identifier available
+            # in state, matching the common convention of a Service
+            # sharing its Deployment's name. Best-effort: a miss here is
+            # just an "unavailable" section, never a hard failure.
+            target = deployment_name or pod_name
+            await _add(f"Endpoints ({target})", await self._endpoints(namespace, target))
+            await _add(f"Service describe ({target})", await self._service(namespace, target))
+            await _add(f"Ingress describe ({target})", await self._ingress(namespace, target))
+
+        elif alert_category == "pvc":
+            # Same best-effort identifier note as "service" above.
+            target = deployment_name or pod_name
+            pvc = await self._pvc(namespace, target)
+            await _add(f"PVC describe ({target})", pvc)
+            if isinstance(pvc, dict) and "error" not in pvc:
+                sc_name = (pvc.get("spec") or {}).get("storageClassName")
+                if sc_name:
+                    await _add(f"StorageClass ({sc_name})", await self._storageclass(sc_name))
+
+        elif alert_category == "dns":
+            await _add("CoreDNS logs (kube-system)", await self._coredns_logs())
+
+        else:  # generic fallback
+            await _add(f"Pod describe ({pod_name})", await self._describe_pod(namespace, pod_name))
+            await _add("Namespace events", await self._pod_events(namespace, pod_name))
+
+        text = "\n\n".join(sections)
+        if len(text) > _MAX_EVIDENCE_CHARS:
+            text = text[:_MAX_EVIDENCE_CHARS] + "\n... [truncated]"
+
+        return {"available": True, "text": text, "unavailable_reason": None}
 
     # ──────────────────────────────────────────────
     # Kubernetes API tools

@@ -12,7 +12,15 @@ Agent 02 — Kubernetes Alert Fatigue & Remediation
 LangGraph state machine with Postgres checkpointing and HITL interrupt gate.
 
 State flow:
-    START → ingest → diagnose → hitl_gate (interrupt) → execute → complete → END
+    START → ingest → evidence → diagnose → hitl_gate (interrupt) → execute → complete → END
+
+evidence (GAPS.md scale-readiness build) is a read-only step -- it fetches
+live cluster state (pod describe, logs, events, node conditions, etc. --
+whichever check matches the alert's category, see K8sTools.gather_evidence)
+so diagnose reasons over what the cluster looks like right now, not just
+the alert payload. Never mutates the cluster and never requires operator
+approval; a cluster it can't reach degrades to diagnosing from the alert
+payload alone, same as before this step existed.
 
 Supports two webhook payload formats:
   - Prometheus AlertManager (most common)
@@ -60,6 +68,13 @@ class K8sAlertState(TypedDict):
     log_excerpt: str
     raw_severity: Optional[str]  # Azure Monitor essentials.severity ("Sev0".."Sev4"), or None -- migration 042
 
+    # After evidence (read-only pre-diagnose cluster state, GAPS.md
+    # scale-readiness build) -- always a string: either the gathered
+    # evidence text, or a bracketed "[live evidence unavailable: ...]"
+    # note when the cluster couldn't be reached. Never None so
+    # _diagnose_node can always drop it straight into the prompt.
+    live_evidence_text: str
+
     # After diagnose
     incident_id: Optional[str]
     parsed_error: Optional[str]
@@ -83,6 +98,36 @@ class K8sAlertState(TypedDict):
 def _load_diagnose_prompt() -> str:
     path = Path(__file__).parent / "prompts" / "diagnose.md"
     return path.read_text()
+
+
+# ──────────────────────────────────────────────
+# Alert-type -> evidence-category classification (context for
+# K8sTools.gather_evidence, not a gate -- an unrecognized alert_type
+# just falls back to the "generic" describe+events category)
+# ──────────────────────────────────────────────
+
+def _classify_alert_category(alert_type: str) -> str:
+    t = (alert_type or "").lower()
+    if "crashloop" in t:
+        return "crashloop"
+    if "oom" in t:
+        return "oomkill"
+    if "imagepull" in t or "errimage" in t:
+        return "imagepull"
+    if "dns" in t:
+        return "dns"
+    # Checked before the generic "pending" match below: a PVC alert whose
+    # name happens to also contain "pending" (e.g. a real-world
+    # "PersistentVolumeClaimPending" alertname) is far better served by
+    # the pvc category's describe+storageclass evidence than by pending's
+    # pod describe+node conditions, which say nothing about storage.
+    if "pvc" in t or "persistentvolumeclaim" in t or "volume" in t:
+        return "pvc"
+    if "pending" in t or "unschedulable" in t or "failedscheduling" in t:
+        return "pending"
+    if "service" in t or "ingress" in t or "endpoint" in t:
+        return "service"
+    return "generic"
 
 
 # ──────────────────────────────────────────────
@@ -131,13 +176,15 @@ class K8sAlertWorkflow(BaseAgent):
         graph = StateGraph(K8sAlertState)
 
         graph.add_node("ingest",    self._ingest_node)
+        graph.add_node("evidence",  self._evidence_node)
         graph.add_node("diagnose",  self._diagnose_node)
         graph.add_node("hitl_gate", self._hitl_gate_node)
         graph.add_node("execute",   self._execute_node)
         graph.add_node("complete",  self._complete_node)
 
         graph.add_edge(START,       "ingest")
-        graph.add_edge("ingest",    "diagnose")
+        graph.add_edge("ingest",    "evidence")
+        graph.add_edge("evidence",  "diagnose")
         graph.add_edge("diagnose",  "hitl_gate")
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
@@ -277,6 +324,49 @@ class K8sAlertWorkflow(BaseAgent):
             "error": None,
         }
 
+    async def _evidence_node(self, state: K8sAlertState) -> dict:
+        """
+        Read-only pre-diagnose evidence step. Fetches live cluster state
+        (pod describe, logs, events, node conditions, metrics, etc. --
+        whichever check matches this alert's category) so _diagnose_node
+        reasons over what the cluster looks like right now instead of the
+        alert payload alone. See K8sTools.gather_evidence for the actual
+        per-category GET calls -- every one of them is a read, so this
+        step never needs operator approval (Governance Rule 11 gates
+        writes, and there are none here).
+
+        Non-fatal: a cluster this workspace can't reach (or hasn't
+        configured) degrades to a "[live evidence unavailable: ...]" note
+        and diagnose proceeds on the alert payload alone, same as before
+        this step existed.
+        """
+        if state.get("error"):
+            return {}
+
+        category = _classify_alert_category(state.get("alert_type", ""))
+
+        try:
+            evidence = await self._tools.gather_evidence(
+                namespace=state["namespace"],
+                pod_name=state["pod_name"],
+                deployment_name=state["deployment_name"],
+                container_name=state["container_name"],
+                alert_category=category,
+            )
+        except Exception as exc:  # belt-and-braces -- gather_evidence's own fetchers already never raise
+            log.warning("[Agent02] Evidence gathering raised unexpectedly: %s", exc)
+            evidence = {"available": False, "unavailable_reason": str(exc)[:200]}
+
+        if evidence.get("available"):
+            self._write_audit("evidence", "ok", incident_id=state.get("incident_id"))
+            log.info("[Agent02] Live evidence gathered — category=%s", category)
+            return {"live_evidence_text": evidence["text"]}
+
+        reason = evidence.get("unavailable_reason") or "unknown reason"
+        self._write_audit("evidence", "unavailable", incident_id=state.get("incident_id"))
+        log.info("[Agent02] Live evidence unavailable (%s) — diagnosing from alert payload alone", reason)
+        return {"live_evidence_text": f"[live evidence unavailable: {reason}]"}
+
     async def _diagnose_node(self, state: K8sAlertState) -> dict:
         """Call LLM via router to diagnose the K8s alert. Parse JSON response."""
         user_message = (
@@ -293,6 +383,7 @@ class K8sAlertWorkflow(BaseAgent):
             f"Current Memory Limit: {state['current_memory_limit']}\n"
             f"Current CPU Limit: {state['current_cpu_limit']}\n\n"
             f"Log Excerpt:\n{state['log_excerpt']}\n\n"
+            f"Live Cluster Evidence:\n{state.get('live_evidence_text', '')}\n\n"
             f"Diagnose this alert and return exactly the JSON format specified."
         )
 
@@ -479,6 +570,7 @@ class K8sAlertWorkflow(BaseAgent):
             "current_memory_limit": "unknown",
             "current_cpu_limit": "unknown",
             "log_excerpt": "",
+            "live_evidence_text": "",
             "incident_id": thread_id,
             "parsed_error": None,
             "remediation_options": None,
