@@ -83,20 +83,26 @@ Confirms the full real path end-to-end: dashboard-equivalent approval →
 real image generation → image served live → LinkedIn publish → queue
 row marked published.
 
-## Still open — needs Kelvin's decision, not a code fix
-`5c4d8d01-67d3-462d-85f3-f975727e0a0f` — a pre-persistent-volume-fix
-row whose image was lost the same way the test row's was, but this one
-hasn't been cleared/regenerated. Options: clear its `image_brief` (same
-fix as above, lets real generation run) or re-approve as text-only.
-The new stale-post monitor is correctly alerting on it right now — that
-alert should stop once this row is resolved.
+## Resolved same day
+`5c4d8d01-67d3-462d-85f3-f975727e0a0f` — cleared its lost `image_brief`
+the same way as the E2E test row, let real generation run fresh,
+confirmed the new image was actually fetchable live before dispatching,
+then published for real:
+**https://www.linkedin.com/feed/update/urn:li:share:7508245525377290241**
+
+Dispatch ran clean afterward — `1 due, 1 published, 0 failed`. Queried
+the queue directly for any remaining `approved` + past-`scheduled_for` +
+unpublished rows: zero. The stale-post monitor has nothing left to
+alert on; that alert should not recur until a real new failure occurs.
 
 ## Outcome
 Full suite 2160 passed, same 4 pre-existing unrelated failures, zero
 regressions. All migrations (052-055) confirmed applied via direct
-query. Two real LinkedIn posts published today as a direct result of
-this fix (the E2E test row, plus the earlier asset-fetch-fix
-verification row).
+query. Three real LinkedIn posts published today as a direct result of
+this session's fixes (the asset-fetch-fix verification row, the E2E
+test row, and this final cleanup row) — the entire backlog that
+triggered the original complaint is now fully cleared, not just
+patched.
 
 ## If this fails next time
 - Check for a "stuck posts" email from `core/linkedin_queue_health.py`
