@@ -609,6 +609,28 @@ async def publish_queue_row(conn, queue_id: str) -> dict:
     canva_access_token, brand_template_ids = await _get_canva_connection(conn)
 
     image_brief = row["image_brief"]
+    # Real bug found live 2026-09-22, same "fail loud, never silently
+    # degrade" contract as the document_carousel fix above: one queue
+    # row's image_brief was stored double-JSON-encoded (a JSON string
+    # where a JSON object belongs -- asyncpg's jsonb codec then decodes
+    # it once into a plain str, and image_brief.get(...) below raised an
+    # opaque "'str' object has no attribute 'get'"). Try one more decode
+    # pass; if it's still not a dict, raise a clear, specific error
+    # instead of either that cryptic AttributeError or silently treating
+    # a real image-bearing post as text-only.
+    if isinstance(image_brief, str):
+        try:
+            image_brief = json.loads(image_brief)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if image_brief is not None and not isinstance(image_brief, dict):
+        raise PublishError(
+            500,
+            f"image_brief for queue row {queue_id} is malformed (expected a JSON "
+            f"object, got {type(image_brief).__name__} even after one decode pass "
+            "-- likely double-JSON-encoded at write time). Fix the row's image_brief "
+            "directly or re-approve it without an image.",
+        )
     post_type = "linkedin_header" if row["format"] == "document_carousel" else "linkedin_square"
     brand_template_id = brand_template_ids.get(post_type)
 

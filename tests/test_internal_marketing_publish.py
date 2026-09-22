@@ -252,6 +252,44 @@ async def test_fetch_asset_bytes_calls_the_assets_route_over_http(monkeypatch):
     )
 
 
+# ── Double-JSON-encoded image_brief (2026-09-22 real bug) ──────────────
+
+DOUBLE_ENCODED_IMAGE_BRIEF_ROW = {
+    **QUEUE_ROW,
+    "image_brief": json.dumps({"image_id": "img_002", "image_path": "assets_library/ai_agents/bar.png"}),
+}
+
+
+async def test_publish_recovers_from_a_double_json_encoded_image_brief():
+    """One real row had image_brief stored as a JSON string instead of a
+    JSON object -- asyncpg's jsonb codec decodes it once into a plain
+    str, so this must decode a second time and proceed normally rather
+    than raising on the first-pass str."""
+    conn = _connected_conn(DOUBLE_ENCODED_IMAGE_BRIEF_ROW, LI_ROW, CANVA_ROW)
+    request = _fake_request(conn)
+
+    with _patched_decrypt(), \
+         patch("api.routes.internal_marketing._fetch_asset_bytes", new=AsyncMock(return_value=b"\x89PNG...")), \
+         patch("core.publishers.linkedin.post_image", new=AsyncMock(return_value={"post_id": "urn:li:share:2", "url": "https://li/2"})):
+        result = await publish_linkedin_post("q-1", request, user={"sub": "kelvin"})
+
+    assert result["used_image"] is True
+
+
+async def test_publish_raises_clearly_for_image_brief_that_is_not_valid_json_at_all():
+    row = {**QUEUE_ROW, "image_brief": "not json at all"}
+    conn = _connected_conn(row, LI_ROW, CANVA_ROW)
+    request = _fake_request(conn)
+
+    with _patched_decrypt():
+        with pytest.raises(HTTPException) as exc_info:
+            await publish_linkedin_post("q-1", request, user={"sub": "kelvin"})
+
+    assert exc_info.value.status_code == 500
+    assert "malformed" in exc_info.value.detail
+    conn.execute.assert_not_awaited()  # status must stay 'approved'
+
+
 # ── Asset vault image path (2026-07-22) — takes priority over Canva ──
 
 ASSET_VAULT_QUEUE_ROW = {
