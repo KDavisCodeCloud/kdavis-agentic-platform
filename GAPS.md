@@ -1602,3 +1602,32 @@ are deliberately incomplete or unverifiable without Kelvin's own action:
     (promo codes, grandfathering). Documented as an estimate in
     `docs/internal/email-approval-api.md`, not fixed to read live Stripe
     prices this build.
+
+### 32. `theclouddecoded.com` is not a verified domain in Resend — no real email of any kind can send right now (2026-09-22)
+
+Discovered live: testing the new LinkedIn-token-expiry alert
+(`core/social_token_expiry.py`, migration 052) produced a real send
+attempt that Resend rejected with `403 validation_error`: *"The
+theclouddecoded.com domain is not verified. Please, add and verify your
+domain on https://resend.com/domains."*
+
+This is **not specific to the marketing/`news@` stream** — it blocks
+`hello@theclouddecoded.com` (transactional) too, since Resend verifies
+at the domain level. Every prior session claim of an email being "sent"
+or a send path being "live" meant the code path executed without
+crashing and Resend's API was reachable — it did NOT mean the message
+was actually delivered, because this specific failure mode (403,
+domain unverified) had never actually been exercised against a real
+Resend send until this alert fired. Concretely at risk right now:
+Cloud Decoded welcome emails, dunning, the enterprise-tier owner alert,
+this new token-expiry alert, and the entire email lifecycle system from
+migration 051 (onboarding/dunning/winback/newsletter/etc.) — none of it
+can actually deliver until this is fixed.
+
+**Kelvin-only, cannot be done from here**: add and verify
+`theclouddecoded.com` in the Resend dashboard
+(https://resend.com/domains) — this means adding the SPF/DKIM/DMARC DNS
+records Resend provides at the domain's DNS host. Until this is done,
+every `send_email()` call in this codebase will keep failing with this
+same 403, non-fatally (callers already catch `EmailError`), but silently
+from Kelvin's perspective unless he's watching logs.
