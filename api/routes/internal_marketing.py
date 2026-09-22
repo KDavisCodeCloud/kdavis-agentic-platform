@@ -79,7 +79,6 @@ import logging
 import mimetypes
 import os
 import secrets
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -110,17 +109,37 @@ _CANVA_REDIRECT = f"{_API_BASE}/api/v1/internal/marketing/connect/callback/canva
 _CANVA_AUTHORIZE_URL = "https://www.canva.com/api/oauth/authorize"
 _CANVA_TOKEN_URL = "https://api.canva.com/rest/v1/oauth/token"
 
-# In-memory OAuth state store, same pattern + same caveat as content.py's
-# _oauth_state_store: fine for a single-process, single-owner manual connect
-# flow; does not survive a process restart mid-flow. State entries expire
+# OAuth state store — migration 053, internal_oauth_state table. Was a
+# plain in-memory dict until a real "expired oauth state" bug 2026-09-22
+# (see that migration's comment): this service runs 4 uvicorn workers in
+# production, and an in-memory dict on the worker that issued the state
+# is invisible to whichever of the other 3 workers handles the callback.
+# DB-backed so any worker can complete the flow. State entries expire
 # after 10 minutes so a stale/abandoned flow can't be replayed later.
-_oauth_state_store: dict[str, float] = {}
 _STATE_TTL_SECONDS = 600
 
-# Separate store because Canva's PKCE flow needs the code_verifier back at
-# the callback leg too, not just the state — keeping it alongside a plain
-# timestamp (like _oauth_state_store) would conflate the two purposes.
-_canva_pkce_store: dict[str, tuple[str, float]] = {}  # state -> (code_verifier, issued_at)
+
+async def _store_oauth_state(conn, state: str, purpose: str, code_verifier: str | None = None) -> None:
+    await conn.execute(
+        "DELETE FROM internal_oauth_state WHERE issued_at < NOW() - ($1 || ' seconds')::interval",
+        str(_STATE_TTL_SECONDS),
+    )
+    await conn.execute(
+        "INSERT INTO internal_oauth_state (state, purpose, code_verifier) VALUES ($1, $2, $3)",
+        state, purpose, code_verifier,
+    )
+
+
+async def _pop_oauth_state(conn, state: str, purpose: str) -> dict | None:
+    """Atomically consumes a state entry (a replayed callback must fail the
+    same way a genuinely unknown state does) and returns its issued_at /
+    code_verifier, or None if the state doesn't exist for this purpose."""
+    row = await conn.fetchrow(
+        "DELETE FROM internal_oauth_state WHERE state = $1 AND purpose = $2 "
+        "RETURNING issued_at, code_verifier",
+        state, purpose,
+    )
+    return dict(row) if row else None
 
 
 def _generate_pkce_pair() -> tuple[str, str]:
@@ -147,7 +166,7 @@ def _decrypt(value: str) -> str:
 
 
 @router.get("/connect/linkedin")
-async def connect_linkedin(key: str) -> RedirectResponse:
+async def connect_linkedin(key: str, request: Request) -> RedirectResponse:
     """
     Start LinkedIn OAuth 2.0 flow for the internal (owner) identity.
     See module docstring - key= is a deliberate stopgap, not the long-term
@@ -160,13 +179,10 @@ async def connect_linkedin(key: str) -> RedirectResponse:
     if not _LI_CLIENT_ID:
         raise HTTPException(status_code=503, detail="LINKEDIN_CLIENT_ID not configured")
 
-    now = time.time()
-    for s, ts in list(_oauth_state_store.items()):
-        if now - ts > _STATE_TTL_SECONDS:
-            _oauth_state_store.pop(s, None)
-
     state = secrets.token_urlsafe(32)
-    _oauth_state_store[state] = now
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        await _store_oauth_state(conn, state, "linkedin")
 
     params = (
         f"response_type=code"
@@ -186,10 +202,12 @@ async def linkedin_callback(code: str, state: str, request: Request) -> dict:
     rather than redirecting into ceo-dashboard, since no post-connect UI
     page exists there yet for this flow.
     """
-    issued_at = _oauth_state_store.pop(state, None)
-    if issued_at is None:
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        entry = await _pop_oauth_state(conn, state, "linkedin")
+    if entry is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-    if time.time() - issued_at > _STATE_TTL_SECONDS:
+    if (datetime.now(timezone.utc) - entry["issued_at"]).total_seconds() > _STATE_TTL_SECONDS:
         raise HTTPException(status_code=400, detail="OAuth state expired - restart the connect flow")
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -266,7 +284,7 @@ async def linkedin_callback(code: str, state: str, request: Request) -> dict:
 
 
 @router.get("/connect/canva")
-async def connect_canva(key: str) -> RedirectResponse:
+async def connect_canva(key: str, request: Request) -> RedirectResponse:
     """
     Start Canva's OAuth 2.0 + PKCE flow. Same key= stopgap as
     connect_linkedin above — see that function's note.
@@ -278,14 +296,11 @@ async def connect_canva(key: str) -> RedirectResponse:
     if not _CANVA_CLIENT_ID:
         raise HTTPException(status_code=503, detail="CANVA_CLIENT_ID not configured")
 
-    now = time.time()
-    for s, (_, ts) in list(_canva_pkce_store.items()):
-        if now - ts > _STATE_TTL_SECONDS:
-            _canva_pkce_store.pop(s, None)
-
     state = secrets.token_urlsafe(32)
     code_verifier, code_challenge = _generate_pkce_pair()
-    _canva_pkce_store[state] = (code_verifier, now)
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        await _store_oauth_state(conn, state, "canva", code_verifier)
 
     params = (
         f"response_type=code"
@@ -308,11 +323,13 @@ async def canva_callback(code: str, state: str, request: Request) -> dict:
     client_id:client_secret), stores it encrypted in
     internal_canva_connection.
     """
-    entry = _canva_pkce_store.pop(state, None)
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        entry = await _pop_oauth_state(conn, state, "canva")
     if entry is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-    code_verifier, issued_at = entry
-    if time.time() - issued_at > _STATE_TTL_SECONDS:
+    code_verifier = entry["code_verifier"]
+    if (datetime.now(timezone.utc) - entry["issued_at"]).total_seconds() > _STATE_TTL_SECONDS:
         raise HTTPException(status_code=400, detail="OAuth state expired - restart the connect flow")
 
     basic_auth = base64.b64encode(f"{_CANVA_CLIENT_ID}:{_CANVA_CLIENT_SECRET}".encode()).decode()

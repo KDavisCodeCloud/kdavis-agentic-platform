@@ -26,6 +26,7 @@ import logging
 import os
 import secrets
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -104,9 +105,34 @@ _X_CLIENT_SECRET  = os.environ.get("X_CLIENT_SECRET", "")
 _X_REDIRECT       = f"{_API_BASE}/api/v1/content/connect/callback/x"
 _X_SCOPES         = "tweet.write users.read offline.access"
 
-# In-memory PKCE/state store (process-local; fine for single-instance dev)
-# In production: move to Redis with TTL
-_oauth_state_store: dict[str, dict] = {}
+# OAuth state store — migration 054, workspace_oauth_state table. Was a
+# plain in-memory dict (this file's own comment admitted "In production:
+# move to Redis with TTL" -- never done) until a real customer-facing
+# "expired oauth state" bug traced 2026-09-22: this service runs 4
+# uvicorn workers in production, and an in-memory dict on the worker that
+# issued the state is invisible to whichever of the other 3 workers
+# handles the callback -- DB-backed so any worker can complete the flow.
+_OAUTH_STATE_TTL_SECONDS = 600
+
+
+async def _store_oauth_state(conn, state: str, workspace_id: str, platform: str, code_verifier: str | None = None) -> None:
+    await conn.execute(
+        "DELETE FROM workspace_oauth_state WHERE issued_at < NOW() - ($1 || ' seconds')::interval",
+        str(_OAUTH_STATE_TTL_SECONDS),
+    )
+    await conn.execute(
+        "INSERT INTO workspace_oauth_state (state, workspace_id, platform, code_verifier) VALUES ($1, $2, $3, $4)",
+        state, UUID(workspace_id), platform, code_verifier,
+    )
+
+
+async def _pop_oauth_state(conn, state: str, platform: str) -> dict | None:
+    row = await conn.fetchrow(
+        "DELETE FROM workspace_oauth_state WHERE state = $1 AND platform = $2 "
+        "RETURNING workspace_id, code_verifier, issued_at",
+        state, platform,
+    )
+    return dict(row) if row else None
 
 
 # ── Impact scoring ────────────────────────────────────────────────────────────
@@ -557,6 +583,7 @@ async def _publish_draft(app, draft_id: str, workspace_id: str,
 
 @router.get("/connect/linkedin")
 async def connect_linkedin(
+    request: Request,
     workspace: dict = Depends(get_workspace),
 ) -> RedirectResponse:
     """
@@ -568,7 +595,9 @@ async def connect_linkedin(
 
     state = secrets.token_urlsafe(32)
     workspace_id = str(workspace["id"])
-    _oauth_state_store[state] = {"workspace_id": workspace_id, "platform": "linkedin"}
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        await _store_oauth_state(conn, state, workspace_id, "linkedin")
 
     params = (
         f"response_type=code"
@@ -587,11 +616,15 @@ async def linkedin_callback(
     request: Request,
 ) -> RedirectResponse:
     """LinkedIn OAuth callback — exchanges code for token and stores encrypted."""
-    stored = _oauth_state_store.pop(state, None)
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        stored = await _pop_oauth_state(conn, state, "linkedin")
     if not stored:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    if (datetime.now(timezone.utc) - stored["issued_at"]).total_seconds() > _OAUTH_STATE_TTL_SECONDS:
+        raise HTTPException(status_code=400, detail="OAuth state expired - restart the connect flow")
 
-    workspace_id = stored["workspace_id"]
+    workspace_id = str(stored["workspace_id"])
 
     # Exchange code for access token
     async with httpx.AsyncClient(timeout=30) as client:
@@ -656,6 +689,7 @@ async def linkedin_callback(
 
 @router.get("/connect/x")
 async def connect_x(
+    request: Request,
     workspace: dict = Depends(get_workspace),
 ) -> RedirectResponse:
     """
@@ -675,11 +709,9 @@ async def connect_x(
     ).rstrip(b"=").decode()
 
     workspace_id = str(workspace["id"])
-    _oauth_state_store[state] = {
-        "workspace_id": workspace_id,
-        "platform": "x",
-        "code_verifier": code_verifier,
-    }
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        await _store_oauth_state(conn, state, workspace_id, "x", code_verifier)
 
     params = (
         f"response_type=code"
@@ -700,11 +732,15 @@ async def x_callback(
     request: Request,
 ) -> RedirectResponse:
     """X OAuth callback — exchanges code for token and stores encrypted."""
-    stored = _oauth_state_store.pop(state, None)
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        stored = await _pop_oauth_state(conn, state, "x")
     if not stored:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    if (datetime.now(timezone.utc) - stored["issued_at"]).total_seconds() > _OAUTH_STATE_TTL_SECONDS:
+        raise HTTPException(status_code=400, detail="OAuth state expired - restart the connect flow")
 
-    workspace_id = stored["workspace_id"]
+    workspace_id = str(stored["workspace_id"])
     code_verifier = stored["code_verifier"]
 
     async with httpx.AsyncClient(timeout=30) as client:
