@@ -268,6 +268,13 @@ async def lifespan(app: FastAPI):
     # not daily -- see that loop function's own comment below.
     app.state.social_token_expiry_task = asyncio.create_task(_social_token_expiry_loop(app.state.db_pool))
 
+    # 2026-09-22 incident fix, the generic sibling of the check above --
+    # alerts on the symptom (approved posts stuck not publishing) rather
+    # than any one specific cause, so every future failure mode surfaces
+    # within hours instead of being discovered days later by accident.
+    # See core/linkedin_queue_health.py's module docstring.
+    app.state.linkedin_queue_health_task = asyncio.create_task(_linkedin_queue_health_loop(app.state.db_pool))
+
     # Cloud Decoded email lifecycle system, migration 051 -- periodic
     # enrollment-advancing pass (core/email_scheduler.py). Same in-process
     # periodic pattern as every loop above -- no separate worker service
@@ -297,6 +304,7 @@ async def lifespan(app: FastAPI):
     app.state.notification_digest_task.cancel()
     app.state.credential_expiry_task.cancel()
     app.state.social_token_expiry_task.cancel()
+    app.state.linkedin_queue_health_task.cancel()
     app.state.email_scheduler_task.cancel()
     app.state.abandoned_checkout_task.cancel()
     app.state.stall_nudge_task.cancel()
@@ -404,6 +412,22 @@ async def _social_token_expiry_loop(pool) -> None:
         except Exception:
             log.exception("[SocialTokenExpiry] Check pass failed — will retry next cycle")
         await asyncio.sleep(_SOCIAL_TOKEN_EXPIRY_INTERVAL_SECONDS)
+
+
+_LINKEDIN_QUEUE_HEALTH_INTERVAL_SECONDS = 60 * 60
+
+
+async def _linkedin_queue_health_loop(pool) -> None:
+    from core.linkedin_queue_health import run_linkedin_queue_health_check
+
+    while True:
+        try:
+            await run_linkedin_queue_health_check(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[LinkedInQueueHealth] Check pass failed — will retry next cycle")
+        await asyncio.sleep(_LINKEDIN_QUEUE_HEALTH_INTERVAL_SECONDS)
 
 
 _EMAIL_SCHEDULER_INTERVAL_SECONDS = 15 * 60
