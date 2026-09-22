@@ -263,6 +263,11 @@ async def lifespan(app: FastAPI):
     # gain from checking more often.
     app.state.credential_expiry_task = asyncio.create_task(_credential_expiry_loop(app.state.db_pool))
 
+    # 2026-09-22 incident fix -- LinkedIn token expiry went undetected for
+    # 3 days with zero alerting (see core/social_token_expiry.py). Hourly,
+    # not daily -- see that loop function's own comment below.
+    app.state.social_token_expiry_task = asyncio.create_task(_social_token_expiry_loop(app.state.db_pool))
+
     # Cloud Decoded email lifecycle system, migration 051 -- periodic
     # enrollment-advancing pass (core/email_scheduler.py). Same in-process
     # periodic pattern as every loop above -- no separate worker service
@@ -291,6 +296,7 @@ async def lifespan(app: FastAPI):
     app.state.notification_retry_task.cancel()
     app.state.notification_digest_task.cancel()
     app.state.credential_expiry_task.cancel()
+    app.state.social_token_expiry_task.cancel()
     app.state.email_scheduler_task.cancel()
     app.state.abandoned_checkout_task.cancel()
     app.state.stall_nudge_task.cancel()
@@ -375,6 +381,29 @@ async def _credential_expiry_loop(pool) -> None:
         except Exception:
             log.exception("[CredentialExpiry] Check pass failed — will retry next cycle")
         await asyncio.sleep(_CREDENTIAL_EXPIRY_INTERVAL_SECONDS)
+
+
+# 2026-09-22 incident fix -- see core/social_token_expiry.py's module
+# docstring for the root cause. Hourly, not daily like credential_expiry
+# above: the whole point is catching an already-expired LinkedIn token
+# fast (it silently broke scheduled posts for 3 days last time with zero
+# alerting at all) -- matches the abandoned-checkout/stall-nudge hourly
+# cadence below, not the "expiry dates don't move that fast" reasoning
+# that justifies the daily ones.
+_SOCIAL_TOKEN_EXPIRY_INTERVAL_SECONDS = 60 * 60
+
+
+async def _social_token_expiry_loop(pool) -> None:
+    from core.social_token_expiry import run_social_token_expiry_check
+
+    while True:
+        try:
+            await run_social_token_expiry_check(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[SocialTokenExpiry] Check pass failed — will retry next cycle")
+        await asyncio.sleep(_SOCIAL_TOKEN_EXPIRY_INTERVAL_SECONDS)
 
 
 _EMAIL_SCHEDULER_INTERVAL_SECONDS = 15 * 60

@@ -80,6 +80,7 @@ import mimetypes
 import os
 import secrets
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -207,6 +208,17 @@ async def linkedin_callback(code: str, state: str, request: Request) -> dict:
         token_data = token_resp.json()
 
     access_token = token_data["access_token"]
+    expires_in = token_data.get("expires_in")
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        if expires_in is not None
+        else None
+    )
+    if expires_at is None:
+        log.warning(
+            "[InternalMarketing] LinkedIn token exchange returned no expires_in -- "
+            "expiry tracking will be blind for this connection until reconnected"
+        )
 
     from core.publishers.linkedin import get_author_urn
     author_urn = await get_author_urn(access_token)
@@ -229,17 +241,19 @@ async def linkedin_callback(code: str, state: str, request: Request) -> dict:
             """
             INSERT INTO internal_social_connections
               (platform, platform_user_id, platform_display_name,
-               encrypted_access_token, author_urn)
-            VALUES ($1, $2, $3, $4, $5)
+               encrypted_access_token, author_urn, expires_at, expiry_warned_at)
+            VALUES ($1, $2, $3, $4, $5, $6, NULL)
             ON CONFLICT (platform)
             DO UPDATE SET
               platform_user_id = EXCLUDED.platform_user_id,
               platform_display_name = EXCLUDED.platform_display_name,
               encrypted_access_token = EXCLUDED.encrypted_access_token,
               author_urn = EXCLUDED.author_urn,
+              expires_at = EXCLUDED.expires_at,
+              expiry_warned_at = NULL,
               updated_at = NOW()
             """,
-            "linkedin", platform_user_id, display_name, encrypted_token, author_urn,
+            "linkedin", platform_user_id, display_name, encrypted_token, author_urn, expires_at,
         )
 
     log.info("[InternalMarketing] LinkedIn connected — user=%s urn=%s", display_name, author_urn)
