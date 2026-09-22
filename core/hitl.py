@@ -257,6 +257,31 @@ class HITLGate:
         )
         self._write_audit_entry("unknown", "hitl_gate", str(incident_id), "deduplicated", 0)
 
+    async def note_source_resolution(self, incident_id: str) -> None:
+        """
+        Records that the alert SOURCE (Prometheus Alertmanager / Grafana
+        unified alerting) itself reported this incident's underlying
+        condition as resolved (GAPS.md scale-readiness build, Agent 11
+        Alertmanager/Grafana ingest). Advisory only -- deliberately does
+        NOT change execution_status. The incident may still need an
+        operator's attention regardless of what the source says (a
+        flapping alert, a false resolve, or just a preference to review
+        before closing), so this never auto-closes anything the way
+        mark_executed does.
+
+        Kept as its own column (source_resolved_at, migration 056) rather
+        than overloading resolution_note (migration 038) -- that column's
+        own comment documents it as "NULL for every other resolution
+        path," and this is exactly that other path: source-reported, not
+        operator-reported.
+        """
+        await self._db.execute(
+            "UPDATE incidents SET source_resolved_at = $2 WHERE id = $1",
+            UUID(str(incident_id)),
+            datetime.now(timezone.utc),
+        )
+        self._write_audit_entry("unknown", "hitl_gate", str(incident_id), "source_resolved", 0)
+
     async def get_approved_option(self, incident_id: str) -> Optional[dict]:
         """
         Returns the approved option dict if the incident is approved, else None.

@@ -13,9 +13,29 @@ What this file validates:
       unknown -> not_implemented, missing repo -> skipped
 
   ResourceHealthWorkflow:
-    - _ingest_node parses Azure Monitor Common Alert Schema and an
-      already-SNS-unwrapped CloudWatch alarm, classifies domain
-      heuristically, falls back safely on an unrecognized payload
+    - _ingest_node parses Azure Monitor Common Alert Schema, an
+      already-SNS-unwrapped CloudWatch alarm, Prometheus Alertmanager, and
+      Grafana unified alerting payloads; classifies domain heuristically;
+      falls back safely on an unrecognized payload
+    - _ingest_node (Alertmanager/Grafana): alert_name/resource_id/
+      resource_name/resource_group/severity population, K8s-origin
+      (namespace+pod) vs generic instance resource identification, the
+      conservative severity mapping (critical/warning->high, info->low,
+      unmapped->medium), annotations summary/description reaching
+      log_excerpt, Grafana's orgId discriminator, Grafana's values{} ->
+      metric_current_value
+    - _resolution_check_node/_route_after_resolution_check: a "resolved"
+      status alert with a matching open incident notes the resolution
+      (hitl.note_source_resolution) without diagnosing; with no match,
+      creates nothing; a "firing" status alert is a no-op that falls
+      through to dedup_check unchanged
+    - integration-style tests chaining _ingest_node -> _dedup_check_node /
+      _resolution_check_node prove dedup collapses a repeat firing and a
+      resolved alert creates nothing end-to-end from real fixture payloads
+    - run(): a multi-alert Alertmanager/Grafana delivery fans out into one
+      _run_single() call per alert element (preserving Grafana's orgId in
+      each sub-payload) and returns a list; a single-alert delivery (any
+      source) keeps the original single incident_id string return
     - _diagnose_node calls the router with task_type="resource_health_triage"
       and parses parsed_error/options/estimated_duration_seconds
     - _hitl_gate_node creates an incident and pauses via interrupt()
@@ -61,7 +81,9 @@ def _base_state(workspace_id: str, payload: dict | None = None) -> ResourceHealt
         "resource_type": "Microsoft.Compute/virtualMachines",
         "severity": "Sev2",
         "alert_name": "High CPU",
+        "alert_status": "firing",
         "log_excerpt": "Alert Rule: High CPU\nResource: acme-prod-vm",
+        "is_source_resolved_noop": False,
         "incident_id": None,
         "parsed_error": None,
         "remediation_options": None,
@@ -141,6 +163,101 @@ AWS_CLOUDWATCH_METRIC_PAYLOAD = {
             "Dimensions": [{"name": "DBInstanceIdentifier", "value": "prod-db-01"}],
         },
     }
+}
+
+# Real Prometheus Alertmanager webhook_config v4 shape (a single delivery
+# batching two distinct firing alerts -- the multi-alert case run() must
+# fan out into two independent graph runs). First alert is K8s-origin
+# (kube-state-metrics style pod+namespace labels, preferred over instance
+# per _extract_alertmanager_resource); second is a generic node-exporter
+# instance alert with no namespace label at all (resource_group falls
+# back to the job label).
+ALERTMANAGER_MULTI_ALERT_PAYLOAD = {
+    "receiver": "cloud-decoded",
+    "status": "firing",
+    "alerts": [
+        {
+            "status": "firing",
+            "labels": {
+                "alertname": "KubePodCrashLooping",
+                "severity": "critical",
+                "namespace": "production",
+                "pod": "checkout-service-7d9f8b-xkq2p",
+                "job": "kube-state-metrics",
+            },
+            "annotations": {
+                "summary": "Pod is crash looping",
+                "description": "Pod production/checkout-service-7d9f8b-xkq2p has restarted 6 times in the last 15 minutes",
+            },
+            "startsAt": "2026-09-22T10:00:00Z",
+        },
+        {
+            "status": "firing",
+            "labels": {
+                "alertname": "HighDiskUsage",
+                "severity": "warning",
+                "instance": "db-primary-01:9100",
+                "job": "node-exporter",
+            },
+            "annotations": {
+                "summary": "Disk usage above 85%",
+                "description": "Filesystem / on db-primary-01 is 87% full",
+            },
+            "startsAt": "2026-09-22T10:05:00Z",
+        },
+    ],
+}
+
+# Same underlying pod alert as ALERTMANAGER_MULTI_ALERT_PAYLOAD's first
+# element, resolved -- Alertmanager resends the identical labels with
+# status: "resolved" once the condition clears.
+ALERTMANAGER_RESOLVED_ALERT_PAYLOAD = {
+    "receiver": "cloud-decoded",
+    "status": "resolved",
+    "alerts": [
+        {
+            "status": "resolved",
+            "labels": {
+                "alertname": "KubePodCrashLooping",
+                "severity": "critical",
+                "namespace": "production",
+                "pod": "checkout-service-7d9f8b-xkq2p",
+                "job": "kube-state-metrics",
+            },
+            "annotations": {
+                "summary": "Pod is crash looping",
+                "description": "Pod production/checkout-service-7d9f8b-xkq2p has restarted 6 times in the last 15 minutes",
+            },
+            "startsAt": "2026-09-22T10:00:00Z",
+            "endsAt": "2026-09-22T10:20:00Z",
+        },
+    ],
+}
+
+# Grafana unified alerting -- deliberately mirrors Alertmanager's shape;
+# "orgId" is the one field that tells them apart. "values" is Grafana-only
+# (the last-evaluated value per query ref ID).
+GRAFANA_ALERT_PAYLOAD = {
+    "receiver": "cloud-decoded",
+    "status": "firing",
+    "orgId": 1,
+    "alerts": [
+        {
+            "status": "firing",
+            "labels": {
+                "alertname": "HighCPUUsage",
+                "severity": "warning",
+                "instance": "web-01:9100",
+                "job": "node-exporter",
+            },
+            "annotations": {
+                "summary": "CPU usage above threshold",
+                "description": "CPU usage on web-01 has exceeded 90% for 10 minutes",
+            },
+            "values": {"B": 93.4},
+            "startsAt": "2026-09-22T11:00:00Z",
+        },
+    ],
 }
 
 
@@ -353,6 +470,155 @@ class TestIngestNode:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# ResourceHealthWorkflow._ingest_node() -- Prometheus Alertmanager
+# (GAPS.md scale-readiness build). The route accepted and routed these
+# payloads already; _ingest_node had no parsing branch for them at all, so
+# they fell through to the raw-JSON catch-all and structured fields never
+# populated -- silently bypassing dedup, severity normalization, resource
+# exemptions, and resource pinpointing.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestIngestNodeAlertmanager:
+    async def test_pod_origin_alert_prefers_namespace_pod_over_instance(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        # _ingest_node only ever parses alerts[0] -- run()'s fan-out is
+        # what turns a multi-alert delivery into one single-alert
+        # sub-payload per element (see TestRunFanOut below).
+        payload = {"alerts": [ALERTMANAGER_MULTI_ALERT_PAYLOAD["alerts"][0]]}
+        state = _base_state(workspace_id, payload)
+
+        result = await wf._ingest_node(state)
+
+        assert result["alert_source"] == "prometheus_alertmanager"
+        assert result["alert_name"] == "KubePodCrashLooping"
+        assert result["resource_id"] == "production/checkout-service-7d9f8b-xkq2p"
+        assert result["resource_name"] == "checkout-service-7d9f8b-xkq2p"
+        assert result["resource_group"] == "production"
+        assert result["alert_status"] == "firing"
+
+    async def test_critical_severity_mapped_to_high_not_critical(self, mock_db, workspace_id, mock_router):
+        """Deliberately conservative: a raw Prometheus 'critical' label
+        must NOT pass straight through as incident severity 'critical' --
+        that's reserved for platform-computed signals, not whatever an
+        alerting-rule author typed."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        payload = {"alerts": [ALERTMANAGER_MULTI_ALERT_PAYLOAD["alerts"][0]]}
+        state = _base_state(workspace_id, payload)
+
+        result = await wf._ingest_node(state)
+
+        assert result["severity"] == "high"
+
+    async def test_instance_origin_alert_uses_instance_and_job(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        payload = {"alerts": [ALERTMANAGER_MULTI_ALERT_PAYLOAD["alerts"][1]]}
+        state = _base_state(workspace_id, payload)
+
+        result = await wf._ingest_node(state)
+
+        assert result["alert_name"] == "HighDiskUsage"
+        assert result["resource_id"] == "db-primary-01:9100"
+        assert result["resource_name"] == "db-primary-01:9100"
+        assert result["resource_group"] == "node-exporter"  # falls back to job, no namespace label
+        assert result["severity"] == "high"  # warning -> high
+
+    async def test_annotations_summary_and_description_reach_log_excerpt(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        payload = {"alerts": [ALERTMANAGER_MULTI_ALERT_PAYLOAD["alerts"][0]]}
+        state = _base_state(workspace_id, payload)
+
+        result = await wf._ingest_node(state)
+
+        assert "Pod is crash looping" in result["log_excerpt"]
+        assert "restarted 6 times" in result["log_excerpt"]
+
+    async def test_resolved_status_populates_alert_status(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id, ALERTMANAGER_RESOLVED_ALERT_PAYLOAD)
+
+        result = await wf._ingest_node(state)
+
+        assert result["alert_status"] == "resolved"
+        assert result["alert_name"] == "KubePodCrashLooping"
+        assert result["resource_id"] == "production/checkout-service-7d9f8b-xkq2p"
+
+    async def test_missing_alertname_falls_back_to_unknown(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        payload = {"alerts": [{"status": "firing", "labels": {}, "annotations": {}}]}
+        state = _base_state(workspace_id, payload)
+
+        result = await wf._ingest_node(state)
+
+        assert result["alert_name"] == "unknown"
+        assert result["resource_id"] == "unknown"
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("critical", "high"),
+        ("warning", "high"),
+        ("info", "low"),
+        ("page", "medium"),
+        ("", "medium"),
+        (None, "medium"),
+        ("CRITICAL", "high"),  # case-insensitive
+    ])
+    def test_map_alertmanager_severity(self, raw, expected):
+        from agents.agent_11_resource_health.workflow import _map_alertmanager_severity
+        assert _map_alertmanager_severity(raw) == expected
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ResourceHealthWorkflow._ingest_node() -- Grafana unified alerting
+# (GAPS.md scale-readiness build). Deliberately mirrors Alertmanager's
+# shape; orgId is the one field the route (and _ingest_node, mirroring
+# it) uses to tell them apart.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestIngestNodeGrafana:
+    async def test_orgid_discriminates_grafana_from_alertmanager(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id, GRAFANA_ALERT_PAYLOAD)
+
+        result = await wf._ingest_node(state)
+
+        assert result["alert_source"] == "grafana"
+        assert result["alert_name"] == "HighCPUUsage"
+        assert result["resource_id"] == "web-01:9100"
+        assert result["severity"] == "high"  # warning -> high
+
+    async def test_values_map_populates_metric_current_value(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        state = _base_state(workspace_id, GRAFANA_ALERT_PAYLOAD)
+
+        result = await wf._ingest_node(state)
+
+        assert result["metric_current_value"] == 93.4
+        assert "93.4" in result["log_excerpt"]
+
+    async def test_no_values_leaves_metric_current_value_none(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        payload = {
+            "orgId": 1,
+            "alerts": [{
+                "status": "firing",
+                "labels": {"alertname": "X", "severity": "warning", "instance": "a:1"},
+                "annotations": {},
+            }],
+        }
+        state = _base_state(workspace_id, payload)
+
+        result = await wf._ingest_node(state)
+
+        assert result["metric_current_value"] is None
+
+    def test_extract_grafana_metric_value_ignores_non_numeric(self):
+        from agents.agent_11_resource_health.workflow import _extract_grafana_metric_value
+        assert _extract_grafana_metric_value({"values": {"B": "not-a-number"}}) is None
+        assert _extract_grafana_metric_value({"values": {}}) is None
+        assert _extract_grafana_metric_value({}) is None
+        assert _extract_grafana_metric_value({"values": {"B": 95.2}}) == 95.2
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # ResourceHealthWorkflow._ingest_node() -- structured resource/metric
 # extraction (Phase 2, scale-readiness build). Asserts resource_name,
 # metric_name, and metric_current_value are populated correctly -- not
@@ -554,6 +820,154 @@ class TestDedupCheckNode:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# ResourceHealthWorkflow._resolution_check_node() / _route_after_resolution_check()
+# -- GAPS.md scale-readiness build. A "resolved"-status Alertmanager/
+# Grafana alert must never reach diagnose or create a new incident.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestResolutionCheckNode:
+    async def test_firing_status_is_a_noop(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf.hitl.find_open_incident = AsyncMock()
+        state = _base_state(workspace_id, ALERTMANAGER_MULTI_ALERT_PAYLOAD)
+        state["alert_status"] = "firing"
+
+        result = await wf._resolution_check_node(state)
+
+        assert result == {}
+        wf.hitl.find_open_incident.assert_not_called()
+
+    async def test_resolved_with_no_matching_incident_creates_nothing(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf.hitl.find_open_incident = AsyncMock(return_value=None)
+        wf.hitl.note_source_resolution = AsyncMock()
+        state = _base_state(workspace_id, ALERTMANAGER_RESOLVED_ALERT_PAYLOAD)
+        state["alert_status"] = "resolved"
+        state["resource_id"] = "production/checkout-service-7d9f8b-xkq2p"
+        state["alert_name"] = "KubePodCrashLooping"
+
+        result = await wf._resolution_check_node(state)
+
+        assert result == {"incident_id": None, "is_source_resolved_noop": True}
+        wf.hitl.note_source_resolution.assert_not_called()
+
+    async def test_resolved_with_matching_incident_notes_resolution_not_diagnosis(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        existing_id = str(uuid4())
+        wf.hitl.find_open_incident = AsyncMock(return_value={"id": existing_id, "occurrence_count": 2})
+        wf.hitl.note_source_resolution = AsyncMock()
+        state = _base_state(workspace_id, ALERTMANAGER_RESOLVED_ALERT_PAYLOAD)
+        state["alert_status"] = "resolved"
+        state["resource_id"] = "production/checkout-service-7d9f8b-xkq2p"
+        state["alert_name"] = "KubePodCrashLooping"
+
+        result = await wf._resolution_check_node(state)
+
+        assert result == {"incident_id": existing_id, "is_source_resolved_noop": True}
+        wf.hitl.note_source_resolution.assert_awaited_once_with(existing_id)
+
+    async def test_skips_lookup_when_upstream_error_set(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf.hitl.find_open_incident = AsyncMock()
+        state = _base_state(workspace_id)
+        state["alert_status"] = "resolved"
+        state["error"] = "ingest failed upstream"
+
+        result = await wf._resolution_check_node(state)
+
+        assert result == {}
+        wf.hitl.find_open_incident.assert_not_called()
+
+    def test_route_after_resolution_check(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        assert wf._route_after_resolution_check({"is_source_resolved_noop": True}) == "resolved"
+        assert wf._route_after_resolution_check({"is_source_resolved_noop": False}) == "firing"
+        assert wf._route_after_resolution_check({}) == "firing"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Integration-style: _ingest_node chained into _dedup_check_node /
+# _resolution_check_node against the real Alertmanager fixtures above --
+# proves dedup collapses a repeat firing, and a resolved status creates
+# nothing, end-to-end from actual webhook payloads (not synthetic state).
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestAlertmanagerDedupAndResolutionIntegration:
+    async def test_repeat_firing_of_same_pod_alert_dedups_without_diagnosing(self, mock_db, workspace_id, mock_router):
+        """Two separate webhook deliveries of the identical Alertmanager
+        pod alert -- the second delivery must find the first's open
+        incident and bump it, never routing to diagnose."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+
+        store: dict[str, int] = {}
+
+        async def fake_find_open_incident(workspace_id, resource_id, alert_name):
+            if store:
+                incident_id = next(iter(store))
+                return {"id": incident_id, "occurrence_count": store[incident_id]}
+            return None
+
+        async def fake_bump_occurrence(incident_id):
+            store[incident_id] += 1
+
+        wf.hitl.find_open_incident = fake_find_open_incident
+        wf.hitl.bump_occurrence = fake_bump_occurrence
+
+        payload = {"alerts": [ALERTMANAGER_MULTI_ALERT_PAYLOAD["alerts"][0]]}
+
+        # First delivery: no existing incident -- falls through toward "new"
+        state1 = _base_state(workspace_id, payload)
+        state1.update(await wf._ingest_node(state1))
+        resolution1 = await wf._resolution_check_node(state1)
+        state1.update(resolution1)
+        assert wf._route_after_resolution_check(state1) == "firing"
+        dedup1 = await wf._dedup_check_node(state1)
+        assert dedup1 == {}  # would route to diagnose in the real graph
+        store[str(uuid4())] = 1  # simulate create_incident's DEFAULT occurrence_count (migration 029)
+
+        # Second delivery of the identical alert: must dedup, not diagnose
+        state2 = _base_state(workspace_id, payload)
+        state2.update(await wf._ingest_node(state2))
+        resolution2 = await wf._resolution_check_node(state2)
+        state2.update(resolution2)
+        assert wf._route_after_resolution_check(state2) == "firing"
+        dedup2 = await wf._dedup_check_node(state2)
+
+        assert dedup2["is_dedup_match"] is True
+        assert wf._route_after_dedup(dedup2) == "existing"
+        assert store[dedup2["incident_id"]] == 2
+
+    async def test_resolved_alert_with_no_match_creates_nothing_end_to_end(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf.hitl.find_open_incident = AsyncMock(return_value=None)
+        wf.hitl.note_source_resolution = AsyncMock()
+
+        state = _base_state(workspace_id, ALERTMANAGER_RESOLVED_ALERT_PAYLOAD)
+        state.update(await wf._ingest_node(state))
+
+        result = await wf._resolution_check_node(state)
+
+        assert wf._route_after_resolution_check(result) == "resolved"
+        assert result["incident_id"] is None
+        wf.hitl.note_source_resolution.assert_not_called()
+
+    async def test_resolved_alert_matching_open_incident_notes_it_end_to_end(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        existing_id = str(uuid4())
+        wf.hitl.find_open_incident = AsyncMock(return_value={"id": existing_id, "occurrence_count": 3})
+        wf.hitl.note_source_resolution = AsyncMock()
+
+        state = _base_state(workspace_id, ALERTMANAGER_RESOLVED_ALERT_PAYLOAD)
+        state.update(await wf._ingest_node(state))
+
+        result = await wf._resolution_check_node(state)
+
+        assert wf._route_after_resolution_check(result) == "resolved"
+        assert result["incident_id"] == existing_id
+        wf.hitl.note_source_resolution.assert_awaited_once_with(existing_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # ResourceHealthWorkflow._diagnose_node()
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -737,3 +1151,85 @@ class TestExecuteNode:
         result = await wf._execute_node(state)
 
         assert result["execution_result"]["status"] == "skipped"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ResourceHealthWorkflow.run() -- multi-alert fan-out (GAPS.md
+# scale-readiness build). A single Alertmanager/Grafana delivery can carry
+# several alerts in one "alerts" array; each element must get its own
+# independent graph run (own thread_id, own dedup/resolution check, own
+# possible incident). Exercised via _run_single (the actual graph
+# invocation, already effectively untestable without a real Postgres
+# checkpointer -- same reason no other agent in this suite unit-tests its
+# own run() end-to-end) rather than the graph itself, isolating run()'s
+# fan-out/routing logic from graph execution.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestRunFanOut:
+    async def test_multi_alert_payload_fans_out_one_run_per_alert(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf._run_single = AsyncMock(side_effect=["incident-1", None])
+
+        result = await wf.run(ALERTMANAGER_MULTI_ALERT_PAYLOAD, cloud_provider="aws")
+
+        assert result == ["incident-1", None]
+        assert wf._run_single.await_count == 2
+        first_payload = wf._run_single.call_args_list[0].args[0]
+        second_payload = wf._run_single.call_args_list[1].args[0]
+        assert first_payload["alerts"] == [ALERTMANAGER_MULTI_ALERT_PAYLOAD["alerts"][0]]
+        assert second_payload["alerts"] == [ALERTMANAGER_MULTI_ALERT_PAYLOAD["alerts"][1]]
+
+    async def test_each_alert_runs_through_dedup_independently(self, mock_db, workspace_id, mock_router):
+        """The two elements in ALERTMANAGER_MULTI_ALERT_PAYLOAD are
+        different alerts (different alertname/resource) -- confirms
+        run() doesn't collapse or share any state between the two
+        fanned-out sub-payloads passed to _run_single."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        seen_payloads = []
+
+        async def fake_run_single(payload, cloud_provider):
+            seen_payloads.append(payload)
+            return f"incident-{len(seen_payloads)}"
+
+        wf._run_single = fake_run_single
+
+        result = await wf.run(ALERTMANAGER_MULTI_ALERT_PAYLOAD, cloud_provider="aws")
+
+        assert result == ["incident-1", "incident-2"]
+        assert seen_payloads[0]["alerts"][0]["labels"]["alertname"] == "KubePodCrashLooping"
+        assert seen_payloads[1]["alerts"][0]["labels"]["alertname"] == "HighDiskUsage"
+
+    async def test_grafana_multi_alert_preserves_orgid_in_each_sub_payload(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf._run_single = AsyncMock(return_value="incident-1")
+        multi_grafana = {
+            "orgId": 1,
+            "alerts": [GRAFANA_ALERT_PAYLOAD["alerts"][0], GRAFANA_ALERT_PAYLOAD["alerts"][0]],
+        }
+
+        await wf.run(multi_grafana, cloud_provider="aws")
+
+        assert wf._run_single.await_count == 2
+        for call in wf._run_single.call_args_list:
+            assert call.args[0]["orgId"] == 1
+
+    async def test_single_alert_delivery_does_not_fan_out(self, mock_db, workspace_id, mock_router):
+        """A single-element alerts[] keeps the original single-string
+        return contract -- only a genuinely multi-alert delivery fans out
+        to a list."""
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf._run_single = AsyncMock(return_value="incident-1")
+
+        result = await wf.run(GRAFANA_ALERT_PAYLOAD, cloud_provider="aws")
+
+        assert result == "incident-1"
+        wf._run_single.assert_awaited_once_with(GRAFANA_ALERT_PAYLOAD, "aws")
+
+    async def test_non_alertmanager_payload_does_not_fan_out(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf._run_single = AsyncMock(return_value="incident-1")
+
+        result = await wf.run(AZURE_ALERT_PAYLOAD, cloud_provider="azure")
+
+        assert result == "incident-1"
+        wf._run_single.assert_awaited_once_with(AZURE_ALERT_PAYLOAD, "azure")

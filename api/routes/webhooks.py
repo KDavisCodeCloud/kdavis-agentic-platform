@@ -707,11 +707,23 @@ async def _run_resource_health_alert(
                 conn, workspace_id, checkpointer, **creds,
                 llm_provider=workspace.get("llm_provider"), byok_encrypted_key=workspace.get("encrypted_llm_key"),
             )
+            # agent.run() returns a single incident_id string for every
+            # source except a multi-alert Alertmanager/Grafana delivery,
+            # which fans out to one graph run per alert element and
+            # returns a list instead (None entries are resolved alerts
+            # that matched nothing and created no incident) -- see
+            # ResourceHealthWorkflow.run()'s docstring.
             incident_id = await agent.run(payload, cloud_provider=cloud_provider)
-            log.info(
-                "[Webhooks] Agent 11 triage complete — workspace=%s incident=%s",
-                workspace_id, incident_id,
-            )
+            if isinstance(incident_id, list):
+                log.info(
+                    "[Webhooks] Agent 11 triage complete — workspace=%s incidents=%s (%d alerts)",
+                    workspace_id, [i for i in incident_id if i], len(incident_id),
+                )
+            else:
+                log.info(
+                    "[Webhooks] Agent 11 triage complete — workspace=%s incident=%s",
+                    workspace_id, incident_id,
+                )
 
     except SubscriptionError as exc:
         log.error(

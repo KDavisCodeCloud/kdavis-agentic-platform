@@ -12,15 +12,36 @@ Agent 11 — Cloud Resource Health Monitoring
 LangGraph state machine with Postgres checkpointing and HITL interrupt gate.
 
 State flow:
-    START → ingest → diagnose → hitl_gate (interrupt) → execute → complete → END
+    START → ingest → resolution_check → dedup_check → diagnose → hitl_gate (interrupt) → execute → complete → END
+                            │                  │
+                            └→ resolution_complete → END   └→ dedup_complete → END
 
-Supports two webhook payload formats (api/routes/webhooks.py's
-/resource-health-alert normalizes both before calling run()):
+resolution_check (GAPS.md scale-readiness build) only does anything for a
+"resolved"-status Alertmanager/Grafana alert -- every other alert_status
+("firing", or the implicit firing-only Azure Monitor/AWS CloudWatch
+sources) passes straight through to dedup_check unchanged.
+
+Supports four webhook payload formats (api/routes/webhooks.py's
+/resource-health-alert normalizes all of them before calling run()):
   - Azure Monitor Common Alert Schema (same shape aks_alert_webhook already
     parses for AKS -- this agent handles the general case, any resource type)
   - AWS CloudWatch Alarm, already unwrapped from its SNS envelope by
     core/aws_sns.py -- see that module for the subscription-confirmation
     handshake and signature verification that happens before this ever runs
+  - Prometheus Alertmanager (webhook_config v4 shape: a top-level "alerts"
+    array, each element carrying labels/annotations/status)
+  - Grafana unified alerting -- deliberately mirrors Alertmanager's shape;
+    a top-level "orgId" field is the only reliable discriminator (same
+    detection api/routes/webhooks.py's resource_health_alert_webhook
+    already does before ever calling run())
+
+A single Alertmanager/Grafana delivery can carry several alerts in one
+"alerts" array (Alertmanager batches by default, commonly mixing newly-
+firing and newly-resolved alerts in the same delivery) -- run() fans
+those out into one independent graph invocation per alert element (own
+thread_id, own dedup/resolution check, own possible incident) rather than
+collapsing them into a single ingest. See run()'s docstring for the
+resulting return-type difference.
 
 Tier gate: Growth+/Enterprise (core/compliance.py's TIER_LIMITS -- growth's
 max_agents was bumped from 10 to 11 specifically so this doesn't become
@@ -63,6 +84,12 @@ class ResourceHealthState(TypedDict):
     severity: str
     alert_name: str
     log_excerpt: str
+    # "firing" | "resolved" -- only Alertmanager/Grafana alerts carry a
+    # real status per element; every other source is always "firing" by
+    # the time it reaches this agent (Azure Monitor/AWS CloudWatch both
+    # already gate on their own "is this actually firing" condition at
+    # the webhook route, before this workflow ever runs).
+    alert_status: str
 
     # Structured resource/metric pinpointing (Phase 2, GAPS.md scale-readiness build)
     resource_name: Optional[str]
@@ -86,6 +113,13 @@ class ResourceHealthState(TypedDict):
     # dedup_check routed to dedup_complete because the resource is
     # exempted, not because an existing incident was found.
     is_exempted: bool
+
+    # Set True only by _resolution_check_node -- a "resolved"-status alert
+    # either matched an existing open incident (noted via
+    # hitl.note_source_resolution, not diagnosed) or had no match at all
+    # (nothing to do); both cases short-circuit straight to
+    # resolution_complete without ever reaching dedup_check/diagnose.
+    is_source_resolved_noop: bool
 
     # After diagnose
     incident_id: Optional[str]
@@ -259,6 +293,123 @@ def _extract_aws_account_id(alarm: dict) -> str:
 
 
 # ──────────────────────────────────────────────
+# Structured extraction — Prometheus Alertmanager / Grafana unified
+# alerting (GAPS.md scale-readiness build). Both webhook notifiers send
+# an identical per-alert shape (labels/annotations/status) inside a
+# top-level "alerts" array -- api/routes/webhooks.py's
+# resource_health_alert_webhook already tells the two envelopes apart via
+# Grafana's orgId field before ever calling run(); _ingest_node mirrors
+# that same check since it only ever sees whichever single-alert
+# sub-payload run()'s fan-out built.
+# ──────────────────────────────────────────────
+
+_ALERTMANAGER_SEVERITY_MAP = {
+    "critical": "high",
+    "warning": "high",
+    "info": "low",
+}
+
+
+def _map_alertmanager_severity(raw: Optional[str]) -> str:
+    """
+    Deliberately more conservative than core.severity.normalize_severity's
+    generic pass-through (which would leave a raw "critical" label as
+    "critical" unchanged): a Prometheus/Grafana severity label is set by
+    whoever wrote the alerting rule, with no platform-side validation, so
+    this caps it at "high" rather than letting an arbitrary rule author
+    page as "critical" -- "critical" is reserved for signals the platform
+    itself computes. Unmapped or missing labels default to "medium", the
+    same convention normalize_severity itself uses.
+    """
+    return _ALERTMANAGER_SEVERITY_MAP.get((raw or "").strip().lower(), "medium")
+
+
+def _extract_alertmanager_resource(labels: dict) -> tuple[str, str, str]:
+    """
+    (resource_id, resource_name, resource_group) from an Alertmanager/
+    Grafana alert's labels. A K8s-origin alert (kube-state-metrics and
+    similar exporters commonly set pod+namespace labels) is preferred over
+    the generic `instance` scrape-target label when present -- namespace/
+    pod pinpoints the actual unhealthy resource; `instance` is just the
+    host:port Prometheus scraped, which for a K8s exporter is rarely the
+    resource that's actually failing.
+    """
+    pod = labels.get("pod")
+    namespace = labels.get("namespace")
+    if pod:
+        resource_name = pod
+        resource_id = f"{namespace}/{pod}" if namespace else pod
+    else:
+        resource_name = labels.get("instance", "unknown")
+        resource_id = resource_name
+    resource_group = namespace or labels.get("job") or "unknown"
+    return resource_id, resource_name, resource_group
+
+
+def _extract_grafana_metric_value(alert: dict) -> Optional[float]:
+    """
+    Grafana unified alerting includes a `values` map on each alert element
+    -- the last-evaluated value per query/condition ref ID (e.g.
+    {"B": 95.2}). Alertmanager proper has no equivalent field, so this is
+    only ever called from the Grafana branch. Takes the first value
+    present -- most Grafana alert rules have exactly one query, and there
+    is no ref-ID convention to prefer one over another in the general
+    case.
+    """
+    values = alert.get("values") or {}
+    if not values:
+        return None
+    first = next(iter(values.values()), None)
+    try:
+        return float(first) if first is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_alertmanager_alert(alert: dict) -> dict:
+    """
+    Shared field extraction for a single Alertmanager/Grafana alert
+    element. Both webhook shapes carry identical per-alert structure
+    (labels/annotations/status) -- the two branches in _ingest_node that
+    call this differ only in alert_source labeling and (Grafana only)
+    the extra values{} metric read, done separately by the caller.
+    """
+    labels = alert.get("labels", {})
+    annotations = alert.get("annotations", {})
+    status = alert.get("status", "firing")
+
+    alert_name = labels.get("alertname", "unknown")
+    resource_id, resource_name, resource_group = _extract_alertmanager_resource(labels)
+    severity = _map_alertmanager_severity(labels.get("severity"))
+
+    summary = annotations.get("summary", "")
+    description = annotations.get("description", "")
+    log_lines = [
+        f"Alert: {alert_name}",
+        f"Status: {status}",
+        f"Severity (raw label): {labels.get('severity', 'unknown')}",
+        f"Resource: {resource_id}",
+        f"Namespace/Job: {resource_group}",
+        f"Summary: {summary[:300]}",
+        f"Description: {description[:300]}",
+    ]
+
+    return {
+        "alert_name": alert_name,
+        "resource_id": resource_id,
+        "resource_name": resource_name,
+        "resource_group": resource_group,
+        # No reliable domain signal in Alertmanager/Grafana labels --
+        # "unknown" here, same as every other source's fallback; the LLM
+        # categorizes for real during diagnosis.
+        "domain": "unknown",
+        "severity": severity,
+        "alert_status": status,
+        "log_lines": log_lines,
+    }
+
+
+# ──────────────────────────────────────────────
 # Workflow class
 # ──────────────────────────────────────────────
 
@@ -302,16 +453,28 @@ class ResourceHealthWorkflow(BaseAgent):
     def _build_graph(self):
         graph = StateGraph(ResourceHealthState)
 
-        graph.add_node("ingest",         self._ingest_node)
-        graph.add_node("dedup_check",    self._dedup_check_node)
-        graph.add_node("dedup_complete", self._dedup_complete_node)
-        graph.add_node("diagnose",       self._diagnose_node)
-        graph.add_node("hitl_gate",      self._hitl_gate_node)
-        graph.add_node("execute",        self._execute_node)
-        graph.add_node("complete",       self._complete_node)
+        graph.add_node("ingest",              self._ingest_node)
+        graph.add_node("resolution_check",    self._resolution_check_node)
+        graph.add_node("resolution_complete", self._resolution_complete_node)
+        graph.add_node("dedup_check",         self._dedup_check_node)
+        graph.add_node("dedup_complete",      self._dedup_complete_node)
+        graph.add_node("diagnose",            self._diagnose_node)
+        graph.add_node("hitl_gate",           self._hitl_gate_node)
+        graph.add_node("execute",             self._execute_node)
+        graph.add_node("complete",            self._complete_node)
 
-        graph.add_edge(START,          "ingest")
-        graph.add_edge("ingest",       "dedup_check")
+        graph.add_edge(START,             "ingest")
+        graph.add_edge("ingest",          "resolution_check")
+        # A "resolved"-status Alertmanager/Grafana alert must never reach
+        # diagnose -- there's nothing to diagnose once the source itself
+        # says the condition cleared. Short-circuits straight to
+        # resolution_complete instead, same shape as dedup's own
+        # short-circuit below (GAPS.md scale-readiness build).
+        graph.add_conditional_edges(
+            "resolution_check", self._route_after_resolution_check,
+            {"resolved": "resolution_complete", "firing": "dedup_check"},
+        )
+        graph.add_edge("resolution_complete", END)
         # A flapping alert for a resource+alert_name that already has an
         # open incident short-circuits straight to dedup_complete --
         # bumps occurrence_count, never reaches diagnose, never spends
@@ -347,6 +510,7 @@ class ResourceHealthWorkflow(BaseAgent):
         resource_type = "unknown"
         severity      = "unknown"
         alert_name    = "unknown"
+        alert_status  = "firing"
 
         resource_name         = None
         resource_group        = None
@@ -410,6 +574,44 @@ class ResourceHealthWorkflow(BaseAgent):
             if metric_current_value is not None:
                 log_lines.append(f"Parsed value: {metric_current_value} (threshold: {metric_threshold})")
 
+        # ── Grafana unified alerting (checked BEFORE plain Alertmanager
+        # below -- Grafana payloads also carry a top-level "alerts" array,
+        # and orgId is the only field that tells the two apart) ──
+        elif "alerts" in payload and "orgId" in payload:
+            alert_source = "grafana"
+            alerts = payload.get("alerts") or []
+            alert = alerts[0] if alerts else {}
+            parsed = _parse_alertmanager_alert(alert)
+
+            alert_name     = parsed["alert_name"]
+            resource_id    = parsed["resource_id"]
+            resource_name  = parsed["resource_name"]
+            resource_group = parsed["resource_group"]
+            severity       = parsed["severity"]
+            domain         = parsed["domain"]
+            alert_status   = parsed["alert_status"]
+            log_lines      = list(parsed["log_lines"])
+
+            metric_current_value = _extract_grafana_metric_value(alert)
+            if metric_current_value is not None:
+                log_lines.append(f"Value: {metric_current_value}")
+
+        # ── Prometheus Alertmanager (webhook_config v4 shape) ──
+        elif "alerts" in payload:
+            alert_source = "prometheus_alertmanager"
+            alerts = payload.get("alerts") or []
+            alert = alerts[0] if alerts else {}
+            parsed = _parse_alertmanager_alert(alert)
+
+            alert_name     = parsed["alert_name"]
+            resource_id    = parsed["resource_id"]
+            resource_name  = parsed["resource_name"]
+            resource_group = parsed["resource_group"]
+            severity       = parsed["severity"]
+            domain         = parsed["domain"]
+            alert_status   = parsed["alert_status"]
+            log_lines      = parsed["log_lines"]
+
         else:
             log.warning("[Agent11] Unknown alert payload format — using raw excerpt")
             log_lines = [f"Alert payload: {json.dumps(payload)[:500]}"]
@@ -419,8 +621,8 @@ class ResourceHealthWorkflow(BaseAgent):
 
         self._write_audit("ingest", "ok")
         log.info(
-            "[Agent11] Ingested: source=%s domain=%s resource=%s severity=%s metric=%s",
-            alert_source, domain, resource_id, severity, metric_name,
+            "[Agent11] Ingested: source=%s domain=%s resource=%s severity=%s metric=%s status=%s",
+            alert_source, domain, resource_id, severity, metric_name, alert_status,
         )
 
         return {
@@ -430,6 +632,7 @@ class ResourceHealthWorkflow(BaseAgent):
             "resource_type":  resource_type,
             "severity":       severity,
             "alert_name":     alert_name,
+            "alert_status":   alert_status,
             "log_excerpt":    sanitized.sanitized_text,
             "resource_name":         resource_name,
             "resource_group":        resource_group,
@@ -452,6 +655,56 @@ class ResourceHealthWorkflow(BaseAgent):
             "execution_result": None,
             "error": None,
         }
+
+    async def _resolution_check_node(self, state: ResourceHealthState) -> dict:
+        """
+        A "resolved"-status Alertmanager/Grafana alert must never reach
+        diagnose (there's nothing to diagnose -- the condition already
+        cleared) or create a new incident. If an open incident exists for
+        the same dedup key (workspace_id + resource_id + alert_name),
+        this notes the source-reported resolution on that record
+        (hitl.note_source_resolution); otherwise there's nothing to do at
+        all. Every other alert -- "firing", or the implicit firing-only
+        Azure Monitor/AWS CloudWatch sources -- passes straight through
+        unchanged, since both of those already gate on their own "is this
+        actually firing" condition at the webhook route before this
+        workflow ever runs.
+        """
+        if state.get("error"):
+            return {}
+        if state.get("alert_status") != "resolved":
+            return {}
+
+        existing = await self.hitl.find_open_incident(
+            workspace_id=self.workspace_id,
+            resource_id=state.get("resource_id"),
+            alert_name=state.get("alert_name"),
+        )
+        if not existing:
+            log.info(
+                "[Agent11] Resolved alert with no matching open incident — nothing to do "
+                "(resource=%s alert=%s)", state.get("resource_id"), state.get("alert_name"),
+            )
+            self._write_audit("resolution_check", "resolved_no_match")
+            return {"incident_id": None, "is_source_resolved_noop": True}
+
+        existing_id = str(existing["id"])
+        await self.hitl.note_source_resolution(existing_id)
+        log.info(
+            "[Agent11] Source-reported resolution noted on incident %s (resource=%s alert=%s)",
+            existing_id, state.get("resource_id"), state.get("alert_name"),
+        )
+        self._write_audit("resolution_check", "resolved_noted", incident_id=existing_id)
+        return {"incident_id": existing_id, "is_source_resolved_noop": True}
+
+    def _route_after_resolution_check(self, state: ResourceHealthState) -> str:
+        return "resolved" if state.get("is_source_resolved_noop") else "firing"
+
+    async def _resolution_complete_node(self, state: ResourceHealthState) -> dict:
+        """Terminal node for a source-reported resolution -- incident_id
+        is already set (the matched incident's real id, or None for a
+        no-match) by _resolution_check_node."""
+        return {}
 
     async def _dedup_check_node(self, state: ResourceHealthState) -> dict:
         """
@@ -695,10 +948,42 @@ class ResourceHealthWorkflow(BaseAgent):
     # Public interface
     # ──────────────────────────────────────────────
 
-    async def run(self, payload: dict, cloud_provider: str = "azure") -> str:
+    async def run(self, payload: dict, cloud_provider: str = "azure") -> "str | list":
         """
         Trigger the resource-health workflow from a webhook payload.
-        Returns incident_id after the HITL gate pause.
+
+        A single Alertmanager/Grafana delivery can carry several alerts in
+        one top-level "alerts" array (Alertmanager batches by default,
+        commonly mixing newly-firing and newly-resolved alerts together
+        in the same delivery). Each element gets its OWN independent
+        graph run -- own thread_id, own resolution/dedup check, own
+        possible incident -- so a multi-alert delivery fans out here and
+        returns a list of incident_ids (None for a resolved alert that
+        matched nothing and created no incident) instead of the single
+        string every other case returns.
+
+        Azure Monitor, AWS CloudWatch, and a single-alert Alertmanager/
+        Grafana delivery are untouched by this -- always exactly one
+        alert, same single incident_id string return as before.
+        """
+        alerts = payload.get("alerts")
+        if isinstance(alerts, list) and len(alerts) > 1:
+            results = []
+            for alert in alerts:
+                sub_payload: dict = {"alerts": [alert]}
+                if "orgId" in payload:
+                    sub_payload["orgId"] = payload["orgId"]
+                results.append(await self._run_single(sub_payload, cloud_provider))
+            return results
+
+        return await self._run_single(payload, cloud_provider)
+
+    async def _run_single(self, payload: dict, cloud_provider: str = "azure") -> Optional[str]:
+        """
+        Runs exactly one graph invocation for one alert (or for a non-
+        Alertmanager/Grafana payload, which is always exactly one alert
+        already). Returns the created/matched incident_id, or None for a
+        resolved alert that matched no open incident.
         """
         import uuid
 
@@ -726,6 +1011,7 @@ class ResourceHealthWorkflow(BaseAgent):
             "resource_type": "",
             "severity": "",
             "alert_name": "",
+            "alert_status": "firing",
             "log_excerpt": "",
             "resource_name": None,
             "resource_group": None,
@@ -734,6 +1020,7 @@ class ResourceHealthWorkflow(BaseAgent):
             "metric_threshold": None,
             "is_dedup_match": False,
             "is_exempted": False,
+            "is_source_resolved_noop": False,
             "incident_id": thread_id,
             "parsed_error": None,
             "remediation_options": None,
@@ -761,7 +1048,7 @@ class ResourceHealthWorkflow(BaseAgent):
             else result.get("incident_id", thread_id)
         )
 
-        log.info("[Agent11] Workflow paused at HITL gate — incident_id=%s", incident_id)
+        log.info("[Agent11] Workflow run complete — incident_id=%s", incident_id)
         return incident_id
 
     async def resume(self, thread_id: str, selected_option: dict) -> dict:

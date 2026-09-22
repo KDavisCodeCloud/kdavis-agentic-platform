@@ -145,6 +145,25 @@ class TestIncidentIdMatchesLangGraphThreadId:
             f"the real thread_id (still None or something else): {offenders}"
         )
 
+    # One deliberate, understood exception to the "no None-reset" rule
+    # below: agent_11's _resolution_check_node (GAPS.md scale-readiness
+    # build, Prometheus Alertmanager/Grafana "resolved"-status support)
+    # sets incident_id=None ONLY on its terminal "resolved alert, no
+    # matching open incident" path -- no incident row is ever created on
+    # that path (create_incident is never called), and the graph routes
+    # straight to resolution_complete -> END without ever reaching
+    # hitl_gate/execute, so there is no resume()/checkpoint concern this
+    # guard exists to catch (see this class's own docstring and the
+    # module docstring above for what that concern actually is).
+    #
+    # Allowlisted by exact file + expected match COUNT, not by weakening
+    # the regex itself -- a second, unrelated None-reset added to
+    # agent_11 later (or a change to this one that grows a duplicate)
+    # still trips this test, same as for every other agent.
+    _ALLOWED_NONE_RESETS = {
+        "agents/agent_11_resource_health/workflow.py": 1,
+    }
+
     def test_no_agent_workflow_resets_incident_id_to_none_after_seeding(self):
         # A node returning {"incident_id": None, ...} anywhere overwrites
         # run()'s seed right back to None on that node's turn -- this is
@@ -153,8 +172,10 @@ class TestIncidentIdMatchesLangGraphThreadId:
         offenders = []
         for path in _ALL_AGENT_WORKFLOW_PATHS:
             content = path.read_text()
-            if re.search(r'"incident_id":\s*None,', content):
-                offenders.append(str(path.relative_to(_REPO_ROOT)))
+            count = len(re.findall(r'"incident_id":\s*None,', content))
+            rel = str(path.relative_to(_REPO_ROOT))
+            if count > self._ALLOWED_NONE_RESETS.get(rel, 0):
+                offenders.append(rel)
 
         assert offenders == [], (
             f"These agents have a node that resets incident_id back to None: {offenders}"

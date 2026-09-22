@@ -114,6 +114,64 @@ never processed.
 delivered any way other than through an SNS topic (e.g., directly via
 EventBridge → Lambda). Route GuardDuty through SNS for now.
 
+### Prometheus Alertmanager / Grafana unified alerting
+
+Same endpoint as Azure/AWS above — register it as an Alertmanager
+`webhook_config` receiver, or a Grafana unified alerting webhook contact
+point:
+
+```yaml
+# Prometheus Alertmanager (alertmanager.yml)
+receivers:
+  - name: cloud-decoded-resource-health
+    webhook_configs:
+      - url: https://kdavis-agentic-platform-production.up.railway.app/api/v1/webhooks/resource-health-alert?token=<ws_token>
+```
+
+```
+# Grafana — Alerting → Contact points → New contact point
+Integration: Webhook
+URL: https://kdavis-agentic-platform-production.up.railway.app/api/v1/webhooks/resource-health-alert?token=<ws_token>
+```
+
+Both notifiers send an identical top-level shape (a `"alerts"` array,
+each element carrying `labels`/`annotations`/`status`) — Grafana's is
+told apart only by a top-level `orgId` field the route (and
+`_ingest_node`, mirroring it) checks for. A single delivery can batch
+several alerts together, including a mix of newly-firing and newly-
+resolved ones; each element gets its own independent triage (see
+Resolution handling below) rather than being collapsed into one.
+
+Field mapping (GAPS.md scale-readiness build — previously these payloads
+were accepted and routed by the webhook route but `_ingest_node` had no
+parsing branch for either, so they silently fell through to the raw-JSON
+catch-all: no dedup, no severity, no resource pinpointing, nothing):
+
+| Incident field | Source |
+|---|---|
+| `alert_name` | `labels.alertname` |
+| `resource_id` / `resource_name` | `labels.pod` + `labels.namespace` when present (K8s-origin alert, e.g. kube-state-metrics), else `labels.instance` |
+| `resource_group` | `labels.namespace`, else `labels.job` |
+| `severity` | `labels.severity`, mapped **conservatively** — `critical`/`warning` → `high`, `info` → `low`, anything else → `medium`. A raw Prometheus `critical` label is deliberately NOT passed through as incident severity `critical` (that's reserved for signals the platform itself computes) — see `_map_alertmanager_severity` in `workflow.py`. |
+| Diagnosis context | `annotations.summary` + `annotations.description` |
+| `metric_current_value` (Grafana only) | First value in the alert's `values{}` map |
+
+### Resolution handling (Alertmanager/Grafana only)
+
+Both notifiers resend a previously-firing alert with `status: "resolved"`
+once its condition clears. A resolved-status alert **never** reaches
+diagnosis and **never** creates a new incident:
+- If an open incident already exists for the same dedup key
+  (`workspace_id` + `resource_id` + `alert_name`), the resolution is
+  noted on that record (`incidents.source_resolved_at`, migration 056) —
+  advisory only, does **not** change `execution_status`. The incident
+  still needs an operator's decision regardless of what the source says
+  (a flapping alert, a false resolve, or just wanting to review before
+  closing).
+- If there's no matching open incident, nothing happens at all — no row,
+  no audit noise beyond a single `resolution_check: resolved_no_match`
+  entry.
+
 ### Security Group / NSG change alerts (Phase 2, 2026-09-14)
 
 No new webhook code was needed for this — the endpoint above already
@@ -198,28 +256,44 @@ it as a bug, not a feature.
 ## Workflow
 
 ```
-ingest → diagnose (LLM) → hitl_gate [PAUSE] → execute → complete
+ingest → resolution_check → dedup_check → diagnose (LLM) → hitl_gate [PAUSE] → execute → complete
+              │                   │
+              └→ resolution_complete → END    └→ dedup_complete → END
 ```
 
+A single Alertmanager/Grafana delivery carrying several alerts in one
+`"alerts"` array is fanned out by `run()` into one independent graph run
+per alert element **before** any of this — own `thread_id`, own
+resolution/dedup check, own possible incident. Every other source is
+always exactly one alert per delivery already.
+
 ### 1. Ingest
-- Detects alert source (`azure_monitor` / `aws_cloudwatch`) from payload shape
+- Detects alert source (`azure_monitor` / `aws_cloudwatch` /
+  `prometheus_alertmanager` / `grafana`) from payload shape
 - Heuristically classifies domain from the resource type / CloudWatch namespace (context for the LLM, not a gate — the LLM confirms or corrects it)
 - Sanitizes the alert excerpt via `shield.sanitize()` before LLM consumption
 
-### 2. Diagnose (LLM)
+### 2. Resolution check (Alertmanager/Grafana only)
+- A `"firing"`-status alert (or any non-Alertmanager/Grafana source, always implicitly firing) passes straight through unchanged
+- A `"resolved"`-status alert never reaches diagnose or dedup_check — see Resolution handling above
+
+### 3. Dedup check
+- A flapping alert for the same `workspace_id` + `resource_id` + `alert_name` that already has an open incident short-circuits to `dedup_complete` (bumps `occurrence_count`) instead of spending another LLM call
+
+### 4. Diagnose (LLM)
 - Calls LLM via `.llm/router.py` with `task_type="resource_health_triage"`
 - Returns `parsed_error`, 2-3 `options` (or exactly 1 + hold for human-judgment alerts), `estimated_duration_seconds`
 
-### 3. HITL Gate (Governance Rule 11)
+### 5. HITL Gate (Governance Rule 11)
 - Creates incident, sends `interrupt()` — **workflow pauses here**
 - Operator approves via `POST /incidents/{id}/approve`
 
-### 4. Execute (Post-Approval Only)
+### 6. Execute (Post-Approval Only)
 - **opt_1 — Remediation PR**: opens a PR with the proposed IaC fix (GitHub or Azure DevOps, whichever this workspace connected)
 - **opt_2 — Investigation Issue**: opens a GitHub issue (Azure DevOps work items not supported yet — same limitation as Agent 08's `create_drift_issue`)
 - **hold**: no execution
 
-### 5. Complete
+### 7. Complete
 - Marks incident executed, writes final audit record
 
 ---
@@ -244,10 +318,26 @@ ingest → diagnose (LLM) → hitl_gate [PAUSE] → execute → complete
 | `GITHUB_TOKEN` missing, `opt_2` selected | `create_alert_issue` raises `EnvironmentError`, logged |
 | No repository configured, `opt_1`/`opt_2` selected | Returns `status=skipped` |
 | LLM parse failure | `error` set in state; HITL gate skipped; incident not created |
+| Resolved-status Alertmanager/Grafana alert, no matching open incident | Nothing created; single `resolution_check: resolved_no_match` audit entry |
+| Resolved-status Alertmanager/Grafana alert, matching open incident | `incidents.source_resolved_at` set on the existing row; `execution_status` and diagnosis untouched |
 
 ---
 
 ## Verification status
+
+**Prometheus Alertmanager / Grafana ingest (GAPS.md scale-readiness
+build): unit-tested only, not yet live-verified end-to-end against a
+real Alertmanager or Grafana instance** — `tests/test_agent11.py`
+exercises `_ingest_node`'s field mapping (both notifier shapes, K8s-
+origin vs generic-instance resource identification, severity mapping,
+Grafana's `values{}`), `_resolution_check_node`'s note/no-op paths, and
+`run()`'s multi-alert fan-out, against realistic synthetic payloads —
+but no real webhook registration against a live Alertmanager/Grafana
+deployment has been exercised the way the Azure/AWS paths below were.
+Treat this the same way the rest of this document treats "unit-tested"
+vs. "live-verified": don't assume production behavior matches until it
+has actually been driven end-to-end once, the same discipline the five
+bugs below were only ever found by.
 
 Unit-tested with synthetic Azure Common Alert Schema and SNS payloads,
 including a real cryptographic signature round-trip
