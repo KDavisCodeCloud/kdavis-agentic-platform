@@ -433,7 +433,7 @@ async def set_brand_templates(
             SET brand_template_ids = brand_template_ids || $1::jsonb, updated_at = NOW()
             WHERE platform = 'canva'
             """,
-            json.dumps(template_ids),
+            template_ids,
         )
     if result == "UPDATE 0":
         raise HTTPException(status_code=409, detail="Canva is not connected yet — run /connect/canva first")
@@ -792,7 +792,7 @@ async def _generate_and_gate_image_for_approved_row(conn, queue_id: str) -> None
             WHERE id = $5 AND status = 'approved'
             """,
             note, (existing_notes + " | " if existing_notes else "") + note,
-            json.dumps(image_brief), result["scene_description"], queue_id,
+            image_brief, result["scene_description"], queue_id,
         )
         log.warning("[InternalMarketing] Queue row %s reverted to pending_review — %s", queue_id, note)
     else:
@@ -802,7 +802,7 @@ async def _generate_and_gate_image_for_approved_row(conn, queue_id: str) -> None
             SET image_brief = $1, image_description = $2
             WHERE id = $3 AND status = 'approved'
             """,
-            json.dumps(image_brief), result["scene_description"], queue_id,
+            image_brief, result["scene_description"], queue_id,
         )
         log.info("[InternalMarketing] Queue row %s: image generated and attached (%s)", queue_id, result["scene_type"])
 

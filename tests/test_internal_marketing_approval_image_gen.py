@@ -130,8 +130,16 @@ async def test_successful_generation_attaches_image_and_leaves_status_alone(tmp_
     sql, *params = conn.execute.call_args.args
     assert "SET status" not in sql  # never touches status here -- only the WHERE guard checks it's still 'approved'
     assert "image_brief" in sql and "image_description" in sql
-    image_brief = json.loads(params[0])
-    assert image_brief["image_path"] == "assets_library/cloud-and-ai-execution/some-post_20260915.png"
+    # 2026-09-22 real bug: this used to be json.dumps(image_brief) bound
+    # through a connection with register_jsonb_codec's encoder (also
+    # json.dumps) already applied -- double-encoding every auto-generated
+    # image_brief into a JSON string instead of a JSON object. The old
+    # version of this assertion (json.loads(params[0])) tested the code's
+    # own self-consistency, not real asyncpg+codec behavior, so it never
+    # caught this. The correct call passes the native dict and lets the
+    # codec do the one necessary encode.
+    assert isinstance(params[0], dict), "image_brief must be passed as a native dict, not json.dumps()'d -- the codec encodes it"
+    assert params[0]["image_path"] == "assets_library/cloud-and-ai-execution/some-post_20260915.png"
     assert params[1] == "A test scene."
 
 
@@ -153,6 +161,7 @@ async def test_flagged_generation_reverts_to_pending_review_with_notes(tmp_path)
     assert "status = 'pending_review'" in sql
     assert "IMAGE RELEVANCE GATE FAILED" in params[0]
     assert params[1].startswith("existing note | ")
+    assert isinstance(params[2], dict), "image_brief must be a native dict here too, not json.dumps()'d"
 
 
 @pytest.mark.asyncio

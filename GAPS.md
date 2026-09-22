@@ -1631,3 +1631,36 @@ records Resend provides at the domain's DNS host. Until this is done,
 every `send_email()` call in this codebase will keep failing with this
 same 403, non-fatally (callers already catch `EmailError`), but silently
 from Kelvin's perspective unless he's watching logs.
+
+### 33. Double-JSON-encoding pattern found in ~10+ other files, not audited or fixed (2026-09-22)
+
+While root-causing the LinkedIn `image_brief` corruption bug (fixed same
+day — see the 2026-09-22 Obsidian release log), a static scan for the
+same anti-pattern (`json.dumps(...)` passed directly as a positional arg
+to `conn.execute`/`fetchrow`/`fetchval`/`fetch` on a connection where
+`core/db.py`'s `register_jsonb_codec` is already applied, double-
+encoding the value) turned up the identical shape in at least:
+`core/hitl.py` (3 occurrences), `core/notification_retry.py` (2),
+`api/routes/incidents.py` (4), `api/routes/internal_agents.py` (3),
+`core/email_seed.py`, `core/ingestion_log.py` — likely more; the scan
+was stopped once the pattern was clearly systemic rather than exhaustively
+enumerated.
+
+**Not investigated further this session, deliberately.** A static
+`json.dumps()`-into-`execute()` match can't distinguish a real bug from
+a legitimate `text` column intentionally storing a JSON string (a
+different, valid pattern) — confirming each occurrence needs individual
+investigation (check the target column's actual type, check whether that
+specific write path has ever been observed producing bad data) well
+beyond what fixing the LinkedIn pipeline required. Guessing wrong risks
+introducing a new bug while chasing an unconfirmed one.
+
+`tests/test_no_double_json_encoding.py`'s static guard is deliberately
+scoped to `api/routes/internal_marketing.py` only (the one pipeline this
+session verified end-to-end against a real Postgres connection) rather
+than all of `api/`/`core/`, for the same reason.
+
+Recommend a dedicated session: audit each occurrence's target column
+type, confirm real vs. legitimate, fix the real ones, then widen the
+static guard test to cover the whole codebase once it won't produce
+false positives on legitimate `text` columns.

@@ -224,7 +224,11 @@ async def test_set_brand_templates_succeeds_and_merges_only_provided_keys():
 
     assert result == {"updated": True, "brand_template_ids": {"linkedin_square": "BT-999"}}
     args = conn.execute.call_args.args
-    assert json.loads(args[1]) == {"linkedin_square": "BT-999"}
+    # 2026-09-22: must be a native dict, not json.dumps()'d -- the same
+    # double-encoding bug as image_brief (see test_internal_marketing_
+    # approval_image_gen.py), same fix, same reason this old assertion
+    # (json.loads(args[1]), expecting a string) never caught it.
+    assert args[1] == {"linkedin_square": "BT-999"}
 
 
 async def test_fetch_asset_bytes_calls_the_assets_route_over_http(monkeypatch):
