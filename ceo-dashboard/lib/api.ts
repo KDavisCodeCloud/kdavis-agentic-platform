@@ -375,6 +375,55 @@ export async function fetchOutreachSummary(): Promise<OutreachSummaryRow[]> {
   return data.products ?? [];
 }
 
+export interface Lead {
+  id: string;
+  product_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  title: string | null;
+  company: string | null;
+  domain: string | null;
+  email: string | null;
+  email_status: "verified" | "unverified" | "catch_all" | "invalid" | "bounced";
+  linkedin_url: string | null;
+  source: string;
+  location: string | null;
+  status: "pending_dm" | "pending_email" | "contacted" | "converted" | "unsubscribed" | "bounced";
+  confidence_score: number | null;
+  notes: string | null;
+  created_at: string;
+  last_contacted_at: string | null;
+}
+
+// The actual leads a run found, for a human to work (not just the
+// aggregate counts fetchPipelineSummary returns). Added 2026-09-23 --
+// Kelvin ran the lead finder and had no way to see or act on what it
+// found.
+export async function fetchLeads(params: {
+  productId?: string;
+  status?: string;
+  source?: string;
+  emailStatus?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<{ leads: Lead[]; limit: number; offset: number }> {
+  const qs = new URLSearchParams();
+  if (params.productId) qs.set("product_id", params.productId);
+  if (params.status) qs.set("status", params.status);
+  if (params.source) qs.set("source", params.source);
+  if (params.emailStatus) qs.set("email_status", params.emailStatus);
+  qs.set("limit", String(params.limit ?? 50));
+  qs.set("offset", String(params.offset ?? 0));
+
+  const res = await fetch(`/api/marketing-leads/list?${qs.toString()}`, { cache: "no-store" });
+  assertNotRedirectedToLogin(res);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching leads failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // --- Cloud Decoded workspace admin (api/routes/internal_workspaces.py) -----
 // Same Bearer-session-token path as the INTERNAL_AGENT_IDS branch of
 // triggerAgent above (get_internal_user, not the customer X-Workspace-Token

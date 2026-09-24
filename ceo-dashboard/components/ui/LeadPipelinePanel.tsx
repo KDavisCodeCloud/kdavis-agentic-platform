@@ -1,18 +1,50 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listIcpProducts,
   triggerLeadFinder,
   triggerSendSequences,
   fetchPipelineSummary,
   fetchLeadFinderRun,
+  fetchLeads,
   type IcpProduct,
   type PipelineSummary,
   type LeadFinderRun,
+  type Lead,
 } from "@/lib/api";
 
 const POLL_INTERVAL_MS = 4000;
+
+// email_status / status badge colors -- same mapping as every other status
+// pill in this dashboard (green=good, blue=pending, amber=caution,
+// red=bad, gray=neutral).
+const EMAIL_STATUS_COLOR: Record<string, string> = {
+  verified: "#6fce8f",
+  catch_all: "#e8963f",
+  unverified: "#9aa2ab",
+  invalid: "#e05d5d",
+  bounced: "#e05d5d",
+};
+
+const LEAD_STATUS_COLOR: Record<string, string> = {
+  pending_dm: "#9aa2ab",
+  pending_email: "#7ea6f5",
+  contacted: "#7ea6f5",
+  converted: "#6fce8f",
+  unsubscribed: "#9aa2ab",
+  bounced: "#e05d5d",
+};
+
+function formatWhenFound(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMinutes = Math.round(diffMs / 60000);
+  if (diffMinutes < 1) return "just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -46,6 +78,20 @@ export function LeadPipelinePanel() {
   const pollHandle = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickHandle = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsError, setLeadsError] = useState<string | null>(null);
+
+  const loadLeads = useCallback((forProductId: string) => {
+    if (!forProductId) return;
+    setLeadsLoading(true);
+    setLeadsError(null);
+    fetchLeads({ productId: forProductId, limit: 50 })
+      .then((res) => setLeads(res.leads))
+      .catch((err) => setLeadsError(err instanceof Error ? err.message : "Loading leads failed"))
+      .finally(() => setLeadsLoading(false));
+  }, []);
+
   function stopPolling() {
     if (pollHandle.current) clearInterval(pollHandle.current);
     if (tickHandle.current) clearInterval(tickHandle.current);
@@ -74,6 +120,11 @@ export function LeadPipelinePanel() {
           );
           if (latest.status === "failed") {
             setActionError(latest.error_message ?? "Lead finder run failed");
+          } else {
+            // The run just wrote new rows to mse_leads -- pull them in so
+            // the list below reflects this run's results without a manual
+            // reload.
+            loadLeads(latest.product_id);
           }
         }
       } catch (err) {
@@ -101,6 +152,10 @@ export function LeadPipelinePanel() {
       .then(setSummary)
       .catch((err) => setLoadError((prev) => prev ?? (err instanceof Error ? err.message : "Loading pipeline summary failed")));
   }, []);
+
+  useEffect(() => {
+    if (productId) loadLeads(productId);
+  }, [productId, loadLeads]);
 
   async function runFinder() {
     if (!productId) return;
@@ -243,6 +298,124 @@ export function LeadPipelinePanel() {
       {actionResult && (
         <p className="text-[11px] font-mono mt-2" style={{ color: "#6fce8f" }}>{actionResult}</p>
       )}
+
+      <div className="mt-4 pt-3" style={{ borderTop: "1px solid #1c222b" }}>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[13px] font-bold" style={{ color: "#c7cfd6" }}>
+            Leads{leads.length ? ` (${leads.length})` : ""}
+          </p>
+          <button
+            onClick={() => productId && loadLeads(productId)}
+            disabled={leadsLoading || !productId}
+            className="text-[10px] font-mono px-2 py-1 rounded-[6px]"
+            style={{
+              border: "1px solid #1c222b",
+              color: "#8b96a3",
+              backgroundColor: "transparent",
+              opacity: leadsLoading || !productId ? 0.6 : 1,
+              minHeight: 32,
+            }}
+          >
+            {leadsLoading ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+
+        {leadsError && (
+          <p className="text-[11px] font-mono mb-2" style={{ color: "#e05d5d" }}>{leadsError}</p>
+        )}
+
+        {!leadsLoading && !leadsError && leads.length === 0 && (
+          <p className="text-[11px] font-mono" style={{ color: "#5b6673" }}>
+            No leads yet for this product — run the lead finder above to find some.
+          </p>
+        )}
+
+        {leads.length > 0 && (
+          <div className="overflow-x-auto rounded-[8px]" style={{ border: "1px solid #1c222b" }}>
+            <table className="w-full text-[11px] font-mono" style={{ borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ backgroundColor: "#10151b" }}>
+                  {["Name", "Title", "Company", "Email", "Status", "Source", "LinkedIn", "Found"].map((h) => (
+                    <th
+                      key={h}
+                      className="text-left px-2 py-1.5 uppercase"
+                      style={{ color: "#5b6673", fontSize: 10, letterSpacing: "0.04em" }}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {leads.map((lead) => {
+                  const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "—";
+                  return (
+                    <tr key={lead.id} style={{ borderTop: "1px solid #1c222b" }}>
+                      <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: "#eef2f5" }}>{name}</td>
+                      <td className="px-2 py-1.5" style={{ color: "#aab4bd", minWidth: 0, maxWidth: 160 }}>
+                        <span className="block truncate">{lead.title ?? "—"}</span>
+                      </td>
+                      <td className="px-2 py-1.5" style={{ color: "#aab4bd", minWidth: 0, maxWidth: 140 }}>
+                        <span className="block truncate">{lead.company ?? lead.domain ?? "—"}</span>
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        {lead.email ? (
+                          <a href={`mailto:${lead.email}`} style={{ color: "#eef2f5" }} className="hover:underline">
+                            {lead.email}
+                          </a>
+                        ) : (
+                          <span style={{ color: "#5b6673" }}>—</span>
+                        )}
+                        <span
+                          className="ml-1.5 px-1.5 py-0.5 rounded-full"
+                          style={{
+                            fontSize: 9,
+                            color: EMAIL_STATUS_COLOR[lead.email_status] ?? "#9aa2ab",
+                            backgroundColor: `${EMAIL_STATUS_COLOR[lead.email_status] ?? "#9aa2ab"}22`,
+                          }}
+                        >
+                          {lead.email_status}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        <span
+                          className="px-1.5 py-0.5 rounded-full"
+                          style={{
+                            fontSize: 9,
+                            color: LEAD_STATUS_COLOR[lead.status] ?? "#9aa2ab",
+                            backgroundColor: `${LEAD_STATUS_COLOR[lead.status] ?? "#9aa2ab"}22`,
+                          }}
+                        >
+                          {lead.status.replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: "#8b96a3" }}>{lead.source}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">
+                        {lead.linkedin_url ? (
+                          <a
+                            href={lead.linkedin_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: "#5a96ff" }}
+                            className="hover:underline"
+                          >
+                            Profile
+                          </a>
+                        ) : (
+                          <span style={{ color: "#5b6673" }}>—</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 whitespace-nowrap" style={{ color: "#5b6673" }}>
+                        {formatWhenFound(lead.created_at)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
