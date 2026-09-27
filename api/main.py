@@ -73,6 +73,7 @@ from api.routes import llm_usage
 from api.routes import policies
 from api.routes import email_public
 from api.routes import internal_email_campaigns
+from api.routes import demo
 from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
 from core.json_logging import configure_logging
@@ -295,6 +296,14 @@ async def lifespan(app: FastAPI):
     # and reasoning as the abandoned-checkout scan above.
     app.state.stall_nudge_task = asyncio.create_task(_stall_nudge_loop(app.state.db_pool))
 
+    # Public demo sandbox (Phase 6, core/demo_sandbox.py) -- resets the
+    # one shared demo workspace back to its 8-incident baseline every 30
+    # minutes regardless of visitor count, and prunes expired
+    # demo_sessions rows. The loop's first iteration runs immediately
+    # (before its own sleep), so this also seeds the very first baseline
+    # at app startup rather than waiting on the first GET /demo call.
+    app.state.demo_reset_task = asyncio.create_task(_demo_reset_loop(app.state.db_pool))
+
     yield
 
     # Shutdown
@@ -308,6 +317,7 @@ async def lifespan(app: FastAPI):
     app.state.email_scheduler_task.cancel()
     app.state.abandoned_checkout_task.cancel()
     app.state.stall_nudge_task.cancel()
+    app.state.demo_reset_task.cancel()
     await app.state.db_pool.close()
     await lg_conn.close()
     log.info("[API] Shutdown complete")
@@ -473,6 +483,19 @@ async def _stall_nudge_loop(pool) -> None:
         await asyncio.sleep(_ABANDONED_CHECKOUT_INTERVAL_SECONDS)
 
 
+async def _demo_reset_loop(pool) -> None:
+    from core.demo_sandbox import DEMO_RESET_INTERVAL_SECONDS, run_demo_reset
+
+    while True:
+        try:
+            await run_demo_reset(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[DemoSandbox] Reset pass failed — will retry next cycle")
+        await asyncio.sleep(DEMO_RESET_INTERVAL_SECONDS)
+
+
 # ──────────────────────────────────────────────
 # FastAPI app
 # ──────────────────────────────────────────────
@@ -564,6 +587,7 @@ app.include_router(setup_checklist.router,  prefix="/api/v1")
 app.include_router(llm_usage.router,        prefix="/api/v1")
 app.include_router(email_public.router,     prefix="/api/v1")
 app.include_router(internal_email_campaigns.router, prefix="/api/v1")
+app.include_router(demo.router,             prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────

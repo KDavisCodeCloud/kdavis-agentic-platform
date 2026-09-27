@@ -436,6 +436,63 @@ async def get_workspace_or_member(request: Request) -> dict:
     return await get_workspace_member(request)
 
 
+async def _get_workspace_by_demo_session(request: Request) -> dict:
+    """
+    24-gap-closure Phase 6 -- public demo sandbox (core/demo_sandbox.py).
+    X-Demo-Session-Token identifies a demo_sessions row (migration 057),
+    minted by GET /demo, scoped to the one shared demo workspace.
+
+    Returns the same shape as get_workspace_member (member_id/
+    member_role/member_email) with member_role hardcoded to 'approver'
+    (Approve/Reject/Resolve-manually work -- migration 046's is_test
+    short-circuit and the demo workspace's total absence of cloud
+    credentials both independently make real execution impossible, see
+    core/demo_sandbox.py's module docstring) and member_id=None (no real
+    workspace_members row ever backs a demo visitor).
+    """
+    from core.demo_sandbox import DEMO_SESSION_TOKEN_PREFIX, resolve_demo_session
+
+    token = request.headers.get("X-Demo-Session-Token", "")
+    if not token or not token.startswith(DEMO_SESSION_TOKEN_PREFIX):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Demo-Session-Token header required",
+        )
+
+    db = request.app.state.db_pool
+    workspace_row = await resolve_demo_session(db, token)
+    if workspace_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo session expired or invalid — request a new one at GET /demo",
+        )
+    return workspace_row
+
+
+async def get_workspace_or_member_or_demo(request: Request) -> dict:
+    """
+    Adds the demo-session credential (X-Demo-Session-Token) as a third
+    option alongside get_workspace_or_member's existing two, checked
+    last so an ordinary token/member request is completely unaffected.
+
+    Deliberately used by ONLY a narrow set of api/routes/incidents.py
+    routes (list/get/approve/reject/resolve-manually/comments) -- every
+    Settings/Members/Billing/Connections route (workspaces.py,
+    workspace_members.py, stripe_billing.py, workspace_credentials.py,
+    workspace_notifications.py, workspace_ticketing.py) keeps using
+    get_workspace/get_workspace_or_member unchanged, which never learns
+    to parse X-Demo-Session-Token -- a demo session cannot authenticate
+    there structurally, not by a role check that could later be loosened
+    by mistake. See tests/test_demo_sandbox.py's structural assertion of
+    exactly this.
+    """
+    if request.headers.get("X-Workspace-Token") or request.headers.get("X-MCP-Service-Key"):
+        return await get_workspace(request)
+    if request.headers.get("X-Demo-Session-Token"):
+        return await _get_workspace_by_demo_session(request)
+    return await get_workspace_member(request)
+
+
 async def get_workspace_by_scim_token(request: Request) -> dict:
     """
     FastAPI dependency for api/routes/scim.py's IdP-facing SCIM 2.0

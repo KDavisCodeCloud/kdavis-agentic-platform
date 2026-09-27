@@ -65,8 +65,19 @@ function redirectToBilling() {
 // app/login/page.tsx for where a member session token is produced.
 const _WORKSPACE_TOKEN_PREFIX = 'cd_ws_'
 
+// Public demo sandbox (Phase 6, api/routes/demo.py). Minted by GET /demo
+// (unauthenticated) -- kept in sync manually with core/demo_sandbox.py's
+// own DEMO_SESSION_TOKEN_PREFIX constant. Checked before
+// isMemberSessionToken below so a demo token is never misclassified as
+// a Supabase session token and sent as a Bearer header instead.
+const _DEMO_SESSION_TOKEN_PREFIX = 'cd_demo_'
+
 export function isMemberSessionToken(token: string): boolean {
-  return !!token && !token.startsWith(_WORKSPACE_TOKEN_PREFIX)
+  return !!token && !token.startsWith(_WORKSPACE_TOKEN_PREFIX) && !token.startsWith(_DEMO_SESSION_TOKEN_PREFIX)
+}
+
+export function isDemoSessionToken(token: string): boolean {
+  return !!token && token.startsWith(_DEMO_SESSION_TOKEN_PREFIX)
 }
 
 async function request<T>(
@@ -74,7 +85,9 @@ async function request<T>(
   token: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const authHeader: Record<string, string> = isMemberSessionToken(token)
+  const authHeader: Record<string, string> = isDemoSessionToken(token)
+    ? { 'X-Demo-Session-Token': token }
+    : isMemberSessionToken(token)
     ? { Authorization: `Bearer ${token}` }
     : { 'X-Workspace-Token': token }
 
@@ -95,6 +108,25 @@ async function request<T>(
   }
 
   return res.json() as Promise<T>
+}
+
+// ── Public demo sandbox (Phase 6) ────────────────────────────────────────
+
+export interface DemoSession {
+  demo_token: string
+  expires_at: string
+  message: string
+}
+
+// Unauthenticated -- deliberately does not go through request() (there is
+// no token yet to send).
+export async function startDemoSession(): Promise<DemoSession> {
+  const res = await fetch(`${API_URL}/api/v1/demo`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new ApiError(res.status, body.detail ?? `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<DemoSession>
 }
 
 // ── Incidents ──────────────────────────────────────────────────────────

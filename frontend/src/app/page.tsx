@@ -423,9 +423,22 @@ export default function LandingPage() {
               >
                 Start free
               </a>
+              <a
+                href="/demo"
+                style={{
+                  textDecoration: 'none',
+                  fontSize: 14,
+                  fontWeight: 500,
+                  color: '#9fc2ff',
+                  padding: '13px 6px',
+                  borderRadius: 10,
+                }}
+              >
+                Try the live demo →
+              </a>
             </div>
             <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.4)', margin: '18px 0 0' }}>
-              14-day money-back guarantee · no card required to start
+              14-day money-back guarantee · no card required to start · no signup required for the live demo
             </p>
 
             {/* Social proof bar */}
@@ -1050,10 +1063,26 @@ export default function LandingPage() {
             <h2 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 42, lineHeight: 1.08, letterSpacing: '-.025em', color: '#fff', margin: '0 0 14px', textAlign: 'center' }}>
               Pricing that scales with your stack.
             </h2>
-            <p style={{ fontSize: 18, lineHeight: 1.6, color: 'rgba(232,236,242,.66)', margin: '0 auto 56px', maxWidth: 640, textAlign: 'center' }}>
+            <p style={{ fontSize: 18, lineHeight: 1.6, color: 'rgba(232,236,242,.66)', margin: '0 auto 24px', maxWidth: 640, textAlign: 'center' }}>
               Cloud Decoded pricing starts at $299 per month. Flat monthly tiers — no per-incident metering, no
               per-seat surprises, no annual lock-in required.
             </p>
+            <div style={{ textAlign: 'center', margin: '0 0 56px' }}>
+              <a
+                href="/demo"
+                style={{
+                  textDecoration: 'none',
+                  fontSize: 13.5,
+                  fontWeight: 500,
+                  color: '#9fc2ff',
+                  border: '1px solid rgba(120,160,255,.3)',
+                  padding: '9px 18px',
+                  borderRadius: 9,
+                }}
+              >
+                Try the live demo → no signup required
+              </a>
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 20, alignItems: 'stretch' }}>
               <div style={{ border: '1px solid rgba(255,255,255,.08)', borderRadius: 16, background: 'linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,0))', padding: '28px 26px', display: 'flex', flexDirection: 'column' }}>

@@ -23,7 +23,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from api.middleware.auth import get_workspace_or_member
+from api.middleware.auth import get_workspace_or_member, get_workspace_or_member_or_demo
 from pydantic import BaseModel
 
 from db.models import (
@@ -202,7 +202,7 @@ def _reject_if_read_only_connection(agent_id: str, cloud_provider: Optional[str]
 async def get_incident(
     incident_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
 ) -> IncidentResponse:
     """
     Get current status of an incident, including diagnosis and options.
@@ -261,7 +261,7 @@ async def approve_incident(
     incident_id: str,
     body: IncidentApproveRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
 ) -> ApprovalResponse:
     """
     Operator approves a remediation option.
@@ -498,7 +498,7 @@ async def reject_incident(
     incident_id: str,
     body: IncidentRejectRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
 ) -> dict:
     """
     Reject a proposed remediation fix. Records the reason to the audit trail.
@@ -555,7 +555,7 @@ async def resolve_incident_manually(
     incident_id: str,
     body: IncidentResolveManuallyRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
 ) -> ManualResolutionResponse:
     """
     "I'll handle this myself" — the fourth option on every HITL card,
@@ -679,7 +679,7 @@ async def resolve_incident_manually(
 @router.get("", response_model=list[IncidentResponse])
 async def list_incidents(
     request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
     status_filter: Optional[str] = None,
     severity: Optional[str] = None,
     agent_id: Optional[str] = None,
@@ -895,7 +895,7 @@ async def assign_incident(
 async def list_incident_comments(
     incident_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
 ) -> list[IncidentCommentResponse]:
     """
     24-gap-closure Phase 2. Any authenticated caller (token or any member
@@ -942,7 +942,7 @@ async def create_incident_comment(
     incident_id: str,
     body: IncidentCommentCreateRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
 ) -> IncidentCommentResponse:
     """
     24-gap-closure Phase 2. Any authenticated caller can comment -- same

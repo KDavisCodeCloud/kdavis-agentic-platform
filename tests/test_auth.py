@@ -27,6 +27,7 @@ from api.middleware.auth import (
     get_workspace_by_scim_token,
     get_workspace_member,
     get_workspace_or_member,
+    get_workspace_or_member_or_demo,
 )
 
 
@@ -428,6 +429,74 @@ class TestGetWorkspaceOrMember:
         request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(db_pool=MagicMock())))
         with pytest.raises(HTTPException) as exc:
             await get_workspace_or_member(request)
+        assert exc.value.status_code == 401
+
+
+# ── get_workspace_or_member_or_demo (Phase 6 public demo sandbox) ───────────
+
+def _make_demo_request(demo_token: str | None, fetchrow_side_effect=None) -> SimpleNamespace:
+    conn = AsyncMock()
+    if fetchrow_side_effect is not None:
+        conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
+    pool_ctx = AsyncMock()
+    pool_ctx.__aenter__ = AsyncMock(return_value=conn)
+    pool_ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=pool_ctx)
+    headers = {"X-Demo-Session-Token": demo_token} if demo_token else {}
+    return SimpleNamespace(headers=headers, app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
+
+
+class TestGetWorkspaceOrMemberOrDemo:
+    async def test_prefers_workspace_token_over_demo_header(self):
+        request = _make_request("cd_ws_real", _workspace_row("active"))
+        request.headers = {**request.headers, "X-Demo-Session-Token": "cd_demo_should_be_ignored"}
+        result = await get_workspace_or_member_or_demo(request)
+        assert "is_demo_session" not in result
+
+    async def test_valid_demo_token_resolves_to_approver_role(self):
+        from datetime import datetime, timedelta, timezone
+
+        workspace_id = uuid4()
+        session_row = {"workspace_id": workspace_id, "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)}
+        workspace_row = _workspace_row("active")
+        request = _make_demo_request("cd_demo_abc123", fetchrow_side_effect=[session_row, workspace_row])
+
+        result = await get_workspace_or_member_or_demo(request)
+
+        assert result["member_role"] == "approver"
+        assert result["member_id"] is None
+        assert result["is_demo_session"] is True
+
+    async def test_expired_demo_session_403s(self):
+        from datetime import datetime, timedelta, timezone
+
+        session_row = {"workspace_id": uuid4(), "expires_at": datetime.now(timezone.utc) - timedelta(hours=1)}
+        request = _make_demo_request("cd_demo_abc123", fetchrow_side_effect=[session_row])
+
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_or_member_or_demo(request)
+        assert exc.value.status_code == 403
+
+    async def test_unknown_demo_token_403s(self):
+        request = _make_demo_request("cd_demo_bogus", fetchrow_side_effect=[None])
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_or_member_or_demo(request)
+        assert exc.value.status_code == 403
+
+    async def test_malformed_demo_token_401s(self):
+        request = _make_demo_request("not-the-right-prefix")
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_or_member_or_demo(request)
+        assert exc.value.status_code == 401
+
+    async def test_no_demo_header_falls_back_to_member_path(self):
+        # No X-Workspace-Token, no X-Demo-Session-Token, no Authorization
+        # -- must fail the same way get_workspace_or_member already does,
+        # not silently succeed.
+        request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(db_pool=MagicMock())))
+        with pytest.raises(HTTPException) as exc:
+            await get_workspace_or_member_or_demo(request)
         assert exc.value.status_code == 401
 
 
