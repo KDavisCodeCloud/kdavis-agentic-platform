@@ -78,14 +78,26 @@ _DEMO_COMPANY_NAME = "Cloud Decoded Demo Workspace"
 # (not the "system_*" sentinels used by the connection-test button)
 # specifically so the demo shows off actual per-agent remediation
 # option copy, even though is_test=true still blocks real execution.
+#
+# Every remediation_options dict below MUST carry impact + docs_url --
+# db.models.RemediationOption requires both with no default. Found live
+# (2026-09-27, first real GET /incidents call against seeded demo data):
+# this seed data was missing both fields entirely, silently 500ing every
+# list_incidents/get_incident call for any workspace seeded from it --
+# a pre-existing bug in the original scripts/seed_demo_incidents.py data,
+# inherited when it moved here, never caught before because nothing had
+# ever actually listed incidents against seeded rows through this exact
+# Pydantic-validating code path until GET /demo's live verification.
 DEMO_INCIDENTS = [
     {
         "agent_id": "agent_01_cicd_triage", "severity": "high",
         "resource_name": "deploy-pipeline-prod", "cloud_provider": "aws",
         "parsed_error": "Deployment pipeline failing at the integration-test stage — 3 consecutive runs.",
         "remediation_options": [
-            {"id": "opt_1", "title": "Re-run failed jobs", "description": "Re-runs only the failed test jobs."},
-            {"id": "opt_2", "title": "Roll back to last green commit", "description": "Reverts to the last passing deploy."},
+            {"id": "opt_1", "title": "Re-run failed jobs", "description": "Re-runs only the failed test jobs.",
+             "impact": "low", "docs_url": "https://docs.github.com/en/actions/managing-workflow-runs/re-running-workflows-and-jobs"},
+            {"id": "opt_2", "title": "Roll back to last green commit", "description": "Reverts to the last passing deploy.",
+             "impact": "medium", "docs_url": "https://docs.github.com/en/actions"},
         ],
     },
     {
@@ -93,8 +105,10 @@ DEMO_INCIDENTS = [
         "resource_name": "checkout-service", "cloud_provider": "aws",
         "parsed_error": "Pod checkout-service-7f9d8 in CrashLoopBackOff — OOMKilled 5 times in 10 minutes.",
         "remediation_options": [
-            {"id": "opt_1", "title": "Increase memory limit", "description": "Bumps the pod memory limit by 50%."},
-            {"id": "opt_2", "title": "Roll back to previous image", "description": "Reverts to the last known-stable image tag."},
+            {"id": "opt_1", "title": "Increase memory limit", "description": "Bumps the pod memory limit by 50%.",
+             "impact": "low", "docs_url": "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/"},
+            {"id": "opt_2", "title": "Roll back to previous image", "description": "Reverts to the last known-stable image tag.",
+             "impact": "medium", "docs_url": "https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#rolling-back-a-deployment"},
         ],
     },
     {
@@ -102,7 +116,8 @@ DEMO_INCIDENTS = [
         "resource_name": "PR #482", "cloud_provider": None,
         "parsed_error": "PR introduces a hardcoded API key in config/settings.py.",
         "remediation_options": [
-            {"id": "opt_1", "title": "Request changes", "description": "Comments on the PR requesting the secret be moved to env vars."},
+            {"id": "opt_1", "title": "Request changes", "description": "Comments on the PR requesting the secret be moved to env vars.",
+             "impact": "low", "docs_url": "https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/reviewing-proposed-changes-in-a-pull-request"},
         ],
     },
     {
@@ -110,7 +125,8 @@ DEMO_INCIDENTS = [
         "resource_name": "role/data-pipeline-worker", "cloud_provider": "aws",
         "parsed_error": "IAM role has s3:* on all buckets; only 2 buckets are actually accessed in the last 90 days.",
         "remediation_options": [
-            {"id": "opt_1", "title": "Scope down to the 2 used buckets", "description": "Replaces the wildcard policy with least-privilege access."},
+            {"id": "opt_1", "title": "Scope down to the 2 used buckets", "description": "Replaces the wildcard policy with least-privilege access.",
+             "impact": "medium", "docs_url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege"},
         ],
     },
     {
@@ -118,8 +134,10 @@ DEMO_INCIDENTS = [
         "resource_name": "i-0a1b2c3d4e5f", "cloud_provider": "aws",
         "parsed_error": "EC2 instance has been idle (<3% CPU) for 14 days — estimated $210/mo waste.",
         "remediation_options": [
-            {"id": "opt_1", "title": "Stop the instance", "description": "Stops (not terminates) the idle instance."},
-            {"id": "opt_2", "title": "Downsize to a smaller instance type", "description": "Right-sizes based on actual usage."},
+            {"id": "opt_1", "title": "Stop the instance", "description": "Stops (not terminates) the idle instance.",
+             "impact": "low", "docs_url": "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Stop_Start.html"},
+            {"id": "opt_2", "title": "Downsize to a smaller instance type", "description": "Right-sizes based on actual usage.",
+             "impact": "medium", "docs_url": "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-resize.html"},
         ],
     },
     {
@@ -127,7 +145,8 @@ DEMO_INCIDENTS = [
         "resource_name": "aks-prod-cluster", "cloud_provider": "azure",
         "parsed_error": "Live cluster config has drifted from the Terraform state — a NetworkPolicy was manually deleted.",
         "remediation_options": [
-            {"id": "opt_1", "title": "Re-apply Terraform", "description": "Re-applies the last known-good Terraform state."},
+            {"id": "opt_1", "title": "Re-apply Terraform", "description": "Re-applies the last known-good Terraform state.",
+             "impact": "medium", "docs_url": "https://developer.hashicorp.com/terraform/cli/commands/apply"},
         ],
     },
     {
@@ -135,7 +154,8 @@ DEMO_INCIDENTS = [
         "resource_name": "package.json", "cloud_provider": None,
         "parsed_error": "lodash@4.17.15 has a known critical prototype-pollution CVE (CVE-2020-8203).",
         "remediation_options": [
-            {"id": "opt_1", "title": "Patch to lodash@4.17.21", "description": "Opens a PR bumping the dependency to the patched version."},
+            {"id": "opt_1", "title": "Patch to lodash@4.17.21", "description": "Opens a PR bumping the dependency to the patched version.",
+             "impact": "low", "docs_url": "https://nvd.nist.gov/vuln/detail/CVE-2020-8203"},
         ],
     },
     {
@@ -143,7 +163,8 @@ DEMO_INCIDENTS = [
         "resource_name": "rds-prod-primary", "cloud_provider": "aws",
         "parsed_error": "RDS free storage space below 10% and trending down — projected full in 6 days.",
         "remediation_options": [
-            {"id": "opt_1", "title": "Increase allocated storage", "description": "Bumps allocated storage by 25%."},
+            {"id": "opt_1", "title": "Increase allocated storage", "description": "Bumps allocated storage by 25%.",
+             "impact": "medium", "docs_url": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIOPS.StorageTypes.html#USER_PIOPS.Autoscaling"},
         ],
     },
 ]

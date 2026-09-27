@@ -90,6 +90,24 @@ class TestGetOrCreateDemoWorkspace:
         assert "'read_only', 'read_only'" in insert_sql
 
 
+class TestDemoIncidentDataShape:
+    """Regression test for a real bug found live (2026-09-27): the
+    original seed data (scripts/seed_demo_incidents.py, before it moved
+    here) never carried impact/docs_url on any remediation option, so
+    every GET /incidents and GET /incidents/{id} call against a seeded
+    workspace 500'd inside db.models.RemediationOption's validation --
+    never caught before because nothing had exercised that exact
+    Pydantic-validating path against seeded data until GET /demo's live
+    verification."""
+
+    def test_every_remediation_option_satisfies_the_real_response_model(self):
+        from db.models import RemediationOption
+
+        for incident in DEMO_INCIDENTS:
+            for option in incident["remediation_options"]:
+                RemediationOption(**option)  # raises on any missing field
+
+
 class TestInsertDemoIncidents:
     async def test_inserts_exactly_the_baseline_count(self):
         pool, conn = _make_pool()
