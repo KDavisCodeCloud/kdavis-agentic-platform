@@ -7,9 +7,57 @@ import {
   suspendWorkspace,
   reactivateWorkspace,
   rotateWorkspaceToken,
+  getWorkspaceDetail,
+  SETUP_CHECKLIST_ITEM_LABELS,
   type WorkspaceSummary,
+  type WorkspaceDetail,
 } from "@/lib/api";
 import { StatusBadge } from "./StatusBadge";
+
+// Admin visibility build (2026-09-27) -- "3/5" style summary badge.
+// Status colors carry all meaning here (CLAUDE.md's cockpit design
+// system) -- green only once genuinely complete, amber otherwise.
+function ChecklistBadge({ count }: { count: number }) {
+  const color = count >= 5 ? "#6fce8f" : "#e8963f";
+  return (
+    <span
+      className="px-2 py-0.5 rounded-[6px] text-[10.5px] font-mono font-semibold"
+      style={{ color, backgroundColor: `${color}22` }}
+    >
+      {count}/5
+    </span>
+  );
+}
+
+function ChecklistDetailPanel({ detail }: { detail: WorkspaceDetail }) {
+  const checklist = detail.setup_checklist;
+  const itemKeys = Object.keys(SETUP_CHECKLIST_ITEM_LABELS) as (keyof typeof SETUP_CHECKLIST_ITEM_LABELS)[];
+
+  return (
+    <div className="mt-2.5 rounded-[8px] px-3 py-2.5" style={{ border: "1px solid #1c222b", backgroundColor: "#10151b" }}>
+      <div className="space-y-1.5">
+        {itemKeys.map((key) => {
+          const item = checklist[key];
+          return (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <span className="text-[11px]" style={{ color: item.done ? "#c7cfd6" : "#5b6673" }}>
+                {item.done ? "✓" : "○"} {SETUP_CHECKLIST_ITEM_LABELS[key]}
+              </span>
+              <span className="text-[10px] font-mono shrink-0" style={{ color: "#5b6673" }}>
+                {item.completed_at ? new Date(item.completed_at).toLocaleString() : "—"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-2.5 text-[10.5px] font-mono" style={{ color: "#8b96a3", borderTop: "1px solid #1c222b", paddingTop: 8 }}>
+        {checklist.last_activity_at
+          ? `Last checklist activity: ${new Date(checklist.last_activity_at).toLocaleString()}`
+          : "No checklist item has ever been completed."}
+      </p>
+    </div>
+  );
+}
 
 // The actual revocation lever for Cloud Decoded's paywall (see
 // api/routes/internal_workspaces.py): suspend for a ToS violation
@@ -27,7 +75,35 @@ export function WorkspaceAdminPanel() {
   const [pendingAction, setPendingAction] = useState<RowAction>(null);
   const [revealedToken, setRevealedToken] = useState<{ workspaceId: string; token: string } | null>(null);
 
+  // Admin visibility build (2026-09-27) -- checklist detail view.
+  // Lazy-fetched on first expand, cached per workspace id for the life
+  // of this panel mount.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [detailById, setDetailById] = useState<Record<string, WorkspaceDetail>>({});
+  const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
   const supabase = createClient();
+
+  async function toggleExpanded(w: WorkspaceSummary) {
+    if (expandedId === w.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(w.id);
+    setDetailError(null);
+    if (detailById[w.id]) return; // already cached
+    setDetailLoadingId(w.id);
+    try {
+      const token = await getAuthToken();
+      const detail = await getWorkspaceDetail(w.id, token);
+      setDetailById((prev) => ({ ...prev, [w.id]: detail }));
+    } catch (err) {
+      setDetailError(err instanceof Error ? err.message : "Failed to load checklist detail");
+    } finally {
+      setDetailLoadingId(null);
+    }
+  }
 
   async function getAuthToken(): Promise<string> {
     const {
@@ -162,6 +238,14 @@ export function WorkspaceAdminPanel() {
                 <div className="flex items-center gap-2 shrink-0">
                   <StatusBadge status={w.stripe_subscription_status} />
 
+                  <button
+                    onClick={() => toggleExpanded(w)}
+                    title="Setup checklist"
+                    className="focus:outline-none"
+                  >
+                    <ChecklistBadge count={w.setup_checklist_completed_count} />
+                  </button>
+
                   {canReactivate ? (
                     <button
                       onClick={() => handleReactivate(w)}
@@ -216,6 +300,22 @@ export function WorkspaceAdminPanel() {
                     Dismiss
                   </button>
                 </div>
+              )}
+
+              {expandedId === w.id && (
+                <>
+                  {detailLoadingId === w.id && (
+                    <p className="mt-2.5 text-[10.5px] font-mono" style={{ color: "#5b6673" }}>
+                      Loading checklist…
+                    </p>
+                  )}
+                  {detailError && detailLoadingId !== w.id && (
+                    <p className="mt-2.5 text-[10.5px]" style={{ color: "#e05d5d" }}>
+                      {detailError}
+                    </p>
+                  )}
+                  {detailById[w.id] && <ChecklistDetailPanel detail={detailById[w.id]} />}
+                </>
               )}
             </div>
           );

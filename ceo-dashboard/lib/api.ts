@@ -437,7 +437,39 @@ export interface WorkspaceSummary {
   product_tier: string;
   stripe_subscription_status: string;
   created_at: string;
+  // Admin visibility build (2026-09-27) -- "3/5" style column. Which
+  // items are incomplete is a getWorkspaceDetail-only concern.
+  setup_checklist_completed_count: number;
 }
+
+// Admin visibility build (2026-09-27) -- api/routes/internal_workspaces.py's
+// GET /internal/workspaces/{id} detail response.
+export interface SetupChecklistItem {
+  done: boolean;
+  completed_at: string | null;
+}
+
+export interface SetupChecklistDetail {
+  cloud_connected: SetupChecklistItem;
+  repo_connected: SetupChecklistItem;
+  alert_source_verified: SetupChecklistItem;
+  notification_channel_set: SetupChecklistItem;
+  end_to_end_test_passed: SetupChecklistItem;
+  completed_count: number;
+  last_activity_at: string | null;
+}
+
+export interface WorkspaceDetail extends WorkspaceSummary {
+  setup_checklist: SetupChecklistDetail;
+}
+
+export const SETUP_CHECKLIST_ITEM_LABELS: Record<keyof Omit<SetupChecklistDetail, "completed_count" | "last_activity_at">, string> = {
+  cloud_connected: "Cloud connected",
+  repo_connected: "Repo connected",
+  alert_source_verified: "Alert source verified",
+  notification_channel_set: "Notification channel set",
+  end_to_end_test_passed: "End-to-end test passed",
+};
 
 async function internalWorkspaceRequest<T>(
   path: string,
@@ -461,6 +493,10 @@ async function internalWorkspaceRequest<T>(
 
 export async function listWorkspaces(authToken: string): Promise<WorkspaceSummary[]> {
   return internalWorkspaceRequest<WorkspaceSummary[]>("", authToken);
+}
+
+export async function getWorkspaceDetail(workspaceId: string, authToken: string): Promise<WorkspaceDetail> {
+  return internalWorkspaceRequest<WorkspaceDetail>(`/${workspaceId}`, authToken);
 }
 
 export async function suspendWorkspace(

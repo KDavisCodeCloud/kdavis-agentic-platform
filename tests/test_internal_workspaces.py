@@ -32,22 +32,28 @@ def _make_request(conn) -> SimpleNamespace:
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
 
 
+def _workspace_row(**overrides) -> dict:
+    from datetime import datetime, timezone
+
+    base = {
+        "id": uuid4(),
+        "company_name": "Acme", "contact_email": "ops@acme.com",
+        "product_tier": "growth",
+        "stripe_subscription_status": "active",
+        "created_at": datetime.now(timezone.utc),
+        "aws_role_verified_at": None, "azure_verified_at": None, "k8s_verified_at": None,
+        "github_app_installed_at": None, "github_pat_verified_at": None, "azure_devops_pat_verified_at": None,
+        "setup_test_passed_at": None,
+    }
+    base.update(overrides)
+    return base
+
+
 class TestListWorkspaces:
     async def test_returns_summaries_never_the_token(self):
-        from datetime import datetime, timezone
-
+        row = _workspace_row()
         conn = AsyncMock()
-        conn.fetch = AsyncMock(
-            return_value=[
-                {
-                    "id": uuid4(),
-                    "company_name": "Acme", "contact_email": "ops@acme.com",
-                    "product_tier": "growth",
-                    "stripe_subscription_status": "active",
-                    "created_at": datetime.now(timezone.utc),
-                }
-            ]
-        )
+        conn.fetch = AsyncMock(side_effect=[[row], [], []])  # workspaces, alert rows, channel rows
         request = _make_request(conn)
 
         result = await iw.list_workspaces(request, admin=_ADMIN)
@@ -55,6 +61,29 @@ class TestListWorkspaces:
         assert len(result) == 1
         assert result[0].company_name == "Acme"
         assert not hasattr(result[0], "workspace_token")
+
+    async def test_includes_checklist_completed_count(self):
+        """Admin visibility build (2026-09-27) -- the '3/5' style column."""
+        from datetime import datetime, timezone
+
+        row = _workspace_row(azure_verified_at=datetime.now(timezone.utc), github_pat_verified_at=datetime.now(timezone.utc))
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(side_effect=[[row], [], []])
+        request = _make_request(conn)
+
+        result = await iw.list_workspaces(request, admin=_ADMIN)
+
+        assert result[0].setup_checklist_completed_count == 2
+
+    async def test_zero_workspaces_short_circuits_without_extra_queries(self):
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[])
+        request = _make_request(conn)
+
+        result = await iw.list_workspaces(request, admin=_ADMIN)
+
+        assert result == []
+        assert conn.fetch.await_count == 1  # only the workspaces query -- bulk detail short-circuits on empty input
 
 
 class TestGetWorkspaceDetail:
@@ -66,6 +95,28 @@ class TestGetWorkspaceDetail:
         with pytest.raises(HTTPException) as exc:
             await iw.get_workspace_detail(str(uuid4()), request, admin=_ADMIN)
         assert exc.value.status_code == 404
+
+    async def test_full_checklist_state_with_per_item_timestamps(self):
+        """Admin visibility build (2026-09-27) -- item 2: full checklist
+        state with per-item timestamps, so a stall reads as 'Azure
+        connected Tuesday, nothing since' rather than just '3/5'."""
+        from datetime import datetime, timezone
+
+        azure_at = datetime(2026, 1, 14, tzinfo=timezone.utc)  # a Tuesday
+        row = _workspace_row(azure_verified_at=azure_at)
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(side_effect=[row, {"first_at": None}, {"first_at": None}])
+        request = _make_request(conn)
+
+        result = await iw.get_workspace_detail(str(row["id"]), request, admin=_ADMIN)
+
+        assert result.setup_checklist_completed_count == 1
+        assert result.setup_checklist.completed_count == 1
+        assert result.setup_checklist.cloud_connected.done is True
+        assert result.setup_checklist.cloud_connected.completed_at == azure_at.isoformat()
+        assert result.setup_checklist.repo_connected.done is False
+        assert result.setup_checklist.repo_connected.completed_at is None
+        assert result.setup_checklist.last_activity_at == azure_at.isoformat()
 
 
 class TestSuspendReactivate:

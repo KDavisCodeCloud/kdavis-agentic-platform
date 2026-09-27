@@ -201,6 +201,34 @@ def enterprise_alert_html(company_name: str, workspace_id: str, contact_email: s
 </div>"""
 
 
+def stalled_setup_alert_html(
+    company_name: str,
+    workspace_id: str,
+    contact_email: str | None,
+    missing_items: list[str],
+    last_activity_label: str,
+) -> str:
+    """
+    Admin visibility build (2026-09-27) -- core/setup_checklist_stall_alert.py
+    fires this when a PAYING workspace sits below 5/5 on the setup
+    checklist with no item flipping for 72+ hours. Same "best-effort,
+    non-fatal" send discipline as enterprise_alert_html above -- see
+    api/routes/internal_workspaces.py's _send_enterprise_alert for the
+    call-site pattern this reuses.
+    """
+    missing_list = "".join(f"<li>{item}</li>" for item in missing_items)
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:520px;margin:0 auto;color:#1a1a1a">
+  <h1 style="font-size:18px">{company_name}'s setup has stalled</h1>
+  <p>Workspace <code>{workspace_id}</code> is a paying customer still below 5/5 on the
+  setup checklist, and nothing has changed in over 72 hours.</p>
+  <p>{last_activity_label}</p>
+  <p>Still missing:</p>
+  <ul>{missing_list}</ul>
+  <p>Contact on file: {contact_email or "(none captured)"}</p>
+</div>"""
+
+
 def downgrade_deactivation_html(company_name: str, new_tier: str, deactivated_emails: list[str]) -> str:
     """
     Kelvin's item 3, 2026-09-17 -- replaces the Phase 7 hard downgrade

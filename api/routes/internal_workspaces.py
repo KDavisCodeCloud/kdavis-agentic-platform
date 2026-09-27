@@ -63,6 +63,7 @@ from api.middleware.auth import _hash_token
 from api.middleware.internal_auth import get_internal_user
 from core.compliance import WorkspaceComplianceGuard
 from core.email import EmailError, enterprise_alert_html, send_email
+from core.setup_checklist import compute_setup_checklist_detail, compute_setup_checklist_detail_bulk
 from security.encryption import encrypt
 
 _MCP_VALID_SCOPES = frozenset({"mcp:read", "mcp:write"})
@@ -71,6 +72,16 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/workspaces", tags=["internal-workspaces"])
 
 _TOKEN_PREFIX = "cd_ws_"
+
+# Admin visibility build (2026-09-27) -- the raw columns
+# core/setup_checklist.py's compute_setup_checklist_detail(_bulk) reads.
+# Selected alongside the existing workspace summary columns so list/detail
+# can compute the checklist without a second round trip per workspace.
+_CHECKLIST_RAW_COLUMNS = (
+    "aws_role_verified_at, azure_verified_at, k8s_verified_at, "
+    "github_app_installed_at, github_pat_verified_at, azure_devops_pat_verified_at, "
+    "setup_test_passed_at"
+)
 
 
 def _generate_raw_token() -> str:
@@ -86,6 +97,29 @@ class WorkspaceSummary(BaseModel):
     product_tier: str
     stripe_subscription_status: str
     created_at: str
+    # Admin visibility build (2026-09-27) -- "3/5" style summary. Which
+    # items are incomplete is a detail-view-only concern (get_workspace_detail),
+    # kept out of the list response so a 200-row list stays small.
+    setup_checklist_completed_count: int
+
+
+class SetupChecklistItemResponse(BaseModel):
+    done: bool
+    completed_at: str | None = None
+
+
+class SetupChecklistDetailResponse(BaseModel):
+    cloud_connected: SetupChecklistItemResponse
+    repo_connected: SetupChecklistItemResponse
+    alert_source_verified: SetupChecklistItemResponse
+    notification_channel_set: SetupChecklistItemResponse
+    end_to_end_test_passed: SetupChecklistItemResponse
+    completed_count: int
+    last_activity_at: str | None = None
+
+
+class WorkspaceDetailResponse(WorkspaceSummary):
+    setup_checklist: SetupChecklistDetailResponse
 
 
 class WorkspaceStatusResponse(BaseModel):
@@ -158,13 +192,32 @@ class ScimTokenResponse(BaseModel):
 
 async def _get_workspace_or_404(conn, workspace_id: str) -> dict:
     row = await conn.fetchrow(
-        "SELECT id, company_name, contact_email, product_tier, stripe_subscription_status, created_at "
-        "FROM workspaces WHERE id = $1",
+        f"SELECT id, company_name, contact_email, product_tier, stripe_subscription_status, created_at, "
+        f"{_CHECKLIST_RAW_COLUMNS} FROM workspaces WHERE id = $1",
         workspace_id,
     )
     if not row:
         raise HTTPException(status_code=404, detail="Workspace not found")
     return dict(row)
+
+
+def _checklist_item_response(item: dict) -> SetupChecklistItemResponse:
+    return SetupChecklistItemResponse(
+        done=item["done"],
+        completed_at=item["completed_at"].isoformat() if item["completed_at"] else None,
+    )
+
+
+def _checklist_detail_response(detail: dict) -> SetupChecklistDetailResponse:
+    return SetupChecklistDetailResponse(
+        cloud_connected=_checklist_item_response(detail["cloud_connected"]),
+        repo_connected=_checklist_item_response(detail["repo_connected"]),
+        alert_source_verified=_checklist_item_response(detail["alert_source_verified"]),
+        notification_channel_set=_checklist_item_response(detail["notification_channel_set"]),
+        end_to_end_test_passed=_checklist_item_response(detail["end_to_end_test_passed"]),
+        completed_count=detail["completed_count"],
+        last_activity_at=detail["last_activity_at"].isoformat() if detail["last_activity_at"] else None,
+    )
 
 
 async def _set_subscription_status(request: Request, workspace_id: str, new_status: str) -> WorkspaceStatusResponse:
@@ -185,35 +238,42 @@ async def _set_subscription_status(request: Request, workspace_id: str, new_stat
 async def list_workspaces(request: Request, admin: dict = Depends(get_internal_user)) -> list[WorkspaceSummary]:
     async with request.app.state.db_pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, company_name, contact_email, product_tier, stripe_subscription_status, created_at "
-            "FROM workspaces ORDER BY created_at DESC LIMIT 200"
+            f"SELECT id, company_name, contact_email, product_tier, stripe_subscription_status, created_at, "
+            f"{_CHECKLIST_RAW_COLUMNS} FROM workspaces ORDER BY created_at DESC LIMIT 200"
         )
+        workspaces = [dict(r) for r in rows]
+        checklists = await compute_setup_checklist_detail_bulk(conn, workspaces)
+
     return [
         WorkspaceSummary(
-            id=str(r["id"]),
-            company_name=r["company_name"],
-            contact_email=r["contact_email"],
-            product_tier=r["product_tier"],
-            stripe_subscription_status=r["stripe_subscription_status"],
-            created_at=r["created_at"].isoformat(),
+            id=str(w["id"]),
+            company_name=w["company_name"],
+            contact_email=w["contact_email"],
+            product_tier=w["product_tier"],
+            stripe_subscription_status=w["stripe_subscription_status"],
+            created_at=w["created_at"].isoformat(),
+            setup_checklist_completed_count=checklists[w["id"]]["completed_count"],
         )
-        for r in rows
+        for w in workspaces
     ]
 
 
-@router.get("/{workspace_id}", response_model=WorkspaceSummary)
+@router.get("/{workspace_id}", response_model=WorkspaceDetailResponse)
 async def get_workspace_detail(
     workspace_id: str, request: Request, admin: dict = Depends(get_internal_user)
-) -> WorkspaceSummary:
+) -> WorkspaceDetailResponse:
     async with request.app.state.db_pool.acquire() as conn:
         row = await _get_workspace_or_404(conn, workspace_id)
-    return WorkspaceSummary(
+        checklist = await compute_setup_checklist_detail(conn, row)
+    return WorkspaceDetailResponse(
         id=str(row["id"]),
         company_name=row["company_name"],
         contact_email=row["contact_email"],
         product_tier=row["product_tier"],
         stripe_subscription_status=row["stripe_subscription_status"],
         created_at=row["created_at"].isoformat(),
+        setup_checklist_completed_count=checklist["completed_count"],
+        setup_checklist=_checklist_detail_response(checklist),
     )
 
 

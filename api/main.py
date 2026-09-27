@@ -304,6 +304,12 @@ async def lifespan(app: FastAPI):
     # at app startup rather than waiting on the first GET /demo call.
     app.state.demo_reset_task = asyncio.create_task(_demo_reset_loop(app.state.db_pool))
 
+    # Admin visibility build (2026-09-27) -- core/setup_checklist_stall_alert.py.
+    # Hourly, same cadence as the email-lifecycle scans above: catches a
+    # paying workspace crossing the 72h-stalled threshold within an hour
+    # of it actually happening.
+    app.state.setup_stall_alert_task = asyncio.create_task(_setup_stall_alert_loop(app.state.db_pool))
+
     yield
 
     # Shutdown
@@ -318,6 +324,7 @@ async def lifespan(app: FastAPI):
     app.state.abandoned_checkout_task.cancel()
     app.state.stall_nudge_task.cancel()
     app.state.demo_reset_task.cancel()
+    app.state.setup_stall_alert_task.cancel()
     await app.state.db_pool.close()
     await lg_conn.close()
     log.info("[API] Shutdown complete")
@@ -494,6 +501,19 @@ async def _demo_reset_loop(pool) -> None:
         except Exception:
             log.exception("[DemoSandbox] Reset pass failed — will retry next cycle")
         await asyncio.sleep(DEMO_RESET_INTERVAL_SECONDS)
+
+
+async def _setup_stall_alert_loop(pool) -> None:
+    from core.setup_checklist_stall_alert import STALL_ALERT_INTERVAL_SECONDS, run_stalled_setup_check
+
+    while True:
+        try:
+            await run_stalled_setup_check(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[SetupChecklistStallAlert] Check failed — will retry next cycle")
+        await asyncio.sleep(STALL_ALERT_INTERVAL_SECONDS)
 
 
 # ──────────────────────────────────────────────
