@@ -61,6 +61,15 @@ DEMO_SESSION_TOKEN_PREFIX = "cd_demo_"
 DEMO_SESSION_TTL = timedelta(hours=24)
 DEMO_RESET_INTERVAL_SECONDS = 30 * 60
 
+# This app runs 4 --workers processes per deploy (api/main.py's lifespan
+# starts one _demo_reset_loop per worker), so every reset pass is guarded
+# by pg_try_advisory_xact_lock, same pattern as core/retention.py's
+# _RETENTION_LOCK_ID -- without it all 4 workers would redundantly wipe
+# and reseed the same demo workspace on every 30-minute tick. Distinct
+# constant, never collides with any other advisory lock in this codebase
+# (see the full list in those other modules' own _LOCK_ID constants).
+_DEMO_RESET_LOCK_ID = 305_827_961
+
 _DEMO_COMPANY_NAME = "Cloud Decoded Demo Workspace"
 
 # One realistic-looking synthetic incident per row -- varied agents,
@@ -220,9 +229,16 @@ async def run_demo_reset(pool) -> None:
     different visitor was in the middle of working through.
     """
     async with pool.acquire() as conn:
-        workspace_id = await get_or_create_demo_workspace(conn)
-        count = await insert_demo_incidents(conn, workspace_id, wipe_first=True)
-        pruned = await conn.execute("DELETE FROM demo_sessions WHERE expires_at < NOW()")
+        async with conn.transaction():
+            got_lock = await conn.fetchval("SELECT pg_try_advisory_xact_lock($1)", _DEMO_RESET_LOCK_ID)
+            if not got_lock:
+                log.info("[DemoSandbox] Another worker holds the reset lock — skipping this cycle")
+                return
+
+            workspace_id = await get_or_create_demo_workspace(conn)
+            count = await insert_demo_incidents(conn, workspace_id, wipe_first=True)
+            pruned = await conn.execute("DELETE FROM demo_sessions WHERE expires_at < NOW()")
+
     log.info(
         "[DemoSandbox] Reset demo workspace %s to %d baseline incidents (pruned expired sessions: %s)",
         workspace_id, count, pruned,

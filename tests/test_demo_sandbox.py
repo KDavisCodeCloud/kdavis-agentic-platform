@@ -43,6 +43,15 @@ def _make_pool(fetchrow_side_effect=None, fetchval_return=None, execute_return=N
         conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
     conn.fetchval = AsyncMock(return_value=fetchval_return)
     conn.execute = AsyncMock(return_value=execute_return)
+
+    # asyncpg's conn.transaction() is a sync call returning an async
+    # context manager -- run_demo_reset's advisory-lock guard needs this
+    # to actually work under `async with`, same setup as
+    # tests/conftest.py's mock_db fixture.
+    tx_ctx = AsyncMock()
+    tx_ctx.__aenter__ = AsyncMock(return_value=tx_ctx)
+    tx_ctx.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=tx_ctx)
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)
     pool_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -180,7 +189,7 @@ class TestResolveDemoSession:
 class TestRunDemoReset:
     async def test_wipes_and_reseeds_to_exactly_the_baseline_count(self):
         workspace_id = uuid4()
-        pool, conn = _make_pool(fetchrow_side_effect=[{"id": workspace_id}])
+        pool, conn = _make_pool(fetchrow_side_effect=[{"id": workspace_id}], fetchval_return=True)
         await run_demo_reset(pool)
         insert_calls = [c for c in conn.execute.await_args_list if "INSERT INTO incidents" in c.args[0]]
         delete_calls = [c for c in conn.execute.await_args_list if "DELETE FROM incidents" in c.args[0]]
@@ -188,11 +197,20 @@ class TestRunDemoReset:
         assert len(delete_calls) == 1
 
     async def test_prunes_expired_demo_sessions(self):
-        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}])
+        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=True)
         await run_demo_reset(pool)
         prune_calls = [c for c in conn.execute.await_args_list if "DELETE FROM demo_sessions" in c.args[0]]
         assert len(prune_calls) == 1
         assert "expires_at < NOW()" in prune_calls[0].args[0]
+
+    async def test_skips_entirely_when_another_worker_holds_the_lock(self):
+        """4 --workers processes each run their own reset loop -- only one
+        should ever actually wipe/reseed per tick."""
+        pool, conn = _make_pool(fetchval_return=False)
+        await run_demo_reset(pool)
+        conn.fetchrow.assert_not_awaited()
+        insert_calls = [c for c in conn.execute.await_args_list if "INSERT INTO incidents" in c.args[0]]
+        assert len(insert_calls) == 0
 
 
 class TestDemoIdentityCanApproveASyntheticIncident:
