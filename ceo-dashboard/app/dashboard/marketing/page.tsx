@@ -5,6 +5,7 @@ import { AgentRosterCard } from "@/components/ui/AgentRosterCard";
 import { LinkedInBatchPanel } from "@/components/ui/LinkedInBatchPanel";
 import { MSEContentReview } from "@/components/ui/MSEContentReview";
 import { LeadPipelinePanel } from "@/components/ui/LeadPipelinePanel";
+import { BuyerResearchLane } from "@/components/ui/BuyerResearchLane";
 import { OutreachTracker } from "@/components/ui/OutreachTracker";
 
 // Cold Outreach (added 2026-09-16): job-posting-signal scraper +
@@ -33,6 +34,20 @@ export default function MarketingPage() {
               sender crons. Replaces the old static "not_built" mock. */}
           <SectionCard title="Lead Pipeline" status="live" statusNote="mse_leads.stage + mse_activities, DIST Phase 8">
             <LeadPipelinePanel />
+          </SectionCard>
+
+          {/* Buyer research — scraper v2's two-stage model qualifies a COMPANY
+              without needing a contact, so these are companies that cleared
+              Stage 1 (matching role + resolved domain + exclusions + size
+              proxy) where neither the free sources nor a Brave query could
+              name a buyer. Pasting a profile creates the contact and triggers
+              email pattern + SMTP + catch-all grading. */}
+          <SectionCard
+            title="Find the Buyer"
+            status="live"
+            statusNote="mse_leads where contact_status='pending' — saving a profile creates the contact and grades its email"
+          >
+            <BuyerResearchLane />
           </SectionCard>
 
           {/* LinkedIn Monthly Batch — MKT-LI1's ~12 posts, plus on-demand fire, review/approve/schedule */}

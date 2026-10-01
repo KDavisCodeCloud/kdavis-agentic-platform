@@ -416,3 +416,30 @@ export interface EmailFeedHealth {
   reachable: boolean;
   error: string | null;
 }
+
+
+// Buyer-research lane (decision 5b, 2026-10-01). Scraper v2's two-stage model
+// qualifies a COMPANY without needing a contact, so these are companies that
+// cleared Stage 1 (matching role + resolved domain + exclusions + size proxy)
+// but where neither the free sources nor a Brave query could name a buyer.
+export type BuyerResearchTask = {
+  lead_id: string;
+  product_id: string | null;
+  headline: string;
+  company: string | null;
+  domain: string | null;
+  domain_source: string | null;
+  role_signal: {
+    title: string | null;
+    posting_url: string | null;
+    matching_roles: number | null;
+    open_roles_on_board: number | null;
+    stack: string[];
+  };
+  target_titles: string[];
+  scores: { fit: number | null; intent: number | null };
+  why_qualified: string[];
+  company_tags: string[];
+  location: string | null;
+  automated_attempts: number;
+};

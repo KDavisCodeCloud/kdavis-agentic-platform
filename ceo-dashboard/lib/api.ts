@@ -1,4 +1,4 @@
-import type { LinkedInQueuePost, MSEContentPost } from "./types";
+import type { BuyerResearchTask, LinkedInQueuePost, MSEContentPost } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -518,4 +518,53 @@ export async function rotateWorkspaceToken(
   authToken: string,
 ): Promise<{ id: string; workspace_token: string; warning: string }> {
   return internalWorkspaceRequest(`/${workspaceId}/rotate-token`, authToken, { method: "POST" });
+}
+
+
+// ── Buyer-research lane (decision 5b, 2026-10-01) ────────────────────────
+
+export async function fetchBuyerResearchTasks(
+  filters: { productId?: string } = {},
+): Promise<BuyerResearchTask[]> {
+  const params = new URLSearchParams();
+  if (filters.productId) params.set("product_id", filters.productId);
+  const qs = params.toString();
+
+  const res = await fetch(`/api/buyer-research${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Fetching the buyer-research lane failed: ${res.status}`);
+  }
+  const body = await res.json();
+  return body.tasks ?? [];
+}
+
+// Saving a pasted profile creates the contact AND kicks off email pattern +
+// SMTP + catch-all grading on the backend. The returned email_grading field
+// says whether grading was queued or why it was skipped, so the UI can be
+// honest instead of implying an address is on the way.
+export async function saveBuyerContact(
+  leadId: string,
+  contact: { linkedin_url: string; name: string; title: string },
+): Promise<{ company: string | null; status: string; email_grading: string }> {
+  const res = await fetch(`/api/buyer-research/${encodeURIComponent(leadId)}/contact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(contact),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `Saving the contact failed: ${res.status}`);
+  }
+  return body;
+}
+
+export async function skipBuyerResearchTask(leadId: string): Promise<void> {
+  const res = await fetch(`/api/buyer-research/${encodeURIComponent(leadId)}/skip`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Skipping failed: ${res.status}`);
+  }
 }
