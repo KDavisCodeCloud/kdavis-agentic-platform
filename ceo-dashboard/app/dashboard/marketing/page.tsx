@@ -5,8 +5,7 @@ import { AgentRosterCard } from "@/components/ui/AgentRosterCard";
 import { LinkedInBatchPanel } from "@/components/ui/LinkedInBatchPanel";
 import { MSEContentReview } from "@/components/ui/MSEContentReview";
 import { LeadPipelinePanel } from "@/components/ui/LeadPipelinePanel";
-import { BuyerResearchLane } from "@/components/ui/BuyerResearchLane";
-import { OutreachTracker } from "@/components/ui/OutreachTracker";
+import { OutreachSection } from "@/components/ui/OutreachSection";
 
 // Cold Outreach (added 2026-09-16): job-posting-signal scraper +
 // per-ICP LinkedIn DM sequences (MKT-O1/MKT-O2, kdavis-microsaas-engine)
@@ -36,18 +35,23 @@ export default function MarketingPage() {
             <LeadPipelinePanel />
           </SectionCard>
 
-          {/* Buyer research — scraper v2's two-stage model qualifies a COMPANY
-              without needing a contact, so these are companies that cleared
-              Stage 1 (matching role + resolved domain + exclusions + size
-              proxy) where neither the free sources nor a Brave query could
-              name a buyer. Pasting a profile creates the contact and triggers
-              email pattern + SMTP + catch-all grading. */}
+          {/* THE single outreach surface (Kelvin's decision 3, 2026-10-05).
+              Replaces the standalone "Find the Buyer" card here AND the MSE
+              dashboard's own Outreach page, which is now read-only. Four
+              lanes in flow order with shared header counters -- the same
+              counters the 8am digest leads with, from the same endpoint, so
+              the email and this header cannot disagree.
+
+              There is deliberately no second approval queue anywhere: the one
+              that existed rendered "Unknown / no contact on file" for all 11
+              drafts (it never embedded mse_leads) and routed every approval to
+              a status MKT-O5 never polls. */}
           <SectionCard
-            title="Find the Buyer"
+            title="Outreach"
             status="live"
-            statusNote="mse_leads where contact_status='pending' — saving a profile creates the contact and grades its email"
+            statusNote="find the buyer → approve drafts → ready to paste → conversations. Nothing sends without approval."
           >
-            <BuyerResearchLane />
+            <OutreachSection />
           </SectionCard>
 
           {/* LinkedIn Monthly Batch — MKT-LI1's ~12 posts, plus on-demand fire, review/approve/schedule */}
@@ -73,13 +77,7 @@ export default function MarketingPage() {
             </div>
           </SectionCard>
 
-          {/* Cold Outreach Tracker — real per-product sent/meetings counts
-              (mse_dm_sequences + mse_leads.stage). Open rate has no real
-              signal anywhere in this codebase (no email-open tracking) and
-              is shown as "not tracked," not a fabricated number. */}
-          <SectionCard title="Cold Outreach Tracker" status="partial" statusNote="mse_dm_sequences + mse_leads.stage — sent/meetings are real, open rate isn't tracked">
-            <OutreachTracker />
-          </SectionCard>
+
         </div>
       </div>
     </div>
