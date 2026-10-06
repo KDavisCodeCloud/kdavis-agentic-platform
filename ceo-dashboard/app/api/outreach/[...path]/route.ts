@@ -22,6 +22,7 @@ const ALLOWED = [
   /^summary$/,
   /^drafts$/,
   /^drafts\/[A-Za-z0-9-]+\/edit$/,
+  /^drafts\/[A-Za-z0-9-]+\/linkedin-url$/,
   /^ready-to-paste$/,
   /^ready-to-paste\/[A-Za-z0-9-]+\/mark$/,
   /^conversations$/,

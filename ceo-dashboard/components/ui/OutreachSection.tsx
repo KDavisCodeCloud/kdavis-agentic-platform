@@ -48,6 +48,12 @@ type Card = {
   scores: { fit: number | null; intent: number | null };
   why: string[];
   touches: Record<string, string>;
+  subject: string | null;
+  drafted_for_route: string | null;
+  // Computed SERVER-side so this component never re-derives the rule -- a
+  // client-side copy would drift the moment the rule changed, and this one
+  // gates a real send.
+  blocked_reason: string | null;
 };
 
 type Conversation = {
@@ -141,6 +147,7 @@ export function OutreachSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
   const [copied, setCopied] = useState<string | null>(null);
+  const [urlDraft, setUrlDraft] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -355,6 +362,73 @@ export function OutreachSection() {
                     {d.signal.open_role_count != null ? ` · ${d.signal.open_role_count} open roles` : ""}
                   </div>
 
+                  {/* LINKEDIN URL GATE (decision 1, 2026-10-06). Shown only
+                      on the manual_linkedin route: that lane is "open the
+                      profile, paste the note", and there is no LinkedIn API to
+                      look someone up. Email-route drafts are unaffected. */}
+                  {d.blocked_reason && (
+                    <div
+                      className="p-3 rounded-[10px] mb-2"
+                      style={{ background: "#241a10", border: "1px solid #3d2e1f" }}
+                    >
+                      <div className="text-[11.5px] mb-2" style={{ color: "#e8963f" }}>
+                        {d.blocked_reason}
+                      </div>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <input
+                          className="flex-1 min-w-[240px] text-[12px] px-2 py-1.5 rounded-[6px] font-mono"
+                          style={{ background: "#10151b", border: "1px solid #1c222b", color: "#eef2f5" }}
+                          placeholder="https://www.linkedin.com/in/..."
+                          value={urlDraft[d.sequence_id] ?? ""}
+                          onChange={(e) =>
+                            setUrlDraft((prev) => ({ ...prev, [d.sequence_id]: e.target.value }))
+                          }
+                        />
+                        <button
+                          disabled={busy === d.sequence_id || !(urlDraft[d.sequence_id] ?? "").trim()}
+                          onClick={() =>
+                            act(d.sequence_id, () =>
+                              call(`/api/outreach/drafts/${d.sequence_id}/linkedin-url`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  linkedin_url: (urlDraft[d.sequence_id] ?? "").trim(),
+                                }),
+                              })
+                            )
+                          }
+                          className="px-3 py-1.5 rounded-[6px] text-[12px]"
+                          style={{
+                            background: "transparent",
+                            border: "1px solid #e8963f",
+                            color: "#e8963f",
+                            opacity:
+                              busy === d.sequence_id || !(urlDraft[d.sequence_id] ?? "").trim() ? 0.4 : 1,
+                          }}
+                        >
+                          Save profile URL
+                        </button>
+                      </div>
+                      <div className="text-[10.5px] font-mono mt-1" style={{ color: "#5b6673" }}>
+                        a /company/ URL is rejected — it must be the person&apos;s own profile
+                      </div>
+                    </div>
+                  )}
+
+                  {d.subject && (
+                    <div className="mb-2">
+                      <div className="text-[10px] font-mono mb-1" style={{ color: "#5b6673" }}>
+                        subject
+                      </div>
+                      <div
+                        className="text-[12px] p-2 rounded-[8px]"
+                        style={{ background: "#10151b", border: "1px solid #1c222b", color: "#eef2f5" }}
+                      >
+                        {d.subject}
+                      </div>
+                    </div>
+                  )}
+
                   {Object.entries(d.touches).map(([k, v]) => (
                     <div key={k} className="mb-2">
                       <div className="text-[10px] font-mono mb-1" style={{ color: "#5b6673" }}>
@@ -398,7 +472,8 @@ export function OutreachSection() {
                       Save edits
                     </button>
                     <button
-                      disabled={busy === d.sequence_id}
+                      disabled={busy === d.sequence_id || Boolean(d.blocked_reason)}
+                      title={d.blocked_reason ?? undefined}
                       onClick={() =>
                         act(d.sequence_id, async () => {
                           if (Object.keys(edit).length > 0) {
@@ -416,7 +491,13 @@ export function OutreachSection() {
                         })
                       }
                       className="px-3 py-1.5 rounded-[6px] text-[12px]"
-                      style={{ background: "transparent", border: "1px solid #5eead4", color: "#5eead4" }}
+                      style={{
+                        background: "transparent",
+                        border: `1px solid ${d.blocked_reason ? "#5b6673" : "#5eead4"}`,
+                        color: d.blocked_reason ? "#5b6673" : "#5eead4",
+                        opacity: d.blocked_reason ? 0.5 : 1,
+                        cursor: d.blocked_reason ? "not-allowed" : "pointer",
+                      }}
                     >
                       Approve
                     </button>
