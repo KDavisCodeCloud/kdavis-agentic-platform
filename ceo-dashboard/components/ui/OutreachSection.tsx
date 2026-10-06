@@ -66,8 +66,22 @@ type Summary = {
   sends_today: number;
   daily_send_cap: number;
   ready_to_paste: number;
-  replies_this_week: number | null;
+  replies_this_week: number;
   parked_awaiting_contact: number;
+};
+
+// GET /marketing/leads/weekly-summary -> funnel. Replies and calls are REAL
+// counts as of 2026-10-06: Kelvin marks replies by hand in the Conversations
+// lane, so 0 means zero replies rather than "unmeasured".
+type Funnel = {
+  qualified: number;
+  approved: number;
+  sent: number;
+  replies: number;
+  calls_booked: number;
+  proposals: number;
+  won: number;
+  lost: number;
 };
 
 const GRADE_COLOR: Record<string, string> = {
@@ -122,6 +136,7 @@ export function OutreachSection() {
   const [drafts, setDrafts] = useState<Card[]>([]);
   const [ready, setReady] = useState<Card[]>([]);
   const [convs, setConvs] = useState<Conversation[]>([]);
+  const [funnel, setFunnel] = useState<Funnel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
@@ -129,13 +144,15 @@ export function OutreachSection() {
 
   const load = useCallback(async () => {
     try {
-      const [s, d, r, c] = await Promise.all([
+      const [s, d, r, c, w] = await Promise.all([
         call("/api/outreach/summary"),
         call("/api/outreach/drafts"),
         call("/api/outreach/ready-to-paste"),
         call("/api/outreach/conversations"),
+        call("/api/marketing-leads/weekly-summary"),
       ]);
       setSummary(s);
+      setFunnel(w?.funnel ?? null);
       setDrafts(d.drafts ?? []);
       setReady(r.ready ?? []);
       setConvs(c.conversations ?? []);
@@ -185,13 +202,65 @@ export function OutreachSection() {
           value={summary ? `${summary.sends_today} / ${summary.daily_send_cap}` : "—"}
         />
         <Counter label="ready to paste" value={String(summary?.ready_to_paste ?? "—")} />
-        {/* null means NOT MEASURED -- rendering 0 would claim nobody replied. */}
         <Counter
           label="replies this week"
-          value={summary ? (summary.replies_this_week == null ? "not measured" : String(summary.replies_this_week)) : "—"}
-          tone={summary?.replies_this_week == null ? "#5b6673" : "#6fce8f"}
+          value={summary ? String(summary.replies_this_week) : "—"}
+          tone={summary && summary.replies_this_week > 0 ? "#6fce8f" : undefined}
         />
       </div>
+
+      {/* Weekly funnel (5b). Sourced from mse_outreach_conversations, whose
+          stages Kelvin marks by hand -- so every number here is measured, and
+          a 0 is a real zero. Each stage counts from its OWN timestamp, so a
+          deal that replied Monday and booked Thursday appears in both. */}
+      {funnel && (
+        <div
+          className="p-4 rounded-[14px]"
+          style={{ background: "#141a22", border: "1px solid #1c222b" }}
+        >
+          <div className="text-[13px] font-bold mb-3" style={{ color: "#c7cfd6" }}>
+            This week
+          </div>
+          <div className="flex flex-wrap items-stretch gap-1">
+            {([
+              ["qualified", funnel.qualified, "#7ea6f5"],
+              ["approved", funnel.approved, "#7ea6f5"],
+              ["sent", funnel.sent, "#5eead4"],
+              ["replies", funnel.replies, "#6fce8f"],
+              ["calls booked", funnel.calls_booked, "#6fce8f"],
+              ["proposals", funnel.proposals, "#e8963f"],
+              ["won", funnel.won, "#6fce8f"],
+              ["lost", funnel.lost, "#e05d5d"],
+            ] as const).map(([label, value, color], i, arr) => (
+              <div key={label} className="flex items-center min-w-0">
+                <div
+                  className="px-3 py-2 rounded-[10px] min-w-[86px]"
+                  style={{ background: "#10151b", border: "1px solid #1c222b" }}
+                >
+                  <div
+                    className="text-[10px] font-mono uppercase tracking-wider truncate"
+                    style={{ color: "#8b96a3" }}
+                  >
+                    {label}
+                  </div>
+                  <div className="text-[20px] font-bold" style={{ color: value > 0 ? color : "#5b6673" }}>
+                    {value}
+                  </div>
+                </div>
+                {i < arr.length - 1 && (
+                  <span className="px-1 text-[12px]" style={{ color: "#1c222b" }}>
+                    &rarr;
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="text-[10.5px] font-mono mt-2" style={{ color: "#5b6673" }}>
+            replies and calls are marked by hand in the Conversations lane below ·
+            automated reply detection deferred until ~30 sends/day
+          </div>
+        </div>
+      )}
 
       {error && (
         <div
