@@ -88,6 +88,9 @@ export function LoopMap() {
   const load = useCallback(async () => {
     try {
       const d: LoopMapData = await api("");
+      // A 200 that isn't the map (an auth redirect page, a proxy error body)
+      // must show as an error, not crash the tab.
+      if (!d || !Array.isArray(d.products)) throw new Error("The Loop Map API returned an unexpected response");
       setData(d);
       setErr(null);
       return d;
@@ -433,7 +436,7 @@ export function LoopMap() {
 
             {cur.funnel ? (
               <div className="card">
-                <h2>WEEKLY FUNNEL · LAST 8 WEEKS</h2>
+                <h2>WEEKLY FUNNEL · LAST EIGHT WEEKS</h2>
                 <div className="tblwrap"><table className="tbl funnel">
                   <thead><tr>
                     <th>Week of</th>

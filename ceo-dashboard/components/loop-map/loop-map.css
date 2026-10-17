@@ -129,7 +129,7 @@
 .lm .s-unk{--c:var(--unk)}
 .lm ol.moves{list-style:decimal}
 .lm .slot{display:flex;flex-direction:column;gap:6px;min-width:0}
-.lm .slot .desk{flex:1}
+.lm .slot .desk,.lm .slot .goal{flex:1}
 .lm .desk .stat{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .lm .desk.s-unk{border-bottom-style:dashed}
 .lm .hist{display:grid;grid-template-columns:repeat(28,1fr);gap:1px;height:8px}
