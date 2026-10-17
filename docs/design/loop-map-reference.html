@@ -1,0 +1,444 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Decoded Empire Loop Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a pixel "office floor" per product. Desks in process order; the worker walks to the next desk each time you mark a step complete. Notes log the holes. Single dark theme by choice. */
+:root{
+  --floor:#0f1420; --floor-2:#151c2c; --desk:#1b2438; --line:#2a3550;
+  --ink:#e8ecf5; --muted:#9aa6bf; --dim:#66718a;
+  --accent:#7aa2ff;
+  --ok:#3fd17a; --warn:#f5b13d; --stop:#ff5d5d; --you:#5ac8ff; --none:#5d6680;
+  --pixel:"Press Start 2P", ui-monospace, monospace;
+  --body:"Atkinson Hyperlegible", system-ui, sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--floor);color:var(--ink);font:15px/1.55 var(--body);
+  padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px));padding-block:20px 48px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1{font:16px/1.5 var(--pixel);margin:0;letter-spacing:.5px;text-wrap:balance}
+h2{font:11px/1.6 var(--pixel);margin:0;color:var(--accent);letter-spacing:.5px}
+h3{font-size:17px;margin:0;text-wrap:balance}
+p{margin:0;max-width:72ch}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+header{display:flex;flex-direction:column;gap:10px}
+.asof{font:12px/1.5 var(--mono);color:var(--muted)}
+.save{font:12px/1.5 var(--mono)}
+.save.ok{color:var(--ok)} .save.local{color:var(--warn)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.dot{width:10px;height:10px;display:inline-block}
+.s-ok{--c:var(--ok)}.s-warn{--c:var(--warn)}.s-stop{--c:var(--stop)}.s-you{--c:var(--you)}.s-none{--c:var(--none)}
+.dot{background:var(--c)}
+
+.waiting{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.wait{background:var(--floor-2);border:2px solid var(--line);padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.wait b{font:10px/1.6 var(--pixel);color:var(--c)}
+.wait p{font-size:14px}
+
+.tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.tab{flex:0 0 auto;font:13px var(--body);font-weight:700;color:var(--muted);background:var(--floor-2);border:2px solid var(--line);padding:9px 12px;cursor:pointer;display:inline-flex;gap:8px;align-items:center}
+.tab[aria-selected="true"]{color:var(--floor);background:var(--accent);border-color:var(--accent)}
+.tab .holes{font:9px var(--pixel);background:var(--stop);color:#fff;padding:3px 5px}
+button{font:inherit}
+button:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--you);outline-offset:2px}
+
+.office{background:
+   repeating-linear-gradient(0deg,transparent 0 31px,rgba(255,255,255,.03) 31px 32px),
+   repeating-linear-gradient(90deg,transparent 0 31px,rgba(255,255,255,.03) 31px 32px),var(--floor-2);
+  border:2px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:18px}
+.ohead{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:flex-start}
+.ohead .left{display:flex;flex-direction:column;gap:6px;min-width:0}
+.playbook{font:12px var(--mono);color:var(--muted)}
+.lapline{font:12px var(--mono);color:var(--ink)}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.btn{font:10px/1.4 var(--pixel);color:var(--ink);background:var(--desk);border:2px solid var(--line);padding:10px 12px;cursor:pointer}
+.btn.go{background:var(--ok);border-color:var(--ok);color:var(--floor)}
+.btn.arm{background:var(--warn);border-color:var(--warn);color:var(--floor)}
+.btn:disabled{opacity:.45;cursor:default}
+
+.track{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.desk{position:relative;background:var(--desk);border:2px solid var(--line);border-bottom:4px solid var(--c);padding:46px 10px 10px;text-align:left;color:var(--ink);cursor:pointer;display:flex;flex-direction:column;gap:4px;min-width:0}
+.desk[aria-pressed="true"]{border-color:var(--c);box-shadow:0 0 0 2px var(--c) inset}
+.desk .num{position:absolute;top:8px;left:10px;font:9px var(--pixel);color:var(--dim)}
+.desk .who{position:absolute;top:8px;right:10px;font:9px var(--pixel);color:var(--c)}
+.desk .name{font-weight:700;font-size:14px;line-height:1.3}
+.desk .stat{font:12px/1.4 var(--mono);color:var(--muted)}
+.desk .lab{font:9px/1.6 var(--pixel);color:var(--c)}
+.desk.done{background:#17271f}
+.desk.done .num::after{content:" ✓ DONE";color:var(--ok)}
+.desk .hb{position:absolute;bottom:8px;right:8px;font:9px var(--pixel);background:var(--stop);color:#fff;padding:3px 5px}
+.desk .nb{position:absolute;bottom:8px;right:8px;font:9px var(--pixel);background:var(--line);color:var(--ink);padding:3px 5px}
+.goal{border:2px dashed var(--line);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;padding:46px 10px 10px;color:var(--muted);font:9px/1.6 var(--pixel);text-align:center}
+
+.walker{position:absolute;left:0;top:0;width:32px;height:40px;pointer-events:none;z-index:3;transition:transform .6s linear}
+.walker svg{display:block;image-rendering:pixelated;animation:bob .6s steps(2) infinite}
+.walker.walking svg{animation:step .18s steps(2) infinite}
+@keyframes bob{50%{transform:translateY(-2px)}}
+@keyframes step{50%{transform:translateY(-3px) rotate(-4deg)}}
+.bubble{position:absolute;top:-6px;left:50%;transform:translate(-50%,-100%);background:var(--ink);color:var(--floor);font:9px/1.5 var(--pixel);padding:6px 8px;white-space:nowrap}
+.bubble::after{content:"";position:absolute;left:50%;bottom:-6px;margin-left:-4px;border:4px solid transparent;border-top-color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.walker{transition:none}.walker svg,.walker.walking svg{animation:none}}
+
+.detail{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px}
+@media (max-width:760px){.detail{grid-template-columns:1fr}}
+.card{background:var(--floor);border:2px solid var(--line);padding:14px 16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.card dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 12px}
+.card dt{font:9px/1.9 var(--pixel);color:var(--dim)}
+.card dd{margin:0;min-width:0}
+.next{border-left:4px solid var(--you);padding-left:10px}
+.stepctl{display:flex;flex-direction:column;gap:10px;border-top:2px solid var(--line);padding-top:12px}
+textarea{width:100%;min-height:72px;resize:vertical;background:var(--desk);color:var(--ink);border:2px solid var(--line);padding:8px 10px;font:14px/1.5 var(--body)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+label.hole{display:inline-flex;gap:8px;align-items:center;font-size:14px;cursor:pointer}
+label.hole input{width:16px;height:16px;accent-color:var(--stop)}
+.hint{font-size:13px;color:var(--dim)}
+.notes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.note{background:var(--desk);border-left:4px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.note.h{border-left-color:var(--stop)}
+.note.r{opacity:.55}
+.note .meta{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font:11px var(--mono);color:var(--muted)}
+.note .tag{font:9px var(--pixel);padding:3px 5px;background:var(--stop);color:#fff}
+.note .tag.n{background:var(--line);color:var(--ink)}
+.note .tag.d{background:var(--ok);color:var(--floor)}
+.note .txt{overflow-wrap:anywhere;white-space:pre-wrap}
+.linkbtn{background:none;border:0;color:var(--accent);cursor:pointer;padding:0;font:12px var(--mono);text-decoration:underline}
+
+.verdict b{color:var(--c)}
+.math{width:100%;border-collapse:collapse;font-size:14px}
+.math td{padding:5px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.math td:last-child{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;padding-left:12px;white-space:nowrap}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:13px;border:2px solid var(--c);padding:3px 8px;color:var(--ink)}
+
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.tblwrap{overflow-x:auto}
+table.tbl{width:100%;border-collapse:collapse;font-size:14px}
+table.tbl th{text-align:left;font:9px/1.8 var(--pixel);color:var(--dim);border-bottom:2px solid var(--line);padding:6px 10px 6px 0}
+table.tbl td{border-bottom:1px solid var(--line);padding:8px 10px 8px 0;vertical-align:top}
+table.tbl td.txt{min-width:220px;overflow-wrap:anywhere;white-space:pre-wrap}
+ol.moves{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:8px}
+.empty{color:var(--dim);font-size:14px}
+footer{font-size:13px;color:var(--dim)}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>DECODED EMPIRE · LOOP MAP</h1>
+  <p class="muted">Every product's path from stranger to paying customer. Mark a step complete and the worker walks to the next desk. Log a note on any step to record what's missing, even if you complete it anyway. Every note is kept in the Holes Log below.</p>
+  <div class="asof">Desk colors: system health from Claude Code's verified reports through Oct 6, 2026. Check marks and notes: yours, saved as you go.</div>
+  <div class="save" id="save">Connecting storage…</div>
+  <div class="legend">
+    <span class="s-ok"><i class="dot"></i>Working, proven</span>
+    <span class="s-warn"><i class="dot"></i>Built, not proven</span>
+    <span class="s-you"><i class="dot"></i>Waiting on you</span>
+    <span class="s-stop"><i class="dot"></i>Blocked</span>
+    <span class="s-none"><i class="dot"></i>Not built</span>
+  </div>
+</header>
+
+<section class="waiting" aria-label="Where every loop is waiting">
+  <div class="wait s-you"><b>B2B LOOPS WAIT ON YOU</b><p>Consulting and Cloud Decoded are built end to end. They stop at two clicks only you make: naming the buyer and approving the draft. Approved so far: 0.</p></div>
+  <div class="wait s-stop"><b>SPH HAS NO TRAFFIC</b><p>The site takes money, but nothing sends landlords to it. Its channel (landlord groups and search) never started.</p></div>
+  <div class="wait s-warn"><b>DECODEDSIX WAITS ON NOV 19</b><p>Indexed but not ranking. The launch is the one moment a new site can rank fast.</p></div>
+</section>
+
+<nav class="tabs" role="tablist" id="tabs"></nav>
+<section class="office" id="office"></section>
+
+<section class="card" id="holes">
+  <div class="row"><h2>HOLES LOG · ALL PRODUCTS</h2>
+    <label class="hole"><input type="checkbox" id="showAll"> Show resolved and general notes</label></div>
+  <p class="hint">Every note you log lands here with its product, step and date. Open holes are what's slowing a loop down. Resolve one when it's fixed; it stays on record.</p>
+  <div class="tblwrap"><table class="tbl"><thead><tr><th>Logged</th><th>Product</th><th>Step</th><th>Note</th><th>Status</th></tr></thead><tbody id="holesBody"></tbody></table></div>
+</section>
+
+<section class="cols">
+  <div class="card">
+    <h2>NEXT 90 DAYS, REALISTICALLY</h2>
+    <div class="tblwrap"><table class="tbl">
+      <thead><tr><th>Product</th><th>If you run the daily block</th><th>Worth</th></tr></thead>
+      <tbody>
+        <tr><td>Consulting</td><td>3–4 calls, ~1 engagement</td><td class="mono">$5–15K</td></tr>
+        <tr><td>Cloud Decoded</td><td>2–3 demos, 0–1 customer</td><td class="mono">$299–699/mo</td></tr>
+        <tr><td>Small Portfolio Hub</td><td>1–3 customers</td><td class="mono">$99–199/mo ea</td></tr>
+        <tr><td>DecodedSix</td><td>Launch-window traffic</td><td class="mono">$200–3K/mo</td></tr>
+        <tr><td>ADA Title II · Bible apps</td><td>Not built yet</td><td class="mono">—</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted" style="font-size:13px">Cold email averages about a 3.4% reply rate in 2026 and well under 1 meeting per 100 sends. These ranges assume your hiring-signal targeting does a bit better than average.</p>
+  </div>
+  <div class="card">
+    <h2>THIS WEEK'S MOVES, IN ORDER</h2>
+    <ol class="moves">
+      <li><b>Approve the 4 waiting drafts</b> in CEO Decoded → Marketing → Outreach.</li>
+      <li><b>5 buyer lookups a day</b> in Find the Buyer. 49 companies are waiting for a name.</li>
+      <li><b>Add the DMARC record</b> in Namecheap and click the green check on the row.</li>
+      <li><b>Write a one-page consulting offer with a price.</b></li>
+      <li><b>2 landlord-group posts for SPH</b> (Wednesday block).</li>
+      <li><b>Pick the 10 launch-day DecodedSix articles</b> and confirm the map can go live Nov 19.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="card">
+  <h2>WHICH PLAYBOOK FITS A NEW PRODUCT</h2>
+  <div class="tblwrap"><table class="tbl">
+    <thead><tr><th>Buyer</th><th>Loop</th><th>Your products</th></tr></thead>
+    <tbody>
+      <tr><td>Company with a visible need (hiring, deadline)</td><td>Signal outbound: find signal → name buyer → approve → send → call</td><td>Consulting, Cloud Decoded, ADA Title II</td></tr>
+      <tr><td>Small business owner who buys on their own</td><td>Community + search: helpful posts where they gather → site → self-serve checkout</td><td>Small Portfolio Hub, TradesDesk</td></tr>
+      <tr><td>Audience you monetize</td><td>Content: timely articles → search → ads + affiliate</td><td>DecodedSix</td></tr>
+      <tr><td>Consumers reached through a leader</td><td>Distributor: one pastor says yes → whole group joins → app store</td><td>Bible devotional apps</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<footer><p>Your check marks, laps and notes are saved with this page, so they're there on any device you open it from, and Claude can read them back when you ask. The CEO Decoded tab will use the same model, plus live system status.</p></footer>
+</div>
+
+<script>
+const SPR=["..XXXX..",".XSSSSX.",".XSESEX.",".XSSSSX.","..BBBB..",".BBBBBB.","SBBBBBBS","..BBBB..","..L..L..",".LL..LL."];
+const PAL={X:"#2b1d14",S:"#c58b5f",E:"#0f1420",B:"#7aa2ff",L:"#3a4566"};
+function spriteSVG(){let r="";SPR.forEach((row,y)=>[...row].forEach((c,x)=>{if(PAL[c])r+=`<rect x="${x*4}" y="${y*4}" width="4" height="4" fill="${PAL[c]}"/>`}));
+  return `<svg viewBox="0 0 32 40" width="32" height="40" aria-hidden="true">${r}</svg>`}
+const LAB={ok:"WORKING",warn:"NOT PROVEN",stop:"BLOCKED",you:"YOUR MOVE",none:"NOT BUILT"};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt=t=>new Date(t).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+
+const P=[
+{id:"consulting",name:"Consulting",playbook:"Playbook: signal outbound · offer: contract platform work while they hire",
+ verdict:["ok","Right strategy, and your fastest money.","A company posting a DevOps role has a live problem you solve. The loop is built. What's missing is the two human steps, a priced offer, and warm channels (past colleagues, Upwork, Contra), which convert far better than cold."],
+ math:[["Reachable buyers / month (if Find the Buyer is cleared)","~40"],["Replies at 3–8%","1–3"],["Calls","~1 / month"],["Close rate on calls","~25%"],["Engagements from cold alone","1 every 3–4 mo"],["With warm channels + 100 buyers/mo","~1 / month"]],
+ also:[["you","Warm network: not started"],["none","Upwork / Contra profiles: not built"],["ok","LinkedIn posts Mon–Fri: automated"]],
+ st:[
+ ["Find hiring companies","auto","ok","~9,000 posts read/run","Every Sunday at 6am the scraper reads public company job boards and keeps companies that posted a DevOps, SRE or platform role in the last 60 days.","Proven in live runs: 8,299 postings read, 422 role matches.","Nothing. It runs on its own."],
+ ["Qualify the company","auto","ok","6–15 companies/run","Drops consultancies, MSPs, staffing firms and infrastructure vendors, plus companies too big to need you.","Caught Caylent, Capco, Tailscale and Security Risk Advisors.","Nothing."],
+ ["Find the buyer","you","you","49 companies waiting","The system checks team pages and job posts for the CTO or Head of Engineering. If it can't find one, the company waits in your Find the Buyer lane.","Free sources found 17 of 19 contacts in testing, but 49 companies still need a name.","5 lookups a day: CEO Decoded → Marketing → Outreach → Find the Buyer."],
+ ["Write the draft","auto","warn","8am daily","Writes a 3-touch sequence for the named buyer, as email or LinkedIn depending on the route.","Copy rules fixed. The Oct 6 proof that it drafts new leads on its own was never reported.","Ask Claude Code for the 8am enrollment report."],
+ ["Approve","you","stop","4 waiting · 0 ever approved","You read and approve. Nothing reaches a prospect without this click.","Funnel: approved 0 → sent 0.","Read the 4 drafts and approve the clean ones today."],
+ ["Send","auto","warn","cap 12/day","Email drafts send hourly through Resend. LinkedIn drafts move to Ready to Paste, and you send them.","One seed email delivered Oct 2. DMARC record still missing.","Add the DMARC record in Namecheap."],
+ ["Reply","you","warn","0 replies","Replies come to your Gmail. You mark them in Conversations, which stops the remaining touches.","Reply-To set Oct 1. No real reply yet.","Mark replies during the daily block."],
+ ["Book a call","you","warn","via thdagentic.com","The prospect books a call from the link in the email.","The site has a booking flow. No prospect has used it.","Click your own link once to confirm booking works."],
+ ["Proposal & close","you","none","no priced offer","A fixed offer you can send after the call: 30-day scope, deliverables, price.","No proposal template or price exists.","Write a one-page offer with a price."]]},
+{id:"cloud",name:"Cloud Decoded",playbook:"Playbook: signal outbound + demo · $299 / $699 / $2,499 per month",
+ verdict:["warn","Right strategy, slower cycle.","Engineering leaders rarely connect cloud credentials off a cold email. Expect 1–3 months from first touch to paid. The fastest first customers usually come from offering 2–3 hand-held pilots to people who reply."],
+ math:[["Reachable buyers / month (shared lead engine)","~40"],["Replies at 3–8%","1–3"],["Demos","1–2 / month"],["Paid in first 90 days","0–1"],["Value per customer","$299–699/mo"]],
+ also:[["ok","LinkedIn posts Mon–Fri: automated"],["ok","Public demo at /demo: live"]],
+ st:[
+ ["Find hiring companies","auto","ok","shared scraper","Same Sunday scraper as consulting, with Cloud Decoded's own target list.","Proven: 9,092 postings read, 497 role matches.","Nothing."],
+ ["Qualify","auto","ok","4–10 companies/run","Same exclusions, except infrastructure vendors are scored down instead of dropped.","Working in live runs.","Nothing."],
+ ["Find the buyer","you","you","shared lane","Engineering manager, Head of Platform/SRE, or CTO at smaller companies.","Shares the 49-company backlog with consulting.","Same 5-a-day lookup block."],
+ ["Write the draft","auto","warn","8am daily","Drafts route to email or LinkedIn and end with the demo link.","Drafts regenerated clean. Daily enrollment not yet proven.","Same 8am report."],
+ ["Approve","you","stop","0 approved","Your click.","Nothing approved yet.","Approve GoReel if the copy reads right."],
+ ["Send","auto","warn","cap 12/day","Shared sender and daily cap with consulting.","Proven once with a seed email.","DMARC record."],
+ ["Try the demo","auto","ok","theclouddecoded.com/demo","No signup. 8 sample incidents, approvals are simulated.","Live and verified Sept 26.","Record a 2-minute walkthrough from it."],
+ ["Sign up & pay","auto","stop","welcome email fails","Stripe checkout, a guided setup screen and a welcome email.","Checkout works. The welcome email can't send: theclouddecoded.com's email records were never added.","Add the Resend records for theclouddecoded.com."],
+ ["Connect cloud","you","warn","no real customer yet","Customer connects AWS, Azure, GitHub, Kubernetes with a setup checklist.","Built and tested against real AWS/Azure, never by a customer.","Offer to do the first setup on a call."]]},
+{id:"sph",name:"Small Portfolio Hub",playbook:"Playbook: community + search · self-serve $99 / $149 / $199",
+ verdict:["stop","Right playbook, but nothing is running.","Landlords don't post DevOps jobs, so outbound is correctly off for SPH. Its buyers gather in landlord Facebook groups, BiggerPockets and search. None of those channels has started."],
+ math:[["Helpful posts in landlord groups","2–3 / week"],["Comparison pages published","0 → 5"],["Realistic first customer","30–60 days of steady posting"],["Customers in 90 days","1–3"],["Value per customer","$99–199/mo"]],
+ also:[["none","Landlord Facebook groups: not started"],["none","BiggerPockets: not started"],["stop","Search Console tracking: blocked"]],
+ st:[
+ ["Positioning","you","ok","brief approved","Who it's for (10–30 unit self-managed landlords) and why it beats the free tools.","Brief approved Aug 31.","Nothing."],
+ ["Site & search pages","auto","warn","0 extra pages live","The site plus comparison pages that rank for searches like 'Buildium alternative'.","Site live. Comparison pages never published.","Have Claude Code publish 5 comparison pages."],
+ ["Get seen","you","stop","no channel running","Value-first posts in landlord groups that answer real questions. No selling.","Nothing posted yet.","Wednesday block: 2 helpful posts."],
+ ["Visit the site","auto","none","not measured","Traffic from posts and search.","Search Console sync is blocked, so visits aren't counted.","Connect Search Console."],
+ ["Sign up","auto","ok","working","Self-serve signup.","Live.","Nothing."],
+ ["Pay","auto","ok","prices verified","Stripe checkout at $99/$149/$199.","All 6 prices verified and a test checkout created Oct 1.","Nothing."],
+ ["Onboarding emails","auto","warn","drafted, not approved","Welcome and setup emails after signup.","Templates not yet approved.","Approve the SPH email templates in CEO Decoded."],
+ ["Paying customer","auto","none","0","The first landlord pays.","None yet.","Comes after 'Get seen' runs for a few weeks."]]},
+{id:"d6",name:"DecodedSix",playbook:"Playbook: content · earns from ads + affiliate, not sales",
+ verdict:["warn","Right model, and it's a launch bet.","Money comes from traffic. September showed the site is indexed but not ranked, which is normal for a young domain. GTA 6 launches Nov 19. That's the window."],
+ math:[["Sessions in September","~121"],["Monthly sessions needed for premium ads","50,000"],["Realistic launch-window income","$200–3K/mo"],["Upside","Launch-day articles + map rank"]],
+ also:[["warn","Reddit: commenting phase, no posts yet"],["stop","X: account suspended"],["ok","Amazon affiliate: live"]],
+ st:[
+ ["Find topics","auto","ok","every 4 hours","Reads IGN, GameSpot, Reddit and YouTube for new GTA 6 news.","Production-verified in September.","Nothing."],
+ ["Write","auto","ok","drafts queued","Writes articles from approved topics.","Working.","Nothing."],
+ ["Approve","you","warn","your queue","Topic and article approval.","Works when someone clears it.","Clear the queue twice a week."],
+ ["Publish","auto","ok","~60 articles","Goes live on the site.","Working.","Nothing."],
+ ["Indexed","auto","ok","255 pages","Google has the pages.","Confirmed Oct 1.","Nothing."],
+ ["Rank","auto","stop","~0 impressions in Sept","Pages show up in search results.","New domain with little authority. Only fresh topics rank.","Have launch-day articles ready to publish Nov 19."],
+ ["Traffic","auto","stop","~121 sessions/mo","Visitors.","Follows ranking.","Turn the interactive map on at launch."],
+ ["Earn","auto","warn","affiliate only","AdSense, then Mediavine; Amazon affiliate; $17 guides after launch.","AdSense denied twice. Affiliate live.","Reapply to AdSense with launch traffic."]]},
+{id:"ada",name:"ADA Title II",playbook:"Playbook: signal outbound to public entities · deadline-driven",
+ verdict:["ok","Outbound fits this one well.","The buyers are public: cities, counties, school and special districts, each with a published ADA coordinator or IT contact. The compliance deadline gives them a reason to act now."],
+ math:[["Expected results","Set at launch"]],also:[],
+ st:[
+ ["Build the product","you","warn","in build","Your own success model applies.","In progress.","Finish the build."],
+ ["List public entities","auto","none","not built","Public lists of cities, counties and districts by size and state.","Not built.","A new target list in the existing engine."],
+ ["Find the contact","auto","none","not built","ADA coordinator, clerk or IT director. Usually public.","Not built.","—"],
+ ["Draft & approve","you","none","engine exists","Same drafts and approval queue.","Engine proven for B2B.","—"],
+ ["Scan their site","auto","none","not built","A free accessibility scan of their site as the opener.","Not built.","—"],
+ ["Quote & contract","you","none","not built","Public procurement or a simple quote.","Not built.","—"]]},
+{id:"bible",name:"Bible apps",playbook:"Playbook: distributor · pastors bring whole congregations",
+ verdict:["warn","Use pastors, not cold outreach.","One pastor or ministry leader who says yes brings a whole group. Your free-access-for-groups feature is the hook."],
+ math:[["Expected results","Set at launch"]],also:[],
+ st:[
+ ["Build the apps","you","none","18 sessions planned","Main app plus spinoffs.","Planned.","—"],
+ ["List churches & ministries","you","none","not built","Local churches, men's and women's ministry leaders.","Not built.","—"],
+ ["Pastor outreach","you","none","not built","Offer free group access for their ministry.","Not built.","—"],
+ ["Group joins","auto","none","not built","Shared notes and accountability pull members in.","Not built.","—"],
+ ["App store","auto","none","not built","Listing and search keywords.","Not built.","—"],
+ ["Paid subscribers","auto","none","—","Paid tiers for people outside free groups.","—","—"]]}
+];
+
+/* ---------- storage: db when available, this browser otherwise ---------- */
+const state={progress:{},notes:[]};
+let db=null, mode="local";
+const LS="loopmap.v2";
+function lsLoad(){try{const s=JSON.parse(localStorage.getItem(LS)||"null");if(s){state.progress=s.progress||{};state.notes=s.notes||[]}}catch(e){}}
+function lsSave(){try{localStorage.setItem(LS,JSON.stringify(state))}catch(e){}}
+function prog(pid){const p=P.find(x=>x.id===pid);let g=state.progress[pid];
+  if(!g||!Array.isArray(g.done)||g.done.length!==p.st.length)g={done:p.st.map(()=>false),laps:(g&&g.laps)||0,lastLap:(g&&g.lastLap)||null};
+  return g}
+function setSave(t,c){const el=document.getElementById("save");el.textContent=t;el.className="save "+c}
+async function writeProgress(pid,g){state.progress[pid]=g;
+  if(mode==="db"){try{await db.doc("progress/"+pid).set(g)}catch(e){setSave("Couldn't save that change. Check your connection and try again.","local")}}else lsSave()}
+async function addNote(n){
+  if(mode==="db"){try{await db.collection("notes").add(n)}catch(e){setSave(e&&e.code==="quota_exceeded"?"Note storage is full. Resolve and clear old notes to add more.":"Couldn't save the note. Try again.","local")}}
+  else{n._id="l"+Date.now();state.notes.unshift(n);lsSave();renderAllNotes()}}
+async function setResolved(id,val){
+  if(mode==="db"){try{await db.doc("notes/"+id).update({resolved:val,resolvedAt:val?Date.now():null})}catch(e){setSave("Couldn't update that note. Try again.","local")}}
+  else{const n=state.notes.find(x=>x._id===id);if(n){n.resolved=val;n.resolvedAt=val?Date.now():null;lsSave();renderAllNotes()}}}
+
+/* ---------- UI ---------- */
+const tabs=document.getElementById("tabs"), office=document.getElementById("office");
+let cur=P[0], sel=0, walker=null, walking=false, armed=null;
+P.forEach(p=>{const b=document.createElement("button");b.className="tab";b.role="tab";b.id="t-"+p.id;b.onclick=()=>show(p.id);tabs.appendChild(b)});
+function openHoles(pid,i){return state.notes.filter(n=>n.product===pid&&n.kind==="hole"&&!n.resolved&&(i==null||n.step===i)).length}
+function renderTabs(){[...tabs.children].forEach((b,k)=>{const p=P[k],h=openHoles(p.id);b.innerHTML=esc(p.name)+(h?`<span class="holes">${h}</span>`:"");b.setAttribute("aria-selected",p.id===cur.id)})}
+
+function show(id){
+  cur=P.find(p=>p.id===id)||P[0]; armed=null;
+  try{localStorage.setItem("loopTab",cur.id)}catch(e){}
+  const g=prog(cur.id); sel=Math.min(g.done.indexOf(false)<0?0:g.done.indexOf(false),cur.st.length-1);
+  const v=cur.verdict;
+  office.innerHTML=`
+   <div class="ohead"><div class="left"><h3>${esc(cur.name)}</h3><div class="playbook">${esc(cur.playbook)}</div><div class="lapline" id="lapline"></div></div>
+    <div class="actions"><button class="btn go" id="doLap">✓ COMPLETE WHOLE LOOP</button><button class="btn" id="resetLap">RESET LAP</button></div></div>
+   <div class="track" id="track">${cur.st.map((s,i)=>`
+     <button class="desk s-${s[2]}" data-i="${i}" aria-pressed="false">
+      <span class="num">${String(i+1).padStart(2,"0")}</span><span class="who">${s[1]==="you"?"YOU":"AUTO"}</span>
+      <span class="name">${esc(s[0])}</span><span class="stat">${esc(s[3])}</span><span class="lab">${LAB[s[2]]}</span><span class="badge"></span>
+     </button>`).join("")}<div class="goal" id="goal">🏁<br>LAP DONE</div></div>
+   <div class="detail">
+     <div class="card" id="dcard"></div>
+     <div class="card">
+      <div class="verdict s-${v[0]}"><h2>DOES THIS STRATEGY WORK?</h2><p style="margin-top:8px"><b>${v[1]}</b> ${v[2]}</p></div>
+      <table class="math">${cur.math.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("")}</table>
+      ${cur.also.length?`<div class="chips">${cur.also.map(a=>`<span class="chip s-${a[0]}">${a[1]}</span>`).join("")}</div>`:""}
+     </div>
+   </div>`;
+  walker=document.createElement("div");walker.className="walker";walker.innerHTML=spriteSVG();
+  document.getElementById("track").appendChild(walker);
+  office.querySelectorAll(".desk").forEach(d=>d.onclick=()=>{sel=+d.dataset.i;renderDesks();renderDetail()});
+  document.getElementById("doLap").onclick=lapClick;
+  document.getElementById("resetLap").onclick=resetClick;
+  renderTabs();renderDesks();renderDetail();place(target(),false);
+}
+function target(){const g=prog(cur.id);const i=g.done.indexOf(false);return i<0?cur.st.length:i}
+function slotXY(i){const tr=document.getElementById("track");const el=i>=cur.st.length?document.getElementById("goal"):tr.querySelector(`.desk[data-i="${i}"]`);
+  return {x:el.offsetLeft+el.offsetWidth/2-16,y:el.offsetTop+4}}
+function bubble(t){walker.querySelector(".bubble")?.remove();if(!t)return;const b=document.createElement("div");b.className="bubble";b.textContent=t;walker.appendChild(b)}
+function place(i,anim){const {x,y}=slotXY(i);walker.style.transition=anim?"":"none";walker.style.transform=`translate(${x}px,${y}px)`;
+  if(!anim){void walker.offsetWidth;walker.style.transition=""}
+  bubble(i>=cur.st.length?"LAP COMPLETE!":(cur.st[i][1]==="you"?"YOUR MOVE":"WORKING ON IT"))}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+async function walkTo(from,to){walking=true;bubble("");walker.classList.add("walking");
+  for(let i=from+1;i<=to;i++){const {x,y}=slotXY(i);walker.style.transform=`translate(${x}px,${y}px)`;await sleep(reduce()?0:620)}
+  walker.classList.remove("walking");walking=false;place(to,true)}
+
+function renderDesks(){const g=prog(cur.id);
+  office.querySelectorAll(".desk").forEach(d=>{const i=+d.dataset.i;d.classList.toggle("done",g.done[i]);d.setAttribute("aria-pressed",i===sel);
+    const h=openHoles(cur.id,i), n=state.notes.filter(x=>x.product===cur.id&&x.step===i).length, b=d.querySelector(".badge");
+    b.className="badge "+(h?"hb":n?"nb":"");b.textContent=h?`${h} HOLE${h>1?"S":""}`:n?`${n} NOTE${n>1?"S":""}`:""});
+  const ln=document.getElementById("lapline");const done=g.done.filter(Boolean).length;
+  ln.textContent=`Lap ${g.laps+1} · ${done} of ${cur.st.length} steps done${g.laps?` · ${g.laps} lap${g.laps>1?"s":""} finished, last ${fmt(g.lastLap)}`:""}`;
+  const lb=document.getElementById("doLap");lb.className="btn "+(armed==="lap"?"arm":"go");lb.textContent=armed==="lap"?"CONFIRM: FINISH LAP?":"✓ COMPLETE WHOLE LOOP";
+  const rb=document.getElementById("resetLap");rb.className="btn "+(armed==="reset"?"arm":"");rb.textContent=armed==="reset"?"CONFIRM: CLEAR CHECKS?":"RESET LAP";rb.disabled=!done;
+}
+function noteItem(n){const tag=n.kind==="hole"?`<span class="tag">HOLE</span>`:`<span class="tag n">NOTE</span>`;
+  return `<li class="note ${n.kind==="hole"?"h":""} ${n.resolved?"r":""}"><div class="meta">${tag}${n.resolved?'<span class="tag d">RESOLVED</span>':""}<span>${fmt(n.at)}</span>${n.lap?`<span>lap ${n.lap}</span>`:""}
+   ${n.kind==="hole"?`<button class="linkbtn" data-res="${esc(n._id)}" data-v="${n.resolved?0:1}">${n.resolved?"Reopen":"Mark resolved"}</button>`:""}</div><div class="txt">${esc(n.text)}</div></li>`}
+function renderDetail(){const s=cur.st[sel],g=prog(cur.id),isDone=g.done[sel];
+  const list=state.notes.filter(n=>n.product===cur.id&&n.step===sel);
+  const draft=document.getElementById("noteText")?.value||"";
+  document.getElementById("dcard").innerHTML=`<h2>STEP ${sel+1} · ${esc(s[0].toUpperCase())}</h2>
+   <dl><dt>WHAT</dt><dd>${esc(s[4])}</dd><dt>WHO</dt><dd>${s[1]==="you"?"You":"The system, on its own"}</dd>
+   <dt>STATUS</dt><dd class="s-${s[2]}"><b style="color:var(--c)">${LAB[s[2]]}.</b> ${esc(s[5])}</dd></dl>
+   <p class="next"><b>To move forward:</b> ${esc(s[6])}</p>
+   <div class="stepctl">
+     <div class="row"><button class="btn ${isDone?"":"go"}" id="stepBtn">${isDone?"↺ UNDO COMPLETE":"✓ MARK STEP COMPLETE"}</button>
+       <span class="hint">${isDone?"Done this lap.":"Completing is never blocked by a note."}</span></div>
+     <label for="noteText" class="hint">What happened at this step? Anything missing, broken, or slow?</label>
+     <textarea id="noteText" placeholder="e.g. Only found 2 buyers today; LinkedIn search for Moovx came up empty.">${esc(draft)}</textarea>
+     <div class="row"><label class="hole"><input type="checkbox" id="isHole" checked> This is a hole (something missing or broken)</label>
+       <button class="btn" id="saveNote">SAVE NOTE</button></div>
+     <h2>NOTES ON THIS STEP (${list.length})</h2>
+     ${list.length?`<ul class="notes">${list.map(noteItem).join("")}</ul>`:`<p class="empty">No notes yet. Notes you save here stay on record, even after the step is complete.</p>`}
+   </div>`;
+  document.getElementById("stepBtn").onclick=stepClick;
+  document.getElementById("saveNote").onclick=async()=>{const t=document.getElementById("noteText"),txt=t.value.trim();if(!txt){t.focus();return}
+    const g=prog(cur.id);await addNote({product:cur.id,productName:cur.name,step:sel,stepName:s[0],text:txt.slice(0,2000),kind:document.getElementById("isHole").checked?"hole":"note",at:Date.now(),lap:g.laps+1,resolved:false});
+    const cur2=document.getElementById("noteText");if(cur2)cur2.value="";t.value="";if(mode==="local")renderDetail()};
+  document.querySelectorAll("#dcard [data-res]").forEach(b=>b.onclick=()=>setResolved(b.dataset.res,b.dataset.v==="1"));
+}
+async function stepClick(){if(walking)return;armed=null;const g=prog(cur.id),from=target();
+  g.done=[...g.done];g.done[sel]=!g.done[sel];await writeProgress(cur.id,g);
+  const to=target();
+  if(g.done[sel]){const nx=g.done.indexOf(false);if(nx>=0)sel=nx}
+  renderDesks();renderDetail();
+  if(to>from)await walkTo(from,to);else place(to,true);
+  if(to>=cur.st.length)await finishLap(true)}
+async function lapClick(){if(walking)return;
+  if(armed!=="lap"){armed="lap";renderDesks();return}
+  armed=null;const g=prog(cur.id),from=target();g.done=g.done.map(()=>true);await writeProgress(cur.id,g);renderDesks();
+  await walkTo(from,cur.st.length);await finishLap(false)}
+async function finishLap(){const g=prog(cur.id);
+  const holes=openHoles(cur.id);
+  await addNote({product:cur.id,productName:cur.name,step:-1,stepName:"Whole loop",text:`Lap ${g.laps+1} completed with ${holes} open hole${holes===1?"":"s"}.`,kind:"lap",at:Date.now(),lap:g.laps+1,resolved:true});
+  await sleep(reduce()?0:1400);
+  const ng={done:cur.st.map(()=>false),laps:g.laps+1,lastLap:Date.now()};await writeProgress(cur.id,ng);
+  sel=0;renderDesks();renderDetail();place(0,false)}
+async function resetClick(){if(walking)return;if(armed!=="reset"){armed="reset";renderDesks();return}
+  armed=null;const g=prog(cur.id);await writeProgress(cur.id,{...g,done:cur.st.map(()=>false)});sel=0;renderDesks();renderDetail();place(0,true)}
+office.addEventListener("click",e=>{if(armed&&!e.target.closest("#doLap,#resetLap")){armed=null;renderDesks()}},true);
+
+function renderHoles(){const all=document.getElementById("showAll").checked;
+  const rows=state.notes.filter(n=>n.kind!=="lap"&&(all||(n.kind==="hole"&&!n.resolved)));
+  document.getElementById("holesBody").innerHTML=rows.length?rows.map(n=>`<tr>
+    <td class="mono">${fmt(n.at)}</td><td>${esc(n.productName||n.product)}</td><td>${n.step+1}. ${esc(n.stepName)}</td><td class="txt">${esc(n.text)}</td>
+    <td>${n.kind==="hole"?`<button class="linkbtn" data-res="${esc(n._id)}" data-v="${n.resolved?0:1}">${n.resolved?"Resolved · reopen":"Open · mark resolved"}</button>`:"Note"}</td></tr>`).join("")
+    :`<tr><td colspan="5" class="empty">${all?"Nothing logged yet.":"No open holes. Log one from any step when something is missing or broken."}</td></tr>`;
+  document.querySelectorAll("#holesBody [data-res]").forEach(b=>b.onclick=()=>setResolved(b.dataset.res,b.dataset.v==="1"))}
+document.getElementById("showAll").onchange=renderHoles;
+function renderAllNotes(){renderTabs();if(document.getElementById("track")){renderDesks();renderDetail()}renderHoles()}
+
+/* ---------- start ---------- */
+lsLoad();
+let start=P[0].id;const h=location.hash.slice(1);
+if(P.some(p=>p.id===h))start=h;else{try{const s=localStorage.getItem("loopTab");if(P.some(p=>p.id===s))start=s}catch(e){}}
+show(start);renderHoles();
+setSave("Saving on this device only until storage connects.","local");
+window.addEventListener("resize",()=>{if(!walking&&walker)place(target(),false)});
+
+(async()=>{
+  db=window.claude?.use?await window.claude.use("db"):null;
+  if(!db){setSave("Saving on this device only. Open the page signed in to claude.ai to keep notes everywhere.","local");return}
+  mode="db";setSave("Saved to this page · notes and checks sync across devices.","ok");
+  db.collection("progress").onSnapshot(snap=>{snap.docs.forEach(d=>{state.progress[d.id]=d.data()});
+      if(!walking){renderTabs();renderDesks();renderDetail();place(target(),false)}},
+    ()=>setSave("Lost the connection to saved checks. Reload the page.","local"));
+  db.collection("notes").orderBy("at","desc").limit(1000).onSnapshot(snap=>{
+      state.notes=snap.docs.map(d=>({...d.data(),_id:d.id}));renderAllNotes()},
+    ()=>setSave("Lost the connection to saved notes. Reload the page.","local"));
+})();
+</script>
+
+</body></html>

@@ -267,6 +267,9 @@ export const DEPT_ROUTES = [
   { id: "overview",  label: "Overview",        path: "/dashboard/overview",   roles: ["admin", "marketing", "rnd"] },
   { id: "finance",   label: "Finance",          path: "/dashboard/finance",    roles: ["admin"] },
   { id: "marketing", label: "Marketing & Sales",path: "/dashboard/marketing",  roles: ["admin", "marketing"] },
+  // Loop Map (2026-10-17): every product's marketing loop as a pixel office.
+  // Admin only -- the mse_loop_* tables' RLS is admin-only to match.
+  { id: "loop-map",  label: "Loop Map",         path: "/dashboard/loop-map",   roles: ["admin"] },
   { id: "rnd",       label: "R&D",              path: "/dashboard/rnd",        roles: ["admin", "rnd"] },
   { id: "hr",        label: "HR",               path: "/dashboard/hr",         roles: ["admin", "marketing"] },
   { id: "tech",      label: "Technology",       path: "/dashboard/tech",       roles: ["admin", "rnd"] },

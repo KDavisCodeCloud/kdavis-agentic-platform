@@ -191,3 +191,29 @@ demand validator, product-spec writer). See
 contract this build publishes for the CEO Decoded dashboard to consume.
 
 Full honest gap list: GAPS.md #31.
+
+## 2026-10-17 — Loop Map tab in CEO Decoded
+
+A top-level "Loop Map" tab (`/dashboard/loop-map`, admin only) ports
+`docs/design/loop-map-reference.html` (the claude.ai "Decoded Empire Loop
+Map" artifact) into React unchanged: same tokens, fonts, sprite, walk and
+two-click confirms, every selector scoped under `.lm`.
+
+- **Backend lives in kdavis-microsaas-engine** (`api/routers/loop_map.py`,
+  migration `20261017000065_loop_map.sql`), next to the `/marketing/*`
+  routes and the 8am digest counters it reuses
+  (`core/outreach_counters.py` is now the single counter implementation
+  for the digest summary and the map).
+- **Desk color and check mark never share storage.** Status is computed
+  per request from production rows (`core/loop_map_rules.py`); checks,
+  laps and notes are `mse_loop_progress/laps/notes`. An unreadable source
+  evaluates to `unknown`, never green.
+- **Hourly history runs inside mse-api, not n8n.** mse-api has no
+  `N8N_API_KEY`, so an n8n cron could neither be installed nor proven to
+  run from here. A DB-side 50-minute gap check makes restarts and replicas
+  safe; `LOOP_MAP_SNAPSHOT_DISABLED=1` turns it off (set on staging).
+- **mse-api staging recreated 2026-10-17** as an empty environment with
+  only mse-api (no n8n copy, which would have run the production crons
+  twice). It still shares production's database.
+- Notes are never deleted: no delete route, and admin RLS has no DELETE
+  policy on `mse_loop_notes`.
