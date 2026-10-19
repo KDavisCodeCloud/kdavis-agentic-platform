@@ -54,6 +54,12 @@ type Card = {
   // client-side copy would drift the moment the rule changed, and this one
   // gates a real send.
   blocked_reason: string | null;
+  // 2026-10-18 signals.
+  pain_phrases?: string[];
+  pain_evidence?: { phrase: string; snippet: string }[];
+  funded_by?: string[];
+  partner_type?: string | null;
+  signal_text?: string | null;
 };
 
 type Conversation = {
@@ -74,6 +80,22 @@ type Summary = {
   ready_to_paste: number;
   replies_this_week: number;
   parked_awaiting_contact: number;
+  // The partner lane, counted separately so the prospect numbers above keep
+  // meaning what the 8am digest says they mean.
+  partners?: {
+    awaiting_buyer: number;
+    awaiting_approval: number;
+    ready_to_paste: number;
+    replies_this_week: number;
+    parked_awaiting_contact: number;
+  };
+};
+
+const PARTNER_LABEL: Record<string, string> = {
+  ai_agency: "AI AGENCY",
+  fractional_ciso: "FRACTIONAL CISO",
+  compliance_firm: "COMPLIANCE / AUDIT",
+  vc_operating_partner: "VC PLATFORM",
 };
 
 // GET /marketing/leads/weekly-summary -> funnel. Replies and calls are REAL
@@ -141,6 +163,8 @@ export function OutreachSection() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [drafts, setDrafts] = useState<Card[]>([]);
   const [ready, setReady] = useState<Card[]>([]);
+  const [partnerDrafts, setPartnerDrafts] = useState<Card[]>([]);
+  const [partnerReady, setPartnerReady] = useState<Card[]>([]);
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [funnel, setFunnel] = useState<Funnel | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -151,17 +175,24 @@ export function OutreachSection() {
 
   const load = useCallback(async () => {
     try {
-      const [s, d, r, c, w] = await Promise.all([
+      // Prospects and partners are separate lanes (2026-10-18): the same
+      // endpoints, scoped by ?lane=, so a partnership note never sits in the
+      // prospect approval queue and vice versa.
+      const [s, d, r, c, w, pd, pr] = await Promise.all([
         call("/api/outreach/summary"),
-        call("/api/outreach/drafts"),
-        call("/api/outreach/ready-to-paste"),
+        call("/api/outreach/drafts?lane=prospects"),
+        call("/api/outreach/ready-to-paste?lane=prospects"),
         call("/api/outreach/conversations"),
         call("/api/marketing-leads/weekly-summary"),
+        call("/api/outreach/drafts?lane=partners"),
+        call("/api/outreach/ready-to-paste?lane=partners"),
       ]);
       setSummary(s);
       setFunnel(w?.funnel ?? null);
       setDrafts(d.drafts ?? []);
       setReady(r.ready ?? []);
+      setPartnerDrafts(pd.drafts ?? []);
+      setPartnerReady(pr.ready ?? []);
       setConvs(c.conversations ?? []);
       setError(null);
     } catch (e) {
@@ -193,119 +224,7 @@ export function OutreachSection() {
     });
   }
 
-  return (
-    <div id="outreach" className="space-y-4 min-w-0">
-      {/* Header counters -- same numbers as the 8am digest, from the same
-          endpoint, so the email and this header cannot disagree. */}
-      <div className="flex flex-wrap gap-2">
-        <Counter label="awaiting buyer" value={String(summary?.awaiting_buyer ?? "—")} />
-        <Counter
-          label="awaiting approval"
-          value={String(summary?.awaiting_approval ?? "—")}
-          tone={summary && summary.awaiting_approval > 0 ? "#e8963f" : undefined}
-        />
-        <Counter
-          label="sends today"
-          value={summary ? `${summary.sends_today} / ${summary.daily_send_cap}` : "—"}
-        />
-        <Counter label="ready to paste" value={String(summary?.ready_to_paste ?? "—")} />
-        <Counter
-          label="replies this week"
-          value={summary ? String(summary.replies_this_week) : "—"}
-          tone={summary && summary.replies_this_week > 0 ? "#6fce8f" : undefined}
-        />
-      </div>
-
-      {/* Weekly funnel (5b). Sourced from mse_outreach_conversations, whose
-          stages Kelvin marks by hand -- so every number here is measured, and
-          a 0 is a real zero. Each stage counts from its OWN timestamp, so a
-          deal that replied Monday and booked Thursday appears in both. */}
-      {funnel && (
-        <div
-          className="p-4 rounded-[14px]"
-          style={{ background: "#141a22", border: "1px solid #1c222b" }}
-        >
-          <div className="text-[13px] font-bold mb-3" style={{ color: "#c7cfd6" }}>
-            This week
-          </div>
-          <div className="flex flex-wrap items-stretch gap-1">
-            {([
-              ["qualified", funnel.qualified, "#7ea6f5"],
-              ["approved", funnel.approved, "#7ea6f5"],
-              ["sent", funnel.sent, "#5eead4"],
-              ["replies", funnel.replies, "#6fce8f"],
-              ["calls booked", funnel.calls_booked, "#6fce8f"],
-              ["proposals", funnel.proposals, "#e8963f"],
-              ["won", funnel.won, "#6fce8f"],
-              ["lost", funnel.lost, "#e05d5d"],
-            ] as const).map(([label, value, color], i, arr) => (
-              <div key={label} className="flex items-center min-w-0">
-                <div
-                  className="px-3 py-2 rounded-[10px] min-w-[86px]"
-                  style={{ background: "#10151b", border: "1px solid #1c222b" }}
-                >
-                  <div
-                    className="text-[10px] font-mono uppercase tracking-wider truncate"
-                    style={{ color: "#8b96a3" }}
-                  >
-                    {label}
-                  </div>
-                  <div className="text-[20px] font-bold" style={{ color: value > 0 ? color : "#5b6673" }}>
-                    {value}
-                  </div>
-                </div>
-                {i < arr.length - 1 && (
-                  <span className="px-1 text-[12px]" style={{ color: "#1c222b" }}>
-                    &rarr;
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="text-[10.5px] font-mono mt-2" style={{ color: "#5b6673" }}>
-            replies and calls are marked by hand in the Conversations lane below ·
-            automated reply detection deferred until ~30 sends/day
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div
-          className="px-3 py-2 rounded-[10px] text-[12px]"
-          style={{ background: "#e05d5d22", color: "#e05d5d", border: "1px solid #e05d5d" }}
-        >
-          {error}
-        </div>
-      )}
-
-      {/* ── (a) Find the Buyer ─────────────────────────────────────────── */}
-      <div>
-        <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
-          a · Find the Buyer
-          {summary?.parked_awaiting_contact ? (
-            <span className="ml-2 text-[11px] font-normal" style={{ color: "#8b96a3" }}>
-              {summary.parked_awaiting_contact} draft(s) parked until a buyer is named
-            </span>
-          ) : null}
-        </div>
-        <BuyerResearchLane />
-      </div>
-
-      {/* ── (b) Approve Drafts ─────────────────────────────────────────── */}
-      <div>
-        <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
-          b · Approve Drafts{" "}
-          <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
-            nothing sends until you approve
-          </span>
-        </div>
-        {drafts.length === 0 ? (
-          <div className="text-[12px]" style={{ color: "#5b6673" }}>
-            No drafts awaiting approval.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {drafts.map((d) => {
+  function renderDraft(d: Card) {
               const grade = d.contact.email_grade ?? "unknown";
               const edit = edits[d.sequence_id] ?? {};
               return (
@@ -316,6 +235,7 @@ export function OutreachSection() {
                 >
                   <div className="flex flex-wrap items-center gap-2 mb-1 min-w-0">
                     {d.product && <Badge text={d.product} color="#7ea6f5" />}
+                    {d.partner_type && <Badge text={PARTNER_LABEL[d.partner_type] ?? d.partner_type} color="#5eead4" />}
                     <span className="text-[14px] font-bold truncate" style={{ color: "#eef2f5" }}>
                       {d.company ?? "—"}
                     </span>
@@ -361,6 +281,37 @@ export function OutreachSection() {
                     {d.signal.posting_age_days != null ? ` · posted ${d.signal.posting_age_days}d ago` : " · age unknown"}
                     {d.signal.open_role_count != null ? ` · ${d.signal.open_role_count} open roles` : ""}
                   </div>
+
+                  {/* 2026-10-18 signals: what touch 1 should be quoting. */}
+                  {(d.pain_phrases ?? []).length > 0 && (
+                    <div className="text-[11px] mb-2" style={{ color: "#8b96a3" }}>
+                      pain in posting:{" "}
+                      <span style={{ color: "#e8963f" }}>{(d.pain_phrases ?? []).join(" · ")}</span>
+                      {(d.pain_evidence ?? []).slice(0, 2).map((e) => (
+                        <div key={e.phrase} className="font-mono text-[10.5px] mt-1" style={{ color: "#5b6673" }}>
+                          &ldquo;{e.snippet}&rdquo;
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(d.funded_by ?? []).length > 0 && (
+                    <div className="text-[11px] mb-2" style={{ color: "#8b96a3" }}>
+                      funded by <span style={{ color: "#6fce8f" }}>{(d.funded_by ?? []).join(", ")}</span>
+                    </div>
+                  )}
+                  {d.signal_text && (
+                    <details className="mb-2">
+                      <summary className="text-[11px] cursor-pointer" style={{ color: "#5b6673" }}>
+                        {d.lead_source === "hn_thread" ? "the Hacker News post" : "what their site says"}
+                      </summary>
+                      <div
+                        className="text-[11.5px] p-2 mt-1 rounded-[8px] whitespace-pre-wrap"
+                        style={{ background: "#10151b", border: "1px solid #1c222b", color: "#aab4bd" }}
+                      >
+                        {d.signal_text}
+                      </div>
+                    </details>
+                  )}
 
                   {/* LINKEDIN URL GATE (decision 1, 2026-10-06). Shown only
                       on the manual_linkedin route: that lane is "open the
@@ -522,26 +473,10 @@ export function OutreachSection() {
                   </div>
                 </div>
               );
-            })}
-          </div>
-        )}
-      </div>
+  }
 
-      {/* ── (c) Ready to Paste ─────────────────────────────────────────── */}
-      <div>
-        <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
-          c · Ready to Paste{" "}
-          <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
-            approved LinkedIn-track copy
-          </span>
-        </div>
-        {ready.length === 0 ? (
-          <div className="text-[12px]" style={{ color: "#5b6673" }}>
-            Nothing approved for manual sending.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {ready.map((r) => (
+  function renderReady(r: Card) {
+    return (
               <div
                 key={r.sequence_id}
                 className="p-4 rounded-[14px] min-w-0"
@@ -603,7 +538,141 @@ export function OutreachSection() {
                   ))}
                 </div>
               </div>
+    );
+  }
+
+  return (
+    <div id="outreach" className="space-y-4 min-w-0">
+      {/* Header counters -- same numbers as the 8am digest, from the same
+          endpoint, so the email and this header cannot disagree. */}
+      <div className="flex flex-wrap gap-2">
+        <Counter label="awaiting buyer" value={String(summary?.awaiting_buyer ?? "—")} />
+        <Counter
+          label="awaiting approval"
+          value={String(summary?.awaiting_approval ?? "—")}
+          tone={summary && summary.awaiting_approval > 0 ? "#e8963f" : undefined}
+        />
+        <Counter
+          label="sends today"
+          value={summary ? `${summary.sends_today} / ${summary.daily_send_cap}` : "—"}
+        />
+        <Counter label="ready to paste" value={String(summary?.ready_to_paste ?? "—")} />
+        <Counter
+          label="replies this week"
+          value={summary ? String(summary.replies_this_week) : "—"}
+          tone={summary && summary.replies_this_week > 0 ? "#6fce8f" : undefined}
+        />
+      </div>
+
+      {/* Weekly funnel (5b). Sourced from mse_outreach_conversations, whose
+          stages Kelvin marks by hand -- so every number here is measured, and
+          a 0 is a real zero. Each stage counts from its OWN timestamp, so a
+          deal that replied Monday and booked Thursday appears in both. */}
+      {funnel && (
+        <div
+          className="p-4 rounded-[14px]"
+          style={{ background: "#141a22", border: "1px solid #1c222b" }}
+        >
+          <div className="text-[13px] font-bold mb-3" style={{ color: "#c7cfd6" }}>
+            This week
+          </div>
+          <div className="flex flex-wrap items-stretch gap-1">
+            {([
+              ["qualified", funnel.qualified, "#7ea6f5"],
+              ["approved", funnel.approved, "#7ea6f5"],
+              ["sent", funnel.sent, "#5eead4"],
+              ["replies", funnel.replies, "#6fce8f"],
+              ["calls booked", funnel.calls_booked, "#6fce8f"],
+              ["proposals", funnel.proposals, "#e8963f"],
+              ["won", funnel.won, "#6fce8f"],
+              ["lost", funnel.lost, "#e05d5d"],
+            ] as const).map(([label, value, color], i, arr) => (
+              <div key={label} className="flex items-center min-w-0">
+                <div
+                  className="px-3 py-2 rounded-[10px] min-w-[86px]"
+                  style={{ background: "#10151b", border: "1px solid #1c222b" }}
+                >
+                  <div
+                    className="text-[10px] font-mono uppercase tracking-wider truncate"
+                    style={{ color: "#8b96a3" }}
+                  >
+                    {label}
+                  </div>
+                  <div className="text-[20px] font-bold" style={{ color: value > 0 ? color : "#5b6673" }}>
+                    {value}
+                  </div>
+                </div>
+                {i < arr.length - 1 && (
+                  <span className="px-1 text-[12px]" style={{ color: "#1c222b" }}>
+                    &rarr;
+                  </span>
+                )}
+              </div>
             ))}
+          </div>
+          <div className="text-[10.5px] font-mono mt-2" style={{ color: "#5b6673" }}>
+            replies and calls are marked by hand in the Conversations lane below ·
+            automated reply detection deferred until ~30 sends/day
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div
+          className="px-3 py-2 rounded-[10px] text-[12px]"
+          style={{ background: "#e05d5d22", color: "#e05d5d", border: "1px solid #e05d5d" }}
+        >
+          {error}
+        </div>
+      )}
+
+      {/* ── (a) Find the Buyer ─────────────────────────────────────────── */}
+      <div>
+        <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+          a · Find the Buyer
+          {summary?.parked_awaiting_contact ? (
+            <span className="ml-2 text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+              {summary.parked_awaiting_contact} draft(s) parked until a buyer is named
+            </span>
+          ) : null}
+        </div>
+        <BuyerResearchLane lane="prospects" />
+      </div>
+
+      {/* ── (b) Approve Drafts ─────────────────────────────────────────── */}
+      <div>
+        <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+          b · Approve Drafts{" "}
+          <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+            nothing sends until you approve
+          </span>
+        </div>
+        {drafts.length === 0 ? (
+          <div className="text-[12px]" style={{ color: "#5b6673" }}>
+            No drafts awaiting approval.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {drafts.map(renderDraft)}
+          </div>
+        )}
+      </div>
+
+      {/* ── (c) Ready to Paste ─────────────────────────────────────────── */}
+      <div>
+        <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+          c · Ready to Paste{" "}
+          <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+            approved LinkedIn-track copy
+          </span>
+        </div>
+        {ready.length === 0 ? (
+          <div className="text-[12px]" style={{ color: "#5b6673" }}>
+            Nothing approved for manual sending.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {ready.map(renderReady)}
           </div>
         )}
       </div>
@@ -671,6 +740,65 @@ export function OutreachSection() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* ── Partners: its own lane (2026-10-18) ───────────────────────────
+          Referral partners -- AI agencies, fractional CISOs, compliance and
+          audit firms, VC platform teams. Partnership notes, pasted by hand on
+          LinkedIn. Never mixed into the prospect lanes above. */}
+      <div id="partners" className="pt-4 space-y-3 min-w-0" style={{ borderTop: "1px solid #1c222b" }}>
+        <div className="flex flex-wrap items-baseline gap-2">
+          <div className="text-[15px] font-bold" style={{ color: "#eef2f5" }}>
+            Partners
+          </div>
+          <span className="text-[11px]" style={{ color: "#8b96a3" }}>
+            referral partners, not prospects · partnership notes · manual LinkedIn
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Counter label="founder not named" value={String(summary?.partners?.awaiting_buyer ?? "—")} />
+          <Counter
+            label="notes awaiting approval"
+            value={String(summary?.partners?.awaiting_approval ?? "—")}
+            tone={summary?.partners && summary.partners.awaiting_approval > 0 ? "#e8963f" : undefined}
+          />
+          <Counter label="ready to paste" value={String(summary?.partners?.ready_to_paste ?? "—")} />
+          <Counter label="replies this week" value={String(summary?.partners?.replies_this_week ?? "—")} />
+        </div>
+
+        <BuyerResearchLane lane="partners" />
+
+        <div>
+          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+            Approve partnership notes{" "}
+            <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+              nothing goes out until you approve
+            </span>
+          </div>
+          {partnerDrafts.length === 0 ? (
+            <div className="text-[12px]" style={{ color: "#5b6673" }}>
+              No partnership notes awaiting approval.
+            </div>
+          ) : (
+            <div className="space-y-3">{partnerDrafts.map(renderDraft)}</div>
+          )}
+        </div>
+
+        <div>
+          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+            Ready to paste{" "}
+            <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+              approved partnership notes
+            </span>
+          </div>
+          {partnerReady.length === 0 ? (
+            <div className="text-[12px]" style={{ color: "#5b6673" }}>
+              Nothing approved yet.
+            </div>
+          ) : (
+            <div className="space-y-3">{partnerReady.map(renderReady)}</div>
+          )}
+        </div>
       </div>
     </div>
   );

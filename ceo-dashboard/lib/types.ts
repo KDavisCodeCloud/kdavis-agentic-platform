@@ -445,4 +445,11 @@ export type BuyerResearchTask = {
   company_tags: string[];
   location: string | null;
   automated_attempts: number;
+  // 2026-10-18: Hacker News leads carry the post text; partner leads carry
+  // the firm's own words; prospects may carry pain phrases and funded_by.
+  source?: string | null;
+  partner_type?: string | null;
+  signal_text?: string | null;
+  pain_phrases?: string[];
+  funded_by?: string[];
 };

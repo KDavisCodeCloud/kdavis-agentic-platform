@@ -33,6 +33,19 @@ type Draft = { url: string; name: string; title: string };
 
 const EMPTY_DRAFT: Draft = { url: "", name: "", title: "" };
 
+function Tag({ text, color }: { text: string; color: string }) {
+  return (
+    <span
+      style={{
+        fontFamily: "var(--font-mono, monospace)", fontSize: 9.5, color,
+        background: `${color}22`, borderRadius: 5, padding: "2px 6px",
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
 function scoreColor(value: number | null): string {
   if (value === null) return MUTED;
   if (value >= 0.7) return "#6fce8f";
@@ -40,7 +53,15 @@ function scoreColor(value: number | null): string {
   return AMBER;
 }
 
-export function BuyerResearchLane() {
+const PARTNER_LABEL: Record<string, string> = {
+  ai_agency: "AI agency",
+  fractional_ciso: "fractional CISO",
+  compliance_firm: "compliance / audit firm",
+  vc_operating_partner: "VC platform team",
+};
+
+export function BuyerResearchLane({ lane = "prospects" }: { lane?: "prospects" | "partners" }) {
+  const partners = lane === "partners";
   const [tasks, setTasks] = useState<BuyerResearchTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,13 +74,13 @@ export function BuyerResearchLane() {
     setLoading(true);
     setError(null);
     try {
-      setTasks(await fetchBuyerResearchTasks());
+      setTasks(await fetchBuyerResearchTasks({ lane }));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [lane]);
 
   useEffect(() => {
     void load();
@@ -132,9 +153,13 @@ export function BuyerResearchLane() {
     >
       <div className="flex items-baseline justify-between" style={{ marginBottom: 14 }}>
         <h2 style={{ fontSize: 13, fontWeight: 700, color: LABEL }}>
-          Find the buyer{" "}
+          {partners ? "Name the founder" : "Find the buyer"}{" "}
           <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, color: MUTED }}>
-            {loading ? "" : `${tasks.length} compan${tasks.length === 1 ? "y" : "ies"} qualified, no contact yet`}
+            {loading
+              ? ""
+              : partners
+                ? `${tasks.length} partner firm${tasks.length === 1 ? "" : "s"}, founder not named on their site`
+                : `${tasks.length} compan${tasks.length === 1 ? "y" : "ies"} qualified, no contact yet`}
           </span>
         </h2>
         <button
@@ -163,7 +188,9 @@ export function BuyerResearchLane() {
 
       {!loading && !error && tasks.length === 0 && (
         <p style={{ fontSize: 12, color: MINT }}>
-          Nothing waiting — every qualified company has a contact.
+          {partners
+            ? "Nothing waiting — every partner firm has a named founder."
+            : "Nothing waiting — every qualified company has a contact."}
         </p>
       )}
 
@@ -198,7 +225,39 @@ export function BuyerResearchLane() {
                     via {task.domain_source}
                   </span>
                 )}
+                {task.source === "hn_thread" && <Tag text="HACKER NEWS" color={AMBER} />}
+                {task.partner_type && (
+                  <Tag text={PARTNER_LABEL[task.partner_type] ?? task.partner_type} color="#7ea6f5" />
+                )}
+                {(task.funded_by ?? []).length > 0 && (
+                  <Tag text={`funded by ${(task.funded_by ?? []).join(", ")}`} color="#6fce8f" />
+                )}
               </div>
+
+              {(task.pain_phrases ?? []).length > 0 && (
+                <p style={{ fontSize: 11, color: SECONDARY, margin: "6px 0 0" }}>
+                  <span style={{ color: MUTED }}>pain in posting: </span>
+                  {(task.pain_phrases ?? []).join(" · ")}
+                </p>
+              )}
+
+              {/* The HN post or the firm's own words, so the lane stays
+                  answerable without opening another tab. */}
+              {task.signal_text && (
+                <details style={{ margin: "6px 0 0" }}>
+                  <summary style={{ fontSize: 11, color: MUTED, cursor: "pointer" }}>
+                    {task.source === "hn_thread" ? "the post" : "what their site says"}
+                  </summary>
+                  <p
+                    style={{
+                      fontSize: 11.5, color: SECONDARY, whiteSpace: "pre-wrap", marginTop: 6,
+                      background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: "8px 10px",
+                    }}
+                  >
+                    {task.signal_text}
+                  </p>
+                </details>
+              )}
 
               {/* Why this company qualified -- the lane has to be answerable
                   without opening another tab. */}
@@ -206,8 +265,8 @@ export function BuyerResearchLane() {
                 className="flex flex-wrap"
                 style={{ gap: "4px 18px", margin: "8px 0", fontSize: 11.5, color: SECONDARY }}
               >
-                <div>
-                  <dt style={{ display: "inline", color: MUTED }}>hiring: </dt>
+                {(task.role_signal.title || task.role_signal.posting_url) && <div>
+                  <dt style={{ display: "inline", color: MUTED }}>{task.source === "hn_thread" ? "post: " : "hiring: "}</dt>
                   <dd style={{ display: "inline", color: TEXT }}>
                     {task.role_signal.posting_url ? (
                       <a
@@ -222,8 +281,8 @@ export function BuyerResearchLane() {
                       task.role_signal.title ?? "role not named"
                     )}
                   </dd>
-                </div>
-                <div>
+                </div>}
+                {task.role_signal.matching_roles != null && <div>
                   <dt style={{ display: "inline", color: MUTED }}>matching roles: </dt>
                   <dd
                     style={{
@@ -234,7 +293,7 @@ export function BuyerResearchLane() {
                     {task.role_signal.open_roles_on_board != null &&
                       ` of ${task.role_signal.open_roles_on_board} open`}
                   </dd>
-                </div>
+                </div>}
                 <div>
                   <dt style={{ display: "inline", color: MUTED }}>fit / intent: </dt>
                   <dd style={{ display: "inline", fontFamily: "var(--font-mono, monospace)" }}>

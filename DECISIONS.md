@@ -217,3 +217,31 @@ two-click confirms, every selector scoped under `.lm`.
   twice). It still shares production's database.
 - Notes are never deleted: no delete route, and admin RLS has no DELETE
   policy on `mse_loop_notes`.
+
+## 2026-10-18 — Lead targeting: pain phrases, partner lane, VC partners, HN
+
+Engine `c2bdc07` (migration `20261018000066_lead_targeting_extensions.sql`).
+
+- **Pain phrases are data.** `mse_icp_configs.pain_phrases` and
+  `pain_phrase_boost` (+0.10 per match, capped at +0.20). Matching is
+  literal (hyphen/space tolerant) because the matched sentence is quoted to
+  the prospect in touch 1; "technical debt" does not match "tech debt"
+  unless added to the list.
+- **The partner lane is its own product** ("Referral Partners",
+  `c0e8aaf3-…`), so it gets its own ICP, leads, Outreach lane
+  (`?lane=partners`) and Loop Map desks without special-casing. Its
+  `outbound_enabled` is false so the weekly ATS sweep never runs against it.
+  Consultancies pass the exclusion only through `PARTNER_EXCLUSION_POLICY`;
+  the prospect policies are unchanged. Digest counters exclude it.
+- **VC funds are curated in `mse_vc_funds`** (25 rows). Contacts come only
+  from team pages that render names in HTML; JS-rendered pages are recorded
+  as `no_contacts_in_html`, never guessed. Portfolio companies are probed on
+  the ATS JSON APIs (zero Brave) and found boards join the token cache.
+- **HN uses the official Firebase API.** The freelancer thread moved from
+  `whoishiring` to `jon_north` in Nov 2025; threads are found from both
+  accounts' submissions. An infra term is required ("contract" alone was
+  iOS/UX/sales roles); in the freelancer thread only SEEKING FREELANCER.
+- **Found and fixed:** `/marketing/buyer-research` 401'd in production (no
+  tenant-middleware exemption), so the Find-the-Buyer lane never loaded; and
+  the board-token cache read an arbitrary 200 of 392 rows every run — it now
+  reads least-recently-fetched first.

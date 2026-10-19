@@ -524,10 +524,11 @@ export async function rotateWorkspaceToken(
 // ── Buyer-research lane (decision 5b, 2026-10-01) ────────────────────────
 
 export async function fetchBuyerResearchTasks(
-  filters: { productId?: string } = {},
+  filters: { productId?: string; lane?: "prospects" | "partners" } = {},
 ): Promise<BuyerResearchTask[]> {
   const params = new URLSearchParams();
   if (filters.productId) params.set("product_id", filters.productId);
+  if (filters.lane) params.set("lane", filters.lane);
   const qs = params.toString();
 
   const res = await fetch(`/api/buyer-research${qs ? `?${qs}` : ""}`);
