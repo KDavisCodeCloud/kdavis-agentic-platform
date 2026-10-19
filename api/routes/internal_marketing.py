@@ -505,6 +505,14 @@ async def _fetch_asset_bytes(image_path: str) -> bytes:
     over HTTP unifies both callers on one path that works from anywhere,
     matching the same fix direction ceo-dashboard's asset proxy already took
     (see get_asset's docstring) rather than branching in-process-vs-remote.
+
+    Fallback added 2026-10-19: a 404 from the backend falls back to this
+    checkout's own copy. Post 37304cce sat 'approved' for four weeks,
+    failing every 15-min run with a 404: its PNG was committed to git by a
+    backlog-fix script but never written to the Railway volume, and the
+    volume is mounted OVER assets_library/my_originals, hiding the git copy
+    from the backend. The dispatcher runs on a fresh checkout, where the
+    committed file is right there.
     """
     relative = image_path.removeprefix("assets_library/")
     api_key = os.environ.get("MARKETING_API_KEY", "")
@@ -513,6 +521,10 @@ async def _fetch_asset_bytes(image_path: str) -> bytes:
             f"{_API_BASE}/api/v1/internal/marketing/assets/{relative}",
             headers={"X-API-Key": api_key},
         )
+        if resp.status_code == 404:
+            local = (_REPO_ROOT / "assets_library" / relative).resolve()
+            if local.is_relative_to((_REPO_ROOT / "assets_library").resolve()) and local.is_file():
+                return local.read_bytes()
         resp.raise_for_status()
         return resp.content
 

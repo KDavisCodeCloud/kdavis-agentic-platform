@@ -256,6 +256,49 @@ async def test_fetch_asset_bytes_calls_the_assets_route_over_http(monkeypatch):
     )
 
 
+def _client_returning(status_code):
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.content = b"remote"
+    resp.raise_for_status = MagicMock(side_effect=None if status_code < 400 else
+                                      httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock()))
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_fetch_asset_bytes_falls_back_to_the_checkout_on_404(monkeypatch, tmp_path):
+    """2026-10-19: post 37304cce's PNG was in git but not on the Railway
+    volume, so the backend 404'd it every run. The dispatcher's checkout
+    has the committed file."""
+    (tmp_path / "assets_library" / "my_originals").mkdir(parents=True)
+    (tmp_path / "assets_library" / "my_originals" / "x.png").write_bytes(b"\x89PNG-git")
+    monkeypatch.setattr("api.routes.internal_marketing._REPO_ROOT", tmp_path)
+    with patch("httpx.AsyncClient", return_value=_client_returning(404)):
+        assert await _fetch_asset_bytes("assets_library/my_originals/x.png") == b"\x89PNG-git"
+
+
+@pytest.mark.asyncio
+async def test_fetch_asset_bytes_404_without_a_local_copy_still_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr("api.routes.internal_marketing._REPO_ROOT", tmp_path)
+    with patch("httpx.AsyncClient", return_value=_client_returning(404)):
+        with pytest.raises(httpx.HTTPStatusError):
+            await _fetch_asset_bytes("assets_library/my_originals/missing.png")
+
+
+@pytest.mark.asyncio
+async def test_fetch_asset_bytes_never_reads_outside_the_vault(monkeypatch, tmp_path):
+    (tmp_path / "secret.txt").write_text("nope")
+    (tmp_path / "assets_library").mkdir()
+    monkeypatch.setattr("api.routes.internal_marketing._REPO_ROOT", tmp_path)
+    with patch("httpx.AsyncClient", return_value=_client_returning(404)):
+        with pytest.raises(httpx.HTTPStatusError):
+            await _fetch_asset_bytes("assets_library/../secret.txt")
+
+
 # ── Double-JSON-encoded image_brief (2026-09-22 real bug) ──────────────
 
 DOUBLE_ENCODED_IMAGE_BRIEF_ROW = {
