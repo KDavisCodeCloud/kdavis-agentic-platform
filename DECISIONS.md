@@ -218,6 +218,28 @@ two-click confirms, every selector scoped under `.lm`.
 - Notes are never deleted: no delete route, and admin RLS has no DELETE
   policy on `mse_loop_notes`.
 
+## 2026-10-19 — Scheduled scouts, 8am watchdog, staging gets its own database
+
+- **Schedules run inside mse-api, not n8n** (`agents/marketing/lead_schedule.py`):
+  pain rescan after the Sunday scout, HN on the 3rd, partners (<=20 Brave,
+  next result page each month) and VC on the 1st. The lock is a unique
+  `(job_key, product_id, period_key)` row in `mse_scheduled_job_runs`.
+  `LEAD_SCHEDULE_DISABLED=1` keeps an instance from running them.
+- **8am enrollment is checked by a watchdog, not an exception hook.** Its
+  endpoint returns "queued" before any work happens, and on Oct 19 the run
+  stalled with no error. At 08:45 MST mse-api looks for today's
+  `linkedin_dm_sequences_run` audit row and emails KELVIN_EMAIL from
+  alerts@outreach.thdstack.com if it is missing or lost.
+- **Long-running work uses `get_supabase_for_job()`**: the shared client's
+  dropped connection lost the Oct 11 Cloud Decoded run, stalled the Oct 19
+  8am run, and 500'd the Loop Map.
+- **mse-api staging has its own Supabase project** (`microsaas-staging`,
+  xmtgftwbyfqbaxffphwf, Pro org, Micro compute): schema cloned from
+  production with pg_dump 17, plus migration-tracking and config rows. A
+  staging boot no longer applies migrations to production.
+- **DecodedSix discovery runs in-process every 4 hours**; every cycle writes
+  audit_log `discovery_cycle`, which is the Loop Map heartbeat.
+
 ## 2026-10-18 — Lead targeting: pain phrases, partner lane, VC partners, HN
 
 Engine `c2bdc07` (migration `20261018000066_lead_targeting_extensions.sql`).
