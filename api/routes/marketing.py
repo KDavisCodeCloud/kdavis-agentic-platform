@@ -59,7 +59,7 @@ class LinkedInBrandRequest(BaseModel):
 
 class LinkedInOnDemandRequest(BaseModel):
     count: int = Field(gt=0, le=30)
-    pillar_focus: Optional[str] = None  # None/"balanced" or "pillar_1".."pillar_4"
+    pillar_focus: Optional[str] = None  # None/"balanced", "pillar_6".."pillar_8" (v3.0), or legacy "pillar_1".."pillar_5"
 
 
 class ContentMultiplyRequest(BaseModel):

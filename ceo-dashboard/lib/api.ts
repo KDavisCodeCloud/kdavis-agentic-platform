@@ -213,8 +213,9 @@ export interface GeneratedLinkedInPost {
 // "Fire posts now" — hits app/api/linkedin-queue/generate/route.ts, which
 // proxies server-side to the Cloud Decoded FastAPI backend (real MKT-LI1
 // drafting, not a Supabase-only write like the rest of this file).
-// pillarFocus: null/"balanced" apportions across the 40/30/20/10 mix, or a
-// single "pillar_1".."pillar_4" to force every post into one pillar.
+// pillarFocus: null/"balanced" apportions across the 50/25/25 mix (Buyer Pain /
+// Proof / Authority & Opinion, MKT-LI1 v3.0), or a single "pillar_6".."pillar_8"
+// to force every post into one pillar. Legacy "pillar_1".."pillar_5" still resolve.
 export async function generateLinkedInPosts(
   count: number,
   pillarFocus: string | null,

@@ -61,24 +61,21 @@ def _patched(fake_client, queue_side_effect=None):
     )
 
 
-def test_balanced_mix_apportions_across_all_four_pillars():
+def test_balanced_mix_is_50_25_25():
+    """v3.0 (2026-11-08): 50% Buyer Pain, 25% Proof, 25% Authority & Opinion.
+    The stored pillar comes from the slot, so a model that mislabels its own
+    pillar (every fake response here claims pillar 1) cannot skew the mix."""
     fake_client = MagicMock()
-    fake_client.messages.create.side_effect = [
-        _response_for_pillar(1), _response_for_pillar(1), _response_for_pillar(1), _response_for_pillar(1),
-        _response_for_pillar(2), _response_for_pillar(2), _response_for_pillar(2),
-        _response_for_pillar(3), _response_for_pillar(3),
-        _response_for_pillar(4),
-    ]
+    fake_client.messages.create.side_effect = [_response_for_pillar(1) for _ in range(12)]
     patches = _patched(fake_client)
     with patches[0], patches[1], patches[2], patches[3], patches[4]:
-        posts = li1.generate_on_demand_posts(10, pillar_focus=None)
+        posts = li1.generate_on_demand_posts(12, pillar_focus=None)
 
-    assert len(posts) == 10
-    pillar_counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    assert len(posts) == 12
+    pillar_counts = {6: 0, 7: 0, 8: 0}
     for post in posts:
         pillar_counts[post["pillar"]] += 1
-    # apportion({0.4,0.3,0.2,0.1}, 10) -> exactly 4/3/2/1
-    assert pillar_counts == {1: 4, 2: 3, 3: 2, 4: 1}
+    assert pillar_counts == {6: 6, 7: 3, 8: 3}
     for post in posts:
         assert post["source"] == "on_demand"
 

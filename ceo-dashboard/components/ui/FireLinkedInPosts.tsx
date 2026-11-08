@@ -4,11 +4,11 @@ import { useState } from "react";
 import { generateLinkedInPosts } from "@/lib/api";
 
 const PILLAR_OPTIONS: { value: string | null; label: string }[] = [
-  { value: null, label: "Balanced mix (40/30/20/10)" },
-  { value: "pillar_1", label: "Cloud & AI Execution" },
-  { value: "pillar_2", label: "Builder's Journey" },
-  { value: "pillar_3", label: "Philosophy, Faith & Gardening" },
-  { value: "pillar_4", label: "Product, Business & CTA" },
+  // MKT-LI1 v3.0 (2026-11-08): the evergreen mix writes to the budget owner.
+  { value: null, label: "Balanced mix (50/25/25)" },
+  { value: "pillar_6", label: "Buyer Pain" },
+  { value: "pillar_7", label: "Proof" },
+  { value: "pillar_8", label: "Authority & Opinion" },
 ];
 
 interface Props {

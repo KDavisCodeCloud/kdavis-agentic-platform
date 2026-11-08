@@ -8,7 +8,20 @@ Access is governed by the End User License Agreement at /legal/LICENSE.md.
 Subscription compliance is enforced at runtime — access revokes automatically
 on non-payment or terms violation.
 
-MKT-LI1 — LinkedIn Personal Brand Agent v2.6.
+MKT-LI1 — LinkedIn Personal Brand Agent v3.0.
+
+v3.0 (2026-11-08, buyer-targeting fix, Kelvin's 2026-11-07 brief Phase 7):
+the evergreen mix and voice now write to the BUDGET OWNER -- a CTO, VP
+Engineering, Head of Platform or founder -- instead of to another engineer.
+The five-pillar 30/30/20/10/10 mix produced engineer-to-engineer content
+(cert paths, IaC tool comparisons) that the people who buy never act on.
+  CONTENT_MIX_RATIO = 50% Buyer Pain (pillar_6), 25% Proof (pillar_7),
+                      25% Authority & Opinion (pillar_8).
+  Every evergreen post now ends on a category CTA (CATEGORY_CLOSING_LINES).
+  Pillars 1-5 stay defined so historical rows and an explicit legacy
+  pillar_focus still resolve; they are no longer in the mix. The pillar
+  number stored on a row now always comes from the slot, never from the
+  model's self-report. Published posts are not touched.
 
 Builds Kelvin as the authority — his personal brand is the warm
 distribution channel for every product launch. Distinct from product
@@ -225,8 +238,14 @@ log = logging.getLogger(__name__)
 AGENT_ID = "mkt-li1"
 MODEL = "claude-sonnet-4-6"
 
-CONTENT_MIX_RATIO = {"pillar_1": 0.3, "pillar_2": 0.3, "pillar_3": 0.2, "pillar_4": 0.1, "pillar_5": 0.1}
+# v3.0 (2026-11-08): 50% buyer pain, 25% proof, 25% authority and opinion.
+CONTENT_MIX_RATIO = {"pillar_6": 0.5, "pillar_7": 0.25, "pillar_8": 0.25}
 PILLAR_NAMES = {
+    "pillar_6": "Buyer Pain",
+    "pillar_7": "Proof",
+    "pillar_8": "Authority & Opinion",
+    # Legacy (pre-v3.0) pillars: kept so stored rows and an explicit
+    # pillar_focus still resolve. Not in CONTENT_MIX_RATIO.
     "pillar_1": "Cloud and AI Execution",
     "pillar_2": "The Builder's Journey",
     "pillar_3": "Philosophy, Faith, and Gardening",
@@ -240,6 +259,21 @@ PILLAR_NAMES = {
 # BUCKETS description in VOICE_SYSTEM_PROMPT instead of a specific angle.
 # Same "topical grounding only, never structure or voice" rule applies.
 PILLAR_TOPIC_SEEDS = {
+    "pillar_6": "A cost a CTO, VP Engineering or founder is carrying right now and can name: a "
+                "platform/DevOps seat open for months while the roadmap waits, senior engineers' "
+                "hours lost to failing pipelines and alert noise, cloud spend nobody owns, or the "
+                "access/audit risk of infrastructure that grew without guardrails. Name the cost in "
+                "dollars, hours or risk without inventing a figure, and what fixing it unlocks.",
+    "pillar_7": "Something Kelvin actually built and runs, shown as evidence a budget owner can "
+                "weigh: Cloud Decoded's agents (CI/CD triage, Kubernetes alert remediation, IAM "
+                "least-privilege, cloud cost findings, drift detection), the HITL approval gate in "
+                "front of every outbound action, or a real build decision and what it prevented. "
+                "Only real facts about the build -- no invented customers, results or metrics.",
+    "pillar_8": "A clear, defensible opinion a CTO or VP Engineering would argue about: when to "
+                "hire versus contract infrastructure work, why most teams need better pipelines "
+                "before another orchestration layer, governance from day one for AI systems, or "
+                "what a platform team is actually for. Take the stance and defend it in business "
+                "terms.",
     "pillar_1": "Architecture decisions, tradeoffs, and lessons from building LLM-agnostic, "
                 "HITL-governed, multi-tenant cloud+AI systems -- what enterprises actually need "
                 "vs. what vendors sell. Ground it in a real, recent build decision.",
@@ -283,6 +317,26 @@ _ET = ZoneInfo("America/New_York")
 CTA_CLOSING_LINE = "Link in the comments."
 WORKING_WITH_ME_CLOSING_LINE = "If you or your team is interested in working with me, link is in the description."
 
+# v3.0 category CTAs (2026-11-08). One low-friction ask per post, written to
+# the budget owner. Buyer Pain asks for a short call about THEIR gap; Proof
+# points at the thing shown; Authority keeps the working-with-me line.
+BUYER_PAIN_CLOSING_LINE = (
+    "If this is the gap on your team right now, a 15-minute call is the fastest way to see whether "
+    "I can close it. Link in the comments."
+)
+PROOF_CLOSING_LINE = "Want to see it running against your own stack? Link in the comments."
+CATEGORY_CLOSING_LINES = {
+    "pillar_6": BUYER_PAIN_CLOSING_LINE,
+    "pillar_7": PROOF_CLOSING_LINE,
+    "pillar_8": WORKING_WITH_ME_CLOSING_LINE,
+    "pillar_4": CTA_CLOSING_LINE,
+}
+
+
+def closing_line_for(pillar_key: str) -> str:
+    """The one closing line a post in this pillar ends with."""
+    return CATEGORY_CLOSING_LINES.get(pillar_key, WORKING_WITH_ME_CLOSING_LINE)
+
 # Old-style engagement-bait closings this replaces -- stripped if the model
 # still produces one despite VOICE_SYSTEM_PROMPT/BUILDER_POST_SYSTEM_PROMPT/
 # etc. now explicitly forbidding it, same "code-enforce, don't just ask
@@ -298,13 +352,15 @@ _OLD_CTA_CLAUSE_RE = re.compile(
 )
 
 
-def _apply_closing_line(post_copy: str, is_cta_post: bool) -> str:
+def _apply_closing_line(post_copy: str, is_cta_post: bool, closing: Optional[str] = None) -> str:
     """Strips any old-style engagement-bait closing the model still
     produced, then appends the one mandatory closing line for this post's
     category if it isn't already present verbatim. Idempotent — safe to
-    call on text that already ends with the right line."""
+    call on text that already ends with the right line. `closing`, when
+    given (v3.0 category CTAs), overrides the is_cta_post choice."""
     text = _OLD_CTA_CLAUSE_RE.sub("", post_copy).rstrip()
-    closing = CTA_CLOSING_LINE if is_cta_post else WORKING_WITH_ME_CLOSING_LINE
+    if closing is None:
+        closing = CTA_CLOSING_LINE if is_cta_post else WORKING_WITH_ME_CLOSING_LINE
     if closing not in text:
         text = f"{text}\n\n{closing}"
     return text
@@ -334,8 +390,19 @@ Do not lead with it. Do not frame posts around veteran status or corporate crede
 Write like a senior cloud/platform engineer who builds production systems in the
 trenches. Zero patience for buzzwords, hype, or corporate PR speak. Values lean,
 deterministic, well-governed systems over anything that looks good in a demo and breaks
-in production. Never write like a marketer writing for engineers. Write like a builder
-talking to another builder — direct, specific, no filler.
+in production. Never write like a marketer.
+
+THE READER IS THE BUDGET OWNER (v3.0, 2026-11-08). Write to the CTO, VP Engineering,
+Head of Platform/Infrastructure or founder who decides what gets funded and who gets
+hired -- not to the engineer who does the work. Keep the engineering credible, but land
+every post on what it means for them: dollars (cloud spend, the cost of an open seat),
+hours (senior engineers' time, roadmap slipping) or risk (outages, a failed audit, a
+security gap). Pick one and say it plainly.
+
+NO INVENTED METRICS. Never invent a percentage, a dollar figure, a time saving, a
+customer, a case study or a result. Use a number only if it is in the source material
+given below; otherwise name the unit without a figure ("hours every week", "spend nobody
+owns"). Direct, specific, no filler.
 
 NEVER sound like:
 - "As a veteran-owned business..."
@@ -356,9 +423,10 @@ Every post must follow this architecture. No exceptions.
    hood. State machines, infra cost structures, architecture tradeoffs, real production
    behavior. This is what separates signal from noise.
 
-3. MACRO/PERSONAL CONNECTION — Connect the technical to the broader reality. Hiring
-   freezes, efficiency pressure, market shifts, personal experience building this. This
-   is what makes it land with the operator reading over the engineer's shoulder.
+3. BUSINESS STAKES — Connect the technical to what it costs the budget owner: dollars,
+   hours or risk (see THE READER IS THE BUDGET OWNER). Hiring gaps, efficiency pressure,
+   audit and outage exposure. The budget owner is the primary reader, not someone reading
+   over an engineer's shoulder.
 
 4. SOFT PLUG — Natural evolution of the problem into what's being built. Never lead with
    the product. The product is the resolution of the tension established in steps 1-3.
@@ -455,10 +523,12 @@ look in the mirror and say I tried and I didn't quit.
 Never write a closing CTA, ask, or engagement line of any kind — no "Comment [KEYWORD]",
 no "DM me", no "drop a comment", no "follow along if you want more", no question to the
 reader as a hook for engagement. End post_copy at the natural end of REQUIRED POST
-STRUCTURE step 4 (SOFT PLUG) with no trailing ask. The system appends the correct
-closing line automatically after you return post_copy — Pillar 4 posts get "Link in the
-comments.", every other pillar gets "If you or your team is interested in working with
-me, link is in the description." Writing your own closing here just gets stripped.
+STRUCTURE step 4 (SOFT PLUG) with no trailing ask. The system appends the one category
+CTA automatically after you return post_copy -- Buyer Pain posts get a 15-minute-call
+ask about the reader's own gap, Proof posts get "Want to see it running against your own
+stack? Link in the comments.", Authority & Opinion posts get "If you or your team is
+interested in working with me, link is in the description." Writing your own closing
+here just gets stripped.
 
 ## REAL-TIME SIGNAL POSTS
 
@@ -470,13 +540,30 @@ The topic is live. The voice and architecture never change.
 
 ## CONTENT SOURCE BUCKETS (topical grounding only — does not dictate structure or voice)
 
+v3.0 mix (2026-11-08) -- these three are the evergreen pillars:
+
+Pillar 6 (Buyer Pain, 50%): a cost the budget owner is carrying right now -- an open
+  platform/DevOps seat while the roadmap waits, senior engineers' hours lost to pipeline
+  failures and alert noise, unowned cloud spend, access and audit risk. Named in dollars,
+  hours or risk, never with an invented figure.
+
+Pillar 7 (Proof, 25%): something Kelvin actually built and runs, shown as evidence --
+  Cloud Decoded's agents, the HITL gate in front of every outbound action, a real build
+  decision and what it prevented. Real facts only.
+
+Pillar 8 (Authority & Opinion, 25%): a defensible stance a CTO would argue about,
+  defended in business terms.
+
+Legacy pillars (pre-v3.0, kept for reference; no longer in the mix):
+
 Pillar 1 (Cloud and AI Execution): architecture decisions, tradeoffs, lessons;
   LLM-agnostic design; HITL governance, multi-tenant isolation; cloud+AI IaC;
   what enterprises need vs. what vendors sell; real build sessions.
 
 Pillar 2 (Builder's Journey): how agentic tooling changed his workflow;
   building in public while employed full-time; decisions under resource constraints;
-  aerospace/defense/healthcare cloud lessons; engineer → engineer-founder transition.
+  healthcare cloud lessons from CorVel (never claim cloud or platform work at Boeing or
+  Honeywell -- those were NDT inspection roles); engineer → engineer-founder transition.
   Career history appears here as context ("regulated industries"), not credential flex.
 
 Pillar 3 (Philosophy, Faith, Gardening): garden → company parallels (patience,
@@ -521,7 +608,7 @@ Never use any name other than "Kelvin Davis" anywhere in post_copy.
 
 Respond with ONLY a JSON object matching this exact shape:
 {
-  "pillar": 1 | 2 | 3 | 4,
+  "pillar": 6 | 7 | 8 (or the legacy pillar number named in the user message),
   "stance": "HIRING" | "AI_AGENTIC" | "BUILDER_CAREER" | "PRODUCT" | "LEGACY_PURPOSE" |
              "KUBERNETES_TOOLING" | "PRODUCTION_GRADE_AGENTIC" | "BUILD_IN_PUBLIC" |
              "PLATFORM_ENGINEERING" | "ENTERPRISE_INERTIA" | "MILITARY_DISCIPLINE",
@@ -682,47 +769,48 @@ def _content_pool(research_report: dict, idea_reservoir: list, build_updates: li
     """Buckets source material by pillar key. Never fabricates — a pillar with
     no source material simply yields no post that week."""
     content_angles = research_report.get("content_angles", []) if research_report else []
-    pool: dict[str, list[dict]] = {"pillar_1": [], "pillar_2": [], "pillar_3": [], "pillar_4": [], "pillar_5": []}
+    pool: dict[str, list[dict]] = {key: [] for key in CONTENT_MIX_RATIO}
 
+    # Research angles are market pain -> Buyer Pain.
     for angle in content_angles:
         text = angle.get("angle") if isinstance(angle, dict) else str(angle)
-        pool["pillar_1"].append({"text": text, "source": "research_report.content_angles"})
+        pool["pillar_6"].append({"text": text, "source": "research_report.content_angles"})
 
     for idea in idea_reservoir or []:
         raw_type = idea.get("type") if isinstance(idea, dict) else None
         text = idea.get("text") if isinstance(idea, dict) else str(idea)
-        # Support both old bucket names and new pillar keys
-        pillar_map = {"educational": "pillar_1", "journey": "pillar_2",
-                      "repurposed": "pillar_3", "product": "pillar_4",
-                      "enterprise": "pillar_5"}
-        bucket = pillar_map.get(raw_type, raw_type) if raw_type in (list(pillar_map) + list(pool)) else "pillar_2"
-        if bucket not in pool:
-            bucket = "pillar_2"
+        # v3.0 keys, plus the old bucket names and legacy pillar keys mapped
+        # onto the three current pillars.
+        pillar_map = {"buyer_pain": "pillar_6", "proof": "pillar_7", "authority": "pillar_8",
+                      "enterprise": "pillar_6", "pillar_5": "pillar_6",
+                      "product": "pillar_7", "journey": "pillar_7",
+                      "pillar_2": "pillar_7", "pillar_4": "pillar_7",
+                      "educational": "pillar_8", "repurposed": "pillar_8",
+                      "pillar_1": "pillar_8", "pillar_3": "pillar_8"}
+        bucket = raw_type if raw_type in pool else pillar_map.get(raw_type, "pillar_8")
         pool[bucket].append({"text": text, "source": "idea_reservoir", "raw": idea})
 
+    # What was actually built is proof.
     for update in build_updates or []:
         text = update.get("text") if isinstance(update, dict) else str(update)
-        pool["pillar_2"].append({"text": text, "source": "build_updates", "raw": update})
-        if isinstance(update, dict) and update.get("milestone"):
-            pool["pillar_4"].append({"text": text, "source": "build_updates", "raw": update})
+        pool["pillar_7"].append({"text": text, "source": "build_updates", "raw": update})
 
     return pool
 
 
 def _build_slots(pool: dict[str, list[dict]], posts_per_batch: int = POSTS_PER_BATCH) -> list[dict]:
+    """Fill the batch to CONTENT_MIX_RATIO from real source material.
+
+    Never fabricates: a pillar whose pool runs dry yields fewer posts that
+    month, and it does NOT borrow another pillar's material (the pre-v3.0
+    fallback to pillar_1 is what let a thin month drift away from the mix).
+    """
     quota = apportion(CONTENT_MIX_RATIO, posts_per_batch)
     slots: list[dict] = []
     for pillar_key, count in quota.items():
         for _ in range(count):
-            if not pool[pillar_key]:
-                if pillar_key == "pillar_4":
-                    continue  # never fabricate a milestone — just drop the slot
-                fallback = "pillar_1" if pool["pillar_1"] else None
-                if not fallback:
-                    continue
-                pillar_key = fallback
-            if not pool[pillar_key]:
-                continue
+            if not pool.get(pillar_key):
+                break
             slots.append({"pillar_key": pillar_key, "source": pool[pillar_key].pop(0)})
     return slots
 
@@ -920,7 +1008,7 @@ def run_li1_brand_agent(
 
             scheduled_for = schedule[i]
             post = {
-                "pillar": draft.get("pillar", int(pillar_key.split("_")[1])),
+                "pillar": int(pillar_key.split("_")[1]),
                 "pillar_name": PILLAR_NAMES.get(pillar_key, pillar_key),
                 "stance": draft.get("stance"),
                 "topic": draft.get("topic", ""),
@@ -945,7 +1033,8 @@ def run_li1_brand_agent(
 
             # Mandatory closing line (2026-09-15 directive) -- before format_post so the
             # appended sentence gets the same one-sentence-per-line treatment as the rest.
-            post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"))
+            post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"),
+                                                    closing=closing_line_for(pillar_key))
 
             if post["format"] == "text_post":
                 # credit_line=None/is_original=False here since format_post's job is
@@ -1010,8 +1099,8 @@ def generate_on_demand_posts(
     """
     if count < 1:
         raise ValueError("count must be at least 1")
-    if pillar_focus not in (None, "balanced") and pillar_focus not in CONTENT_MIX_RATIO:
-        raise ValueError(f"pillar_focus must be 'balanced', one of {list(CONTENT_MIX_RATIO)}, or None")
+    if pillar_focus not in (None, "balanced") and pillar_focus not in PILLAR_TOPIC_SEEDS:
+        raise ValueError(f"pillar_focus must be 'balanced', one of {list(PILLAR_TOPIC_SEEDS)}, or None")
 
     client = get_anthropic_client(anthropic_client)
 
@@ -1036,7 +1125,7 @@ def generate_on_demand_posts(
 
             scheduled_for = schedule[i]
             post = {
-                "pillar": draft.get("pillar", int(pillar_key.split("_")[1])),
+                "pillar": int(pillar_key.split("_")[1]),
                 "pillar_name": PILLAR_NAMES.get(pillar_key, pillar_key),
                 "stance": draft.get("stance"),
                 "topic": draft.get("topic", ""),
@@ -1062,7 +1151,8 @@ def generate_on_demand_posts(
 
             # Mandatory closing line (2026-09-15 directive) -- before format_post so the
             # appended sentence gets the same one-sentence-per-line treatment as the rest.
-            post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"))
+            post["post_copy"] = _apply_closing_line(post["post_copy"], is_cta_post=(pillar_key == "pillar_4"),
+                                                    closing=closing_line_for(pillar_key))
 
             if post["format"] == "text_post":
                 # credit_line=None/is_original=False here since format_post's job is
