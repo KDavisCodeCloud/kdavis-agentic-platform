@@ -3,7 +3,8 @@ import { requireRole } from "@/lib/api-auth";
 
 // Proxies every /marketing/outreach/* route on the microsaas-engine backend:
 // summary, drafts, drafts/{id}/edit, ready-to-paste, ready-to-paste/{id}/mark,
-// conversations, conversations/{leadId}/stage.
+// conversations, conversations/{leadId}/stage, sequences/in-flight,
+// sequences/{id}/replied.
 //
 // ONE catch-all rather than seven near-identical route files. The auth check,
 // the API-key guard and the upstream error handling are the same for all of
@@ -27,6 +28,10 @@ const ALLOWED = [
   /^ready-to-paste\/[A-Za-z0-9-]+\/mark$/,
   /^conversations$/,
   /^conversations\/[A-Za-z0-9-]+\/stage$/,
+  // Email sequences still sending, and the "Mark replied" that stops them
+  // (2026-11-09).
+  /^sequences\/in-flight$/,
+  /^sequences\/[A-Za-z0-9-]+\/replied$/,
 ];
 
 async function proxy(request: NextRequest, path: string[], method: "GET" | "POST") {

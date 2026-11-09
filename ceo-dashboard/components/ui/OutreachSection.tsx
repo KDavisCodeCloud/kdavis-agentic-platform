@@ -62,6 +62,11 @@ type Card = {
   signal_text?: string | null;
 };
 
+// An email sequence MKT-O5 is still working through (2026-11-09).
+type InFlight = Card & {
+  sent_at: { touch_1: string | null; touch_2: string | null; touch_3: string | null };
+};
+
 type Conversation = {
   conversation_id: string;
   lead_id: string | null;
@@ -166,6 +171,7 @@ export function OutreachSection() {
   const [partnerDrafts, setPartnerDrafts] = useState<Card[]>([]);
   const [partnerReady, setPartnerReady] = useState<Card[]>([]);
   const [convs, setConvs] = useState<Conversation[]>([]);
+  const [inFlight, setInFlight] = useState<InFlight[]>([]);
   const [funnel, setFunnel] = useState<Funnel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -178,7 +184,7 @@ export function OutreachSection() {
       // Prospects and partners are separate lanes (2026-10-18): the same
       // endpoints, scoped by ?lane=, so a partnership note never sits in the
       // prospect approval queue and vice versa.
-      const [s, d, r, c, w, pd, pr] = await Promise.all([
+      const [s, d, r, c, w, pd, pr, f] = await Promise.all([
         call("/api/outreach/summary"),
         call("/api/outreach/drafts?lane=prospects"),
         call("/api/outreach/ready-to-paste?lane=prospects"),
@@ -186,6 +192,7 @@ export function OutreachSection() {
         call("/api/marketing-leads/weekly-summary"),
         call("/api/outreach/drafts?lane=partners"),
         call("/api/outreach/ready-to-paste?lane=partners"),
+        call("/api/outreach/sequences/in-flight?lane=prospects"),
       ]);
       setSummary(s);
       setFunnel(w?.funnel ?? null);
@@ -194,6 +201,7 @@ export function OutreachSection() {
       setPartnerDrafts(pd.drafts ?? []);
       setPartnerReady(pr.ready ?? []);
       setConvs(c.conversations ?? []);
+      setInFlight(f.sequences ?? []);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load the outreach lanes");
@@ -673,6 +681,65 @@ export function OutreachSection() {
         ) : (
           <div className="space-y-3">
             {ready.map(renderReady)}
+          </div>
+        )}
+      </div>
+
+      {/* ── Email in flight (2026-11-09) ─────────────────────────────────
+          Replies land in Kelvin's inbox, which the service cannot read, so
+          this button IS the reply detection: it stops touches 2 and 3 and
+          opens a conversation in lane d. */}
+      <div>
+        <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+          Email in flight{" "}
+          <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+            got a reply? mark it here before the next touch sends
+          </span>
+        </div>
+        {inFlight.length === 0 ? (
+          <div className="text-[12px]" style={{ color: "#5b6673" }}>
+            No email sequences sending.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {inFlight.map((q) => {
+              const sent = (["touch_1", "touch_2", "touch_3"] as const).filter((k) => q.sent_at?.[k]);
+              return (
+                <div
+                  key={q.sequence_id}
+                  className="p-3 rounded-[12px] flex flex-wrap items-center gap-2 min-w-0"
+                  style={{ background: "#10151b", border: "1px solid #1c222b" }}
+                >
+                  <span className="text-[13px] font-bold truncate" style={{ color: "#eef2f5" }}>
+                    {q.company ?? "—"}
+                  </span>
+                  <span className="text-[11px] truncate min-w-0" style={{ color: "#8b96a3" }}>
+                    {q.contact.name}
+                    {q.contact.title ? ` · ${q.contact.title}` : ""}
+                    {q.contact.email ? ` · ${q.contact.email}` : ""}
+                  </span>
+                  <Badge text={q.status.replace(/_/g, " ")} color="#7ea6f5" />
+                  <span className="text-[10.5px] font-mono" style={{ color: "#5b6673" }}>
+                    {sent.length
+                      ? sent.map((k) => `${k.replace("touch_", "t")} ${q.sent_at[k]!.slice(0, 10)}`).join(" · ")
+                      : "touch 1 not sent yet"}
+                  </span>
+                  <button
+                    disabled={busy === q.sequence_id}
+                    onClick={() => {
+                      if (!window.confirm(`Mark ${q.company ?? "this sequence"} as replied? Remaining touches stop.`)) return;
+                      void act(q.sequence_id, () =>
+                        call(`/api/outreach/sequences/${q.sequence_id}/replied`, { method: "POST" })
+                      );
+                    }}
+                    className="ml-auto px-3 py-1.5 rounded-[6px] text-[12px] min-h-[32px]"
+                    style={{ background: "transparent", border: "1px solid #6fce8f", color: "#6fce8f" }}
+                  >
+                    {busy === q.sequence_id ? "marking…" : "mark replied"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

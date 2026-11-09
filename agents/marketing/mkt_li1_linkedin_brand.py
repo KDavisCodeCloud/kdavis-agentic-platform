@@ -220,6 +220,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from agents.marketing.invented_metrics import unsourced_metrics
 from agents.marketing._shared import (
     MARKETING_PRODUCT_ID,
     _get_supabase_client,
@@ -934,6 +935,44 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
         f"{last_stance_line}\n"
         "Write one LinkedIn post."
     )
+    messages = [{"role": "user", "content": user_prompt}]
+    parsed = _call_and_parse(client, messages, pillar_key, pillar_name)
+
+    # Code-enforced NO INVENTED METRICS (2026-11-09). Anything the model was
+    # given counts as a source: the slot's material, the voice profile and the
+    # metric phrases the system prompt states about Kelvin ("15 years"). One retry naming the offending
+    # phrases; if they survive, the caller flags the post for the reviewer.
+    context = [source_text, voice_profile]
+    hits = unsourced_metrics(parsed.get("post_copy"), context, stock_phrases=VOICE_SYSTEM_PROMPT)
+    if hits:
+        log.warning("MKT-LI1: invented metrics %s in pillar=%s draft, retrying once", hits, pillar_key)
+        messages = messages + [
+            {"role": "assistant", "content": json.dumps(parsed, default=str)},
+            {"role": "user", "content": (
+                "These figures are not in the source material: " + "; ".join(hits) + ". "
+                "Rewrite the post without them. Name the unit without a figure "
+                "(\"hours every week\", \"spend nobody owns\") and invent no times, "
+                "durations or counts. Return the same JSON shape."
+            )},
+        ]
+        parsed = _call_and_parse(client, messages, pillar_key, pillar_name)
+        hits = unsourced_metrics(parsed.get("post_copy"), context, stock_phrases=VOICE_SYSTEM_PROMPT)
+    parsed["invented_metrics"] = hits
+    return parsed
+
+
+def _flag_invented_metrics(post: dict, hits: list[str], hitl_tier: int) -> int:
+    """Surface figures that survived the retry to the human reviewer. Escalates
+    to Tier 3 and returns the tier the post must be queued at."""
+    if not hits:
+        return hitl_tier
+    note = "INVENTED METRICS (not in source, verify or cut before approving): " + "; ".join(hits)
+    post["hitl_notes"] = (post["hitl_notes"] + " | " if post.get("hitl_notes") else "") + note
+    post["hitl_tier"] = 3
+    return 3
+
+
+def _call_and_parse(client: Any, messages: list[dict], pillar_key: str, pillar_name: str) -> dict:
     response = client.messages.create(
         model=MODEL,
         # 4000 covers post_copy + hook_variants with headroom -- kept at
@@ -943,7 +982,7 @@ def _draft_post(client: Any, pillar_key: str, source_text: str, voice_profile: d
         # "long" post plus hook_variants can still run close to it.
         max_tokens=4000,
         system=VOICE_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
+        messages=messages,
     )
     raw_text = response.content[0].text if hasattr(response, "content") else str(response)
     # Claude wraps JSON in a ```json ... ``` fence despite "Respond with
@@ -1051,6 +1090,8 @@ def run_li1_brand_agent(
                 post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
                 hitl_tier = 3  # MKT-10 flag always escalates to Tier 3
                 post["hitl_tier"] = hitl_tier  # keep the returned/queued row's own field in sync with the escalation
+
+            hitl_tier = _flag_invented_metrics(post, draft.get("invented_metrics") or [], hitl_tier)
 
             content_item = {**post, "agent_id": AGENT_ID}
             queued = queue_for_review(content_item, tier=hitl_tier, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
@@ -1169,6 +1210,8 @@ def generate_on_demand_posts(
                 post["hitl_notes"] = "MKT-10: " + "; ".join(compliance["flags"])
                 hitl_tier = 3  # MKT-10 flag always escalates to Tier 3, same rule as the evergreen batch
                 post["hitl_tier"] = hitl_tier  # keep the returned/queued row's own field in sync with the escalation
+
+            hitl_tier = _flag_invented_metrics(post, draft.get("invented_metrics") or [], hitl_tier)
 
             content_item = {**post, "agent_id": AGENT_ID}
             queued = queue_for_review(content_item, tier=hitl_tier, product_id=MARKETING_PRODUCT_ID, supabase_client=supabase_client)
