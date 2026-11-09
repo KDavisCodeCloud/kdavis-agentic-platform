@@ -172,6 +172,7 @@ export function OutreachSection() {
   const [partnerReady, setPartnerReady] = useState<Card[]>([]);
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [inFlight, setInFlight] = useState<InFlight[]>([]);
+  const [inFlightError, setInFlightError] = useState<string | null>(null);
   const [funnel, setFunnel] = useState<Funnel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -192,7 +193,12 @@ export function OutreachSection() {
         call("/api/marketing-leads/weekly-summary"),
         call("/api/outreach/drafts?lane=partners"),
         call("/api/outreach/ready-to-paste?lane=partners"),
-        call("/api/outreach/sequences/in-flight?lane=prospects"),
+        // Own error, shown in its own lane: one new endpoint failing must not
+        // blank the four lanes that already work.
+        call("/api/outreach/sequences/in-flight?lane=prospects").catch((e: unknown) => ({
+          sequences: [],
+          error: e instanceof Error ? e.message : "Failed to load email sequences",
+        })),
       ]);
       setSummary(s);
       setFunnel(w?.funnel ?? null);
@@ -202,6 +208,7 @@ export function OutreachSection() {
       setPartnerReady(pr.ready ?? []);
       setConvs(c.conversations ?? []);
       setInFlight(f.sequences ?? []);
+      setInFlightError(f.error ?? null);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load the outreach lanes");
@@ -696,7 +703,11 @@ export function OutreachSection() {
             got a reply? mark it here before the next touch sends
           </span>
         </div>
-        {inFlight.length === 0 ? (
+        {inFlightError ? (
+          <div className="text-[12px]" style={{ color: "#e05d5d" }}>
+            Could not load email sequences: {inFlightError}
+          </div>
+        ) : inFlight.length === 0 ? (
           <div className="text-[12px]" style={{ color: "#5b6673" }}>
             No email sequences sending.
           </div>
