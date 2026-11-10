@@ -452,4 +452,15 @@ export type BuyerResearchTask = {
   signal_text?: string | null;
   pain_phrases?: string[];
   funded_by?: string[];
+  // 2026-11-09: product name for the badge, and the same company's cards
+  // under other products (one company, one product).
+  product?: string | null;
+  company_conflicts?: {
+    product_id: string | null;
+    product: string | null;
+    lead_id: string | null;
+    sequence_id: string | null;
+    status: string | null;
+    committed: boolean;
+  }[];
 };

@@ -81,6 +81,7 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from cryptography.fernet import Fernet
@@ -1064,6 +1065,55 @@ async def batch_approve_linkedin_queue(
 
 _ASSETS_LIBRARY_ROOT = (_REPO_ROOT / "assets_library").resolve()
 
+# Where get_asset looks when an image is missing from the Railway volume
+# (2026-11-09). The repo is public, so this needs no credential. Overridable
+# for a fork or a different branch.
+_ASSET_REPO_RAW_BASE = os.environ.get(
+    "ASSET_REPO_RAW_BASE",
+    "https://raw.githubusercontent.com/KDavisCodeCloud/kdavis-agentic-platform/master/assets_library",
+)
+_RESTORABLE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_MAX_RESTORE_BYTES = 15 * 1024 * 1024
+
+
+async def _restore_from_repo(asset_path: str, target: Path) -> bool:
+    """
+    Copies one committed image from the repo onto the image volume.
+
+    Why (found live 2026-11-09): the Railway volume `linkedin-generated-images`
+    is mounted OVER assets_library/my_originals, so the backend only ever sees
+    images it generated itself. Any image made somewhere else -- a local batch
+    run, a backlog-fix script -- is committed to git but invisible here, and
+    every one of those posts showed "image failed to load" in the review queue
+    (all 8 image posts awaiting review on 2026-11-09). The dispatcher already
+    falls back to its own checkout (_fetch_asset_bytes); this does the same for
+    the backend, once per file: the copy lands on the volume, so the next
+    request, and the publish path, read it from disk.
+
+    Only image files under my_originals/ are restored. `target` has already
+    passed get_asset's traversal check. Returns False when the repo does not
+    have the file either; raises nothing a caller must handle.
+    """
+    rel = Path(asset_path)
+    if rel.parts[:1] != ("my_originals",) or rel.suffix.lower() not in _RESTORABLE_SUFFIXES:
+        return False
+    url = f"{_ASSET_REPO_RAW_BASE}/" + "/".join(quote(p) for p in rel.parts)
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(url)
+    except httpx.HTTPError as exc:
+        log.warning("asset restore: could not reach the repo for %s: %s", asset_path, exc)
+        return False
+    if resp.status_code != 200 or not resp.content or len(resp.content) > _MAX_RESTORE_BYTES:
+        log.info("asset restore: %s not restorable (HTTP %s)", asset_path, resp.status_code)
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.{secrets.token_hex(4)}.part")
+    tmp.write_bytes(resp.content)
+    tmp.replace(target)
+    log.info("asset restore: copied %s from the repo onto the image volume", asset_path)
+    return True
+
 
 @router.get("/assets/{asset_path:path}")
 async def get_asset(asset_path: str, _: None = Depends(require_marketing_api_key)) -> FileResponse:
@@ -1101,8 +1151,11 @@ async def get_asset(asset_path: str, _: None = Depends(require_marketing_api_key
     requested = (_ASSETS_LIBRARY_ROOT / asset_path).resolve()
     if not requested.is_relative_to(_ASSETS_LIBRARY_ROOT):
         raise HTTPException(status_code=400, detail="Invalid asset path")
-    if not requested.is_file():
-        raise HTTPException(status_code=404, detail="Asset not found")
+    if not requested.is_file() and not await _restore_from_repo(asset_path, requested):
+        raise HTTPException(
+            status_code=404,
+            detail="Asset not found on the image volume or in the repo -- commit the image, then reload",
+        )
 
     media_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
     return FileResponse(requested, media_type=media_type)

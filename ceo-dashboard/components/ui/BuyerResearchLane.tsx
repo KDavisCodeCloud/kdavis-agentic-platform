@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { fetchBuyerResearchTasks, saveBuyerContact, skipBuyerResearchTask } from "@/lib/api";
+import { ConflictNote, ProductBadge, productColor, productKey, type ProductKey } from "@/components/ui/OutreachProduct";
 import type { BuyerResearchTask } from "@/lib/types";
 
 // Buyer-research lane (decision 5b, 2026-10-01).
@@ -60,7 +61,14 @@ const PARTNER_LABEL: Record<string, string> = {
   vc_operating_partner: "VC platform team",
 };
 
-export function BuyerResearchLane({ lane = "prospects" }: { lane?: "prospects" | "partners" }) {
+export function BuyerResearchLane({
+  lane = "prospects",
+  productFilter = "all",
+}: {
+  lane?: "prospects" | "partners";
+  // Outreach card's product filter (2026-11-09). "all" shows every product.
+  productFilter?: ProductKey | "all";
+}) {
   const partners = lane === "partners";
   const [tasks, setTasks] = useState<BuyerResearchTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,6 +95,9 @@ export function BuyerResearchLane({ lane = "prospects" }: { lane?: "prospects" |
   }, [load]);
 
   const draftFor = (id: string): Draft => drafts[id] ?? EMPTY_DRAFT;
+
+  const visible =
+    productFilter === "all" ? tasks : tasks.filter((t) => productKey(t.product) === productFilter);
 
   const setDraft = (id: string, patch: Partial<Draft>) =>
     setDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY_DRAFT), ...patch } }));
@@ -158,8 +169,8 @@ export function BuyerResearchLane({ lane = "prospects" }: { lane?: "prospects" |
             {loading
               ? ""
               : partners
-                ? `${tasks.length} partner firm${tasks.length === 1 ? "" : "s"}, founder not named on their site`
-                : `${tasks.length} compan${tasks.length === 1 ? "y" : "ies"} qualified, no contact yet`}
+                ? `${visible.length} partner firm${visible.length === 1 ? "" : "s"}, founder not named on their site`
+                : `${visible.length} compan${visible.length === 1 ? "y" : "ies"} qualified, no contact yet`}
           </span>
         </h2>
         <button
@@ -186,24 +197,31 @@ export function BuyerResearchLane({ lane = "prospects" }: { lane?: "prospects" |
 
       {loading && <p style={{ fontSize: 12, color: MUTED }}>Loading…</p>}
 
-      {!loading && !error && tasks.length === 0 && (
+      {!loading && !error && visible.length === 0 && (
         <p style={{ fontSize: 12, color: MINT }}>
-          {partners
-            ? "Nothing waiting — every partner firm has a named founder."
-            : "Nothing waiting — every qualified company has a contact."}
+          {tasks.length > 0
+            ? "Nothing waiting for this product."
+            : partners
+              ? "Nothing waiting — every partner firm has a named founder."
+              : "Nothing waiting — every qualified company has a contact."}
         </p>
       )}
 
       <div className="flex flex-col" style={{ gap: 12 }}>
-        {tasks.map((task) => {
+        {visible.map((task) => {
           const draft = draftFor(task.lead_id);
           const busy = busyId === task.lead_id;
           return (
             <article
               key={task.lead_id}
-              style={{ background: TILE, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}
+              style={{
+                background: TILE, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14,
+                borderLeft: `3px solid ${productColor(task.product)}`,
+              }}
             >
+              <ConflictNote conflicts={task.company_conflicts} />
               <div className="flex flex-wrap items-baseline" style={{ gap: 8 }}>
+                <ProductBadge name={task.product} />
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: TEXT, minWidth: 0 }}>
                   {task.headline}
                 </h3>

@@ -1,24 +1,13 @@
 import { TopBar } from "@/components/shell/TopBar";
 import { SectionCard } from "@/components/ui/SectionCard";
-import { StatusBadge } from "@/components/ui/StatusBadge";
-import { AgentRosterCard } from "@/components/ui/AgentRosterCard";
 import { LinkedInBatchPanel } from "@/components/ui/LinkedInBatchPanel";
 import { MSEContentReview } from "@/components/ui/MSEContentReview";
 import { LeadPipelinePanel } from "@/components/ui/LeadPipelinePanel";
 import { OutreachSection } from "@/components/ui/OutreachSection";
 
-// Cold Outreach (added 2026-09-16): job-posting-signal scraper +
-// per-ICP LinkedIn DM sequences (MKT-O1/MKT-O2, kdavis-microsaas-engine)
-// -- was "Cold Email"/"Not yet built" until today; it's LinkedIn DMs, not
-// email (the ICP config specifies LinkedIn as the channel, not email --
-// see mse_icp_configs). Triggered via the Lead Pipeline panel's "Run Lead
-// Finder Now" / "Send Due Sequences Now" buttons above, or the weekly/
-// hourly n8n crons those buttons manually fall back for.
-const MARKETING_AGENTS = [
-  { name: "LinkedIn Content",   status: "active",   lastRun: "2026-08-12", output: "MKT-LI1 — normally ~12 posts/mo, 16-post batch this run" },
-  { name: "Cold Outreach",      status: "active",   lastRun: null, output: "MKT-O1/O2 — job-posting scraper + LinkedIn DM sequences, per-ICP. Trigger above in Lead Pipeline." },
-  { name: "Conversion Tracker", status: "pending",  lastRun: null, output: "Not yet built" },
-];
+// The static "Marketing Agents" roster card was removed 2026-11-09 (Kelvin):
+// it was a hand-written list with dates months out of date, not a live
+// registry, and it read as real status next to the live cards above it.
 
 export default function MarketingPage() {
   return (
@@ -67,16 +56,6 @@ export default function MarketingPage() {
           >
             <MSEContentReview />
           </SectionCard>
-
-          {/* Marketing Agents */}
-          <SectionCard title="Marketing Agents" status="partial" statusNote="LinkedIn Content is real (MKT-LI1) — roster itself is a static list, not a live agent registry">
-            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-              {MARKETING_AGENTS.map((a) => (
-                <AgentRosterCard key={a.name} {...a} />
-              ))}
-            </div>
-          </SectionCard>
-
 
         </div>
       </div>

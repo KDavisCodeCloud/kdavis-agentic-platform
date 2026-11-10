@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { BuyerResearchLane } from "@/components/ui/BuyerResearchLane";
+import {
+  ConflictNote,
+  ProductBadge,
+  productColor,
+  productKey,
+  type CompanyConflict,
+  type ProductKey,
+} from "@/components/ui/OutreachProduct";
 
 // THE single outreach surface (Kelvin's decision 3, 2026-10-05). The MSE
 // dashboard's own Outreach page is retired to read-only; there is deliberately
@@ -60,6 +68,10 @@ type Card = {
   funded_by?: string[];
   partner_type?: string | null;
   signal_text?: string | null;
+  // One company, one product (2026-11-09). The block reason is the API's;
+  // the approve endpoint refuses on the same rule.
+  company_conflicts?: CompanyConflict[];
+  conflict_block_reason?: string | null;
 };
 
 // An email sequence MKT-O5 is still working through (2026-11-09).
@@ -164,7 +176,19 @@ function Badge({ text, color }: { text: string; color: string }) {
   );
 }
 
+const FILTERS: { key: ProductKey | "all"; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "cloud_decoded", label: "Cloud Decoded" },
+  { key: "consulting", label: "Consulting" },
+  { key: "partners", label: "Partners" },
+];
+
 export function OutreachSection() {
+  const [productFilter, setProductFilter] = useState<ProductKey | "all">("all");
+  const shows = (name: string | null | undefined) =>
+    productFilter === "all" || productKey(name) === productFilter;
+  const showProspects = productFilter !== "partners";
+  const showPartners = productFilter === "all" || productFilter === "partners";
   const [summary, setSummary] = useState<Summary | null>(null);
   const [drafts, setDrafts] = useState<Card[]>([]);
   const [ready, setReady] = useState<Card[]>([]);
@@ -242,14 +266,16 @@ export function OutreachSection() {
   function renderDraft(d: Card) {
               const grade = d.contact.email_grade ?? "unknown";
               const edit = edits[d.sequence_id] ?? {};
+              const approveBlocked = Boolean(d.blocked_reason ?? d.conflict_block_reason);
               return (
                 <div
                   key={d.sequence_id}
                   className="p-4 rounded-[14px] min-w-0"
-                  style={{ background: "#141a22", border: "1px solid #1c222b", borderLeft: "3px solid #e8963f" }}
+                  style={{ background: "#141a22", border: "1px solid #1c222b", borderLeft: `3px solid ${productColor(d.product)}` }}
                 >
+                  <ConflictNote conflicts={d.company_conflicts} blockReason={d.conflict_block_reason} />
                   <div className="flex flex-wrap items-center gap-2 mb-1 min-w-0">
-                    {d.product && <Badge text={d.product} color="#7ea6f5" />}
+                    <ProductBadge name={d.product} />
                     {d.partner_type && <Badge text={PARTNER_LABEL[d.partner_type] ?? d.partner_type} color="#5eead4" />}
                     <span className="text-[14px] font-bold truncate" style={{ color: "#eef2f5" }}>
                       {d.company ?? "—"}
@@ -438,8 +464,8 @@ export function OutreachSection() {
                       Save edits
                     </button>
                     <button
-                      disabled={busy === d.sequence_id || Boolean(d.blocked_reason)}
-                      title={d.blocked_reason ?? undefined}
+                      disabled={busy === d.sequence_id || Boolean(d.blocked_reason ?? d.conflict_block_reason)}
+                      title={d.blocked_reason ?? d.conflict_block_reason ?? undefined}
                       onClick={() =>
                         act(d.sequence_id, async () => {
                           if (Object.keys(edit).length > 0) {
@@ -459,10 +485,10 @@ export function OutreachSection() {
                       className="px-3 py-1.5 rounded-[6px] text-[12px]"
                       style={{
                         background: "transparent",
-                        border: `1px solid ${d.blocked_reason ? "#5b6673" : "#5eead4"}`,
-                        color: d.blocked_reason ? "#5b6673" : "#5eead4",
-                        opacity: d.blocked_reason ? 0.5 : 1,
-                        cursor: d.blocked_reason ? "not-allowed" : "pointer",
+                        border: `1px solid ${approveBlocked ? "#5b6673" : "#5eead4"}`,
+                        color: approveBlocked ? "#5b6673" : "#5eead4",
+                        opacity: approveBlocked ? 0.5 : 1,
+                        cursor: approveBlocked ? "not-allowed" : "pointer",
                       }}
                     >
                       Approve
@@ -495,9 +521,11 @@ export function OutreachSection() {
               <div
                 key={r.sequence_id}
                 className="p-4 rounded-[14px] min-w-0"
-                style={{ background: "#141a22", border: "1px solid #1c222b", borderLeft: "3px solid #5eead4" }}
+                style={{ background: "#141a22", border: "1px solid #1c222b", borderLeft: `3px solid ${productColor(r.product)}` }}
               >
+                <ConflictNote conflicts={r.company_conflicts} />
                 <div className="flex flex-wrap items-center gap-2 mb-1 min-w-0">
+                  <ProductBadge name={r.product} />
                   <span className="text-[14px] font-bold truncate" style={{ color: "#eef2f5" }}>
                     {r.company ?? "—"}
                   </span>
@@ -556,8 +584,41 @@ export function OutreachSection() {
     );
   }
 
+  const vDrafts = drafts.filter((d) => shows(d.product));
+  const vReady = ready.filter((r) => shows(r.product));
+  const vInFlight = inFlight.filter((q) => shows(q.product));
+  const vConvs = convs.filter((c) => shows(c.product));
+
   return (
     <div id="outreach" className="space-y-4 min-w-0">
+      {/* Product filter (2026-11-09). Applies to every lane below; the
+          counters stay all-products so they keep matching the 8am digest. */}
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter by product">
+        <span className="text-[11px] font-mono" style={{ color: "#8b96a3" }}>
+          product
+        </span>
+        {FILTERS.map((f) => {
+          const active = productFilter === f.key;
+          const color = f.key === "all" ? "#5eead4" : productColor(f.label);
+          return (
+            <button
+              key={f.key}
+              onClick={() => setProductFilter(f.key)}
+              aria-pressed={active}
+              className="px-3 py-1.5 rounded-[6px] text-[12px] min-h-[32px]"
+              style={{
+                background: active ? `${color}22` : "transparent",
+                border: `1px solid ${active ? color : "#1c222b"}`,
+                color: active ? color : "#8b96a3",
+                fontWeight: active ? 600 : 400,
+              }}
+            >
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Header counters -- same numbers as the 8am digest, from the same
           endpoint, so the email and this header cannot disagree. */}
       <div className="flex flex-wrap gap-2">
@@ -641,6 +702,8 @@ export function OutreachSection() {
         </div>
       )}
 
+      {showProspects && (
+      <>
       {/* ── (a) Find the Buyer ─────────────────────────────────────────── */}
       <div>
         <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
@@ -651,7 +714,7 @@ export function OutreachSection() {
             </span>
           ) : null}
         </div>
-        <BuyerResearchLane lane="prospects" />
+        <BuyerResearchLane lane="prospects" productFilter={productFilter} />
       </div>
 
       {/* ── (b) Approve Drafts ─────────────────────────────────────────── */}
@@ -662,13 +725,13 @@ export function OutreachSection() {
             nothing sends until you approve
           </span>
         </div>
-        {drafts.length === 0 ? (
+        {vDrafts.length === 0 ? (
           <div className="text-[12px]" style={{ color: "#5b6673" }}>
             No drafts awaiting approval.
           </div>
         ) : (
           <div className="space-y-3">
-            {drafts.map(renderDraft)}
+            {vDrafts.map(renderDraft)}
           </div>
         )}
       </div>
@@ -681,13 +744,13 @@ export function OutreachSection() {
             approved LinkedIn-track copy
           </span>
         </div>
-        {ready.length === 0 ? (
+        {vReady.length === 0 ? (
           <div className="text-[12px]" style={{ color: "#5b6673" }}>
             Nothing approved for manual sending.
           </div>
         ) : (
           <div className="space-y-3">
-            {ready.map(renderReady)}
+            {vReady.map(renderReady)}
           </div>
         )}
       </div>
@@ -707,20 +770,21 @@ export function OutreachSection() {
           <div className="text-[12px]" style={{ color: "#e05d5d" }}>
             Could not load email sequences: {inFlightError}
           </div>
-        ) : inFlight.length === 0 ? (
+        ) : vInFlight.length === 0 ? (
           <div className="text-[12px]" style={{ color: "#5b6673" }}>
             No email sequences sending.
           </div>
         ) : (
           <div className="space-y-2">
-            {inFlight.map((q) => {
+            {vInFlight.map((q) => {
               const sent = (["touch_1", "touch_2", "touch_3"] as const).filter((k) => q.sent_at?.[k]);
               return (
                 <div
                   key={q.sequence_id}
                   className="p-3 rounded-[12px] flex flex-wrap items-center gap-2 min-w-0"
-                  style={{ background: "#10151b", border: "1px solid #1c222b" }}
+                  style={{ background: "#10151b", border: "1px solid #1c222b", borderLeft: `3px solid ${productColor(q.product)}` }}
                 >
+                  <ProductBadge name={q.product} />
                   <span className="text-[13px] font-bold truncate" style={{ color: "#eef2f5" }}>
                     {q.company ?? "—"}
                   </span>
@@ -763,18 +827,19 @@ export function OutreachSection() {
             marking replied stops the remaining touches
           </span>
         </div>
-        {convs.length === 0 ? (
+        {vConvs.length === 0 ? (
           <div className="text-[12px]" style={{ color: "#5b6673" }}>
             No replies recorded yet.
           </div>
         ) : (
           <div className="space-y-2">
-            {convs.map((c) => (
+            {vConvs.map((c) => (
               <div
                 key={c.conversation_id}
                 className="p-3 rounded-[12px] flex flex-wrap items-center gap-2 min-w-0"
-                style={{ background: "#10151b", border: "1px solid #1c222b" }}
+                style={{ background: "#10151b", border: "1px solid #1c222b", borderLeft: `3px solid ${productColor(c.product)}` }}
               >
+                <ProductBadge name={c.product} />
                 <span className="text-[13px] font-bold truncate" style={{ color: "#eef2f5" }}>
                   {c.company ?? "—"}
                 </span>
@@ -820,10 +885,14 @@ export function OutreachSection() {
         )}
       </div>
 
+      </>
+      )}
+
       {/* ── Partners: its own lane (2026-10-18) ───────────────────────────
           Referral partners -- AI agencies, fractional CISOs, compliance and
           audit firms, VC platform teams. Partnership notes, pasted by hand on
           LinkedIn. Never mixed into the prospect lanes above. */}
+      {showPartners && (
       <div id="partners" className="pt-4 space-y-3 min-w-0" style={{ borderTop: "1px solid #1c222b" }}>
         <div className="flex flex-wrap items-baseline gap-2">
           <div className="text-[15px] font-bold" style={{ color: "#eef2f5" }}>
@@ -878,6 +947,7 @@ export function OutreachSection() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -421,9 +421,62 @@ async def test_get_asset_serves_a_real_file(tmp_path, monkeypatch):
 async def test_get_asset_404s_for_a_missing_file(tmp_path, monkeypatch):
     monkeypatch.setattr("api.routes.internal_marketing._ASSETS_LIBRARY_ROOT", (tmp_path / "assets_library").resolve())
 
-    with pytest.raises(HTTPException) as exc_info:
-        await get_asset("my_originals/does-not-exist.png")
+    with patch("httpx.AsyncClient", return_value=_client_returning(404)):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_asset("my_originals/does-not-exist.png")
 
+    assert exc_info.value.status_code == 404
+
+
+# ── get_asset repo fallback (2026-11-09) ─────────────────────────────────
+# The image volume is mounted over assets_library/my_originals, hiding every
+# committed image the backend did not generate itself.
+
+async def test_get_asset_restores_a_committed_image_onto_the_volume(tmp_path, monkeypatch):
+    root = (tmp_path / "assets_library").resolve()
+    monkeypatch.setattr("api.routes.internal_marketing._ASSETS_LIBRARY_ROOT", root)
+    monkeypatch.setattr("api.routes.internal_marketing._ASSET_REPO_RAW_BASE", "https://raw.example.test/al")
+    client = _client_returning(200)
+    client.get.return_value.content = b"\x89PNG-from-git"
+
+    with patch("httpx.AsyncClient", return_value=client):
+        response = await get_asset("my_originals/buyer-pain/a b.png")
+
+    client.get.assert_awaited_once_with("https://raw.example.test/al/my_originals/buyer-pain/a%20b.png")
+    saved = root / "my_originals" / "buyer-pain" / "a b.png"
+    assert saved.read_bytes() == b"\x89PNG-from-git"
+    assert str(response.path) == str(saved)
+    assert not list(saved.parent.glob(".*.part")), "temp file must be renamed into place"
+
+
+async def test_get_asset_restores_only_once(tmp_path, monkeypatch):
+    root = (tmp_path / "assets_library").resolve()
+    monkeypatch.setattr("api.routes.internal_marketing._ASSETS_LIBRARY_ROOT", root)
+    client = _client_returning(200)
+    with patch("httpx.AsyncClient", return_value=client):
+        await get_asset("my_originals/x.png")
+        await get_asset("my_originals/x.png")
+    assert client.get.await_count == 1
+
+
+@pytest.mark.parametrize("path", ["index.json", "my_originals/notes.json", "other/x.png"])
+async def test_get_asset_never_restores_non_images_or_outside_my_originals(tmp_path, monkeypatch, path):
+    monkeypatch.setattr("api.routes.internal_marketing._ASSETS_LIBRARY_ROOT", (tmp_path / "assets_library").resolve())
+    client = _client_returning(200)
+    with patch("httpx.AsyncClient", return_value=client):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_asset(path)
+    assert exc_info.value.status_code == 404
+    client.get.assert_not_awaited()
+
+
+async def test_get_asset_404s_when_the_repo_cannot_be_reached(tmp_path, monkeypatch):
+    monkeypatch.setattr("api.routes.internal_marketing._ASSETS_LIBRARY_ROOT", (tmp_path / "assets_library").resolve())
+    client = _client_returning(200)
+    client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
+    with patch("httpx.AsyncClient", return_value=client):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_asset("my_originals/x.png")
     assert exc_info.value.status_code == 404
 
 
