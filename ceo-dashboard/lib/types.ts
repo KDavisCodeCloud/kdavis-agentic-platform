@@ -267,6 +267,9 @@ export const DEPT_ROUTES = [
   { id: "overview",  label: "Overview",        path: "/dashboard/overview",   roles: ["admin", "marketing", "rnd"] },
   { id: "finance",   label: "Finance",          path: "/dashboard/finance",    roles: ["admin"] },
   { id: "marketing", label: "Marketing & Sales",path: "/dashboard/marketing",  roles: ["admin", "marketing"] },
+  // Partners (2026-11-09): referral partners moved off the Outreach card to
+  // their own tab. Admin only -- the outreach proxies behind it are.
+  { id: "partners",  label: "Partners",         path: "/dashboard/partners",   roles: ["admin"] },
   // Loop Map (2026-10-17): every product's marketing loop as a pixel office.
   // Admin only -- the mse_loop_* tables' RLS is admin-only to match.
   { id: "loop-map",  label: "Loop Map",         path: "/dashboard/loop-map",   roles: ["admin"] },

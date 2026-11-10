@@ -92,6 +92,8 @@ export function ReferenceSections({ counters }: { counters: LoopMapData["counter
           <ol className="moves">
             <li><b>Approve the {approve ?? "waiting"} waiting draft{approve === 1 ? "" : "s"}</b> in CEO Decoded → Marketing → Outreach.</li>
             <li><b>5 buyer lookups a day</b> in Find the Buyer. {buyers ?? "Some"} compan{buyers === 1 ? "y is" : "ies are"} waiting for a name.</li>
+            <li><b>Mark every reply the same day</b>: Gmail, then <b>mark replied</b> under Email in flight, so no follow-up goes to someone who already answered.</li>
+            <li><b>5 partner notes a weekday</b> on the <b>Partners</b> tab: paste today&apos;s connection notes, mark them sent, and send message 2 to anyone who accepted 3 days ago.</li>
             <li><b>Add the DMARC record</b> in Namecheap and click the green check on the row.</li>
             <li><b>Write a one-page consulting offer with a price.</b></li>
             <li><b>2 landlord-group posts for SPH</b> (Wednesday block).</li>

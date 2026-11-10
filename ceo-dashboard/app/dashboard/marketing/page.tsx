@@ -38,7 +38,7 @@ export default function MarketingPage() {
           <SectionCard
             title="Outreach"
             status="live"
-            statusNote="find the buyer → approve drafts → ready to paste → conversations. Nothing sends without approval."
+            statusNote="Cloud Decoded and consulting: find the buyer → approve drafts → ready to paste → conversations. Nothing sends without approval. Referral partners have their own tab."
           >
             <OutreachSection />
           </SectionCard>

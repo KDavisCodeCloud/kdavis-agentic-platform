@@ -105,6 +105,7 @@ type Summary = {
     ready_to_paste: number;
     replies_this_week: number;
     parked_awaiting_contact: number;
+    sends_today?: number;
   };
 };
 
@@ -145,6 +146,21 @@ const STAGE_LABEL: Record<string, string> = {
   lost: "Lost",
 };
 
+// The Partners tab names the same stages for what they mean with a partner
+// (2026-11-09). "Proposal" has no partner equivalent, so it is not offered.
+const PARTNER_STAGES = ["replied", "call_booked", "won", "lost"] as const;
+const PARTNER_STAGE_LABEL: Record<string, string> = {
+  replied: "Replied",
+  call_booked: "Intro call",
+  proposal_sent: "Proposal",
+  won: "Agreement",
+  lost: "Not a fit",
+};
+
+// Suggested partner notes per weekday (2026-11-09). A target shown next to
+// the count, never a limit: these are pasted by hand, so nothing enforces it.
+const PARTNER_DAILY_TARGET = 5;
+
 async function call(path: string, init?: RequestInit) {
   const res = await fetch(path, { cache: "no-store", ...init });
   const body = await res.json().catch(() => ({}));
@@ -176,24 +192,26 @@ function Badge({ text, color }: { text: string; color: string }) {
   );
 }
 
+// Partners have their own tab (2026-11-09), so the Outreach filter is the two
+// sales products only.
 const FILTERS: { key: ProductKey | "all"; label: string }[] = [
   { key: "all", label: "All" },
   { key: "cloud_decoded", label: "Cloud Decoded" },
   { key: "consulting", label: "Consulting" },
-  { key: "partners", label: "Partners" },
 ];
 
-export function OutreachSection() {
+// The same four lanes serve both tabs: Marketing → Outreach (mode
+// "prospects") and the Partners tab (mode "partners"). One component, so an
+// approval rule or card field added for one can never be missing from the
+// other.
+export function OutreachSection({ mode = "prospects" }: { mode?: "prospects" | "partners" }) {
+  const partners = mode === "partners";
   const [productFilter, setProductFilter] = useState<ProductKey | "all">("all");
   const shows = (name: string | null | undefined) =>
-    productFilter === "all" || productKey(name) === productFilter;
-  const showProspects = productFilter !== "partners";
-  const showPartners = productFilter === "all" || productFilter === "partners";
+    partners || productFilter === "all" || productKey(name) === productFilter;
   const [summary, setSummary] = useState<Summary | null>(null);
   const [drafts, setDrafts] = useState<Card[]>([]);
   const [ready, setReady] = useState<Card[]>([]);
-  const [partnerDrafts, setPartnerDrafts] = useState<Card[]>([]);
-  const [partnerReady, setPartnerReady] = useState<Card[]>([]);
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [inFlight, setInFlight] = useState<InFlight[]>([]);
   const [inFlightError, setInFlightError] = useState<string | null>(null);
@@ -206,38 +224,36 @@ export function OutreachSection() {
 
   const load = useCallback(async () => {
     try {
-      // Prospects and partners are separate lanes (2026-10-18): the same
-      // endpoints, scoped by ?lane=, so a partnership note never sits in the
-      // prospect approval queue and vice versa.
-      const [s, d, r, c, w, pd, pr, f] = await Promise.all([
+      // Same endpoints for both tabs, scoped by ?lane=, so a partnership note
+      // never sits in the prospect approval queue and vice versa.
+      const lane = partners ? "partners" : "prospects";
+      const [s, d, r, c, w, f] = await Promise.all([
         call("/api/outreach/summary"),
-        call("/api/outreach/drafts?lane=prospects"),
-        call("/api/outreach/ready-to-paste?lane=prospects"),
-        call("/api/outreach/conversations"),
-        call("/api/marketing-leads/weekly-summary"),
-        call("/api/outreach/drafts?lane=partners"),
-        call("/api/outreach/ready-to-paste?lane=partners"),
-        // Own error, shown in its own lane: one new endpoint failing must not
-        // blank the four lanes that already work.
-        call("/api/outreach/sequences/in-flight?lane=prospects").catch((e: unknown) => ({
-          sequences: [],
-          error: e instanceof Error ? e.message : "Failed to load email sequences",
-        })),
+        call(`/api/outreach/drafts?lane=${lane}`),
+        call(`/api/outreach/ready-to-paste?lane=${lane}`),
+        call(`/api/outreach/conversations?lane=${lane}`),
+        partners ? Promise.resolve(null) : call("/api/marketing-leads/weekly-summary"),
+        // Own error, shown in its own lane: one endpoint failing must not
+        // blank the lanes that work. Partner notes are never emailed.
+        partners
+          ? Promise.resolve({ sequences: [] })
+          : call("/api/outreach/sequences/in-flight?lane=prospects").catch((e: unknown) => ({
+              sequences: [],
+              error: e instanceof Error ? e.message : "Failed to load email sequences",
+            })),
       ]);
       setSummary(s);
       setFunnel(w?.funnel ?? null);
       setDrafts(d.drafts ?? []);
       setReady(r.ready ?? []);
-      setPartnerDrafts(pd.drafts ?? []);
-      setPartnerReady(pr.ready ?? []);
       setConvs(c.conversations ?? []);
       setInFlight(f.sequences ?? []);
-      setInFlightError(f.error ?? null);
+      setInFlightError((f as { error?: string }).error ?? null);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load the outreach lanes");
     }
-  }, []);
+  }, [partners]);
 
   useEffect(() => {
     void load();
@@ -584,6 +600,174 @@ export function OutreachSection() {
     );
   }
 
+  function renderConversations(
+    list: Conversation[],
+    stages: readonly string[],
+    labels: Record<string, string>,
+  ) {
+    if (list.length === 0) {
+      return (
+        <div className="text-[12px]" style={{ color: "#5b6673" }}>
+          No replies recorded yet.
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-2">
+        {list.map((c) => (
+          <div
+            key={c.conversation_id}
+            className="p-3 rounded-[12px] flex flex-wrap items-center gap-2 min-w-0"
+            style={{ background: "#10151b", border: "1px solid #1c222b", borderLeft: `3px solid ${productColor(c.product)}` }}
+          >
+            <ProductBadge name={c.product} />
+            <span className="text-[13px] font-bold truncate" style={{ color: "#eef2f5" }}>
+              {c.company ?? "—"}
+            </span>
+            <span className="text-[11px] truncate" style={{ color: "#8b96a3" }}>
+              {c.contact.name}
+              {c.contact.title ? ` · ${c.contact.title}` : ""}
+            </span>
+            <Badge text={labels[c.stage] ?? c.stage} color={c.stage === "won" ? "#6fce8f" : c.stage === "lost" ? "#e05d5d" : "#7ea6f5"} />
+            {c.lost_reason && (
+              <span className="text-[11px]" style={{ color: "#5b6673" }}>
+                {c.lost_reason}
+              </span>
+            )}
+            <div className="flex flex-wrap gap-1 ml-auto">
+              {stages.filter((st) => st !== c.stage).map((st) => (
+                <button
+                  key={st}
+                  disabled={!c.lead_id || busy === c.conversation_id}
+                  onClick={() => {
+                    const reason = st === "lost" ? window.prompt(`${labels.lost} reason?`) ?? undefined : undefined;
+                    void act(c.conversation_id, () =>
+                      call(`/api/outreach/conversations/${c.lead_id}/stage`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ stage: st, lost_reason: reason }),
+                      })
+                    );
+                  }}
+                  className="px-2 py-1 rounded-[5px] text-[10.5px] font-mono min-h-[28px]"
+                  style={{
+                    background: "transparent",
+                    border: "1px solid #1c222b",
+                    color: st === "won" ? "#6fce8f" : st === "lost" ? "#e05d5d" : "#8b96a3",
+                  }}
+                >
+                  {labels[st]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Partners tab (2026-11-09) ─────────────────────────────────────────
+  // Referral partners -- AI agencies, fractional CISOs, compliance and audit
+  // firms, VC platform teams. Partnership notes, pasted by hand on LinkedIn.
+  if (partners) {
+    const p = summary?.partners;
+    const sentToday = p?.sends_today ?? 0;
+    return (
+      <div id="partners" className="space-y-4 min-w-0">
+        <div
+          className="p-4 rounded-[14px]"
+          style={{ background: "#141a22", border: "1px solid #1c222b", borderLeft: "3px solid #5eead4" }}
+        >
+          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+            Your partner block · weekdays · {PARTNER_DAILY_TARGET} notes a day
+          </div>
+          <ol className="text-[12px] space-y-1 list-decimal pl-5" style={{ color: "#aab4bd" }}>
+            <li>Send today&apos;s connection notes from <b>Ready to paste</b> and click <b>mark sent</b> on each.</li>
+            <li>When someone accepts, click <b>mark accepted</b>. Send their message 2 three days later, and message 3 four days after that if they haven&apos;t replied.</li>
+            <li>Approve only as many new notes as you&apos;ll paste this week.</li>
+            <li>If they reply, click <b>mark replied</b>. That stops the remaining messages.</li>
+          </ol>
+          <div className="text-[10.5px] font-mono mt-2" style={{ color: "#5b6673" }}>
+            new firms arrive on the 1st of each month · notes are written at 8am daily · nothing is sent for you
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Counter
+            label="sent today"
+            value={summary ? `${sentToday} / ${PARTNER_DAILY_TARGET}` : "—"}
+            tone={summary && sentToday >= PARTNER_DAILY_TARGET ? "#6fce8f" : undefined}
+          />
+          <Counter label="ready to paste" value={String(p?.ready_to_paste ?? "—")} />
+          <Counter
+            label="notes awaiting approval"
+            value={String(p?.awaiting_approval ?? "—")}
+            tone={p && p.awaiting_approval > 0 ? "#e8963f" : undefined}
+          />
+          <Counter label="founder not named" value={String(p?.awaiting_buyer ?? "—")} />
+          <Counter
+            label="replies this week"
+            value={String(p?.replies_this_week ?? "—")}
+            tone={p && p.replies_this_week > 0 ? "#6fce8f" : undefined}
+          />
+        </div>
+
+        {error && (
+          <div
+            className="px-3 py-2 rounded-[10px] text-[12px]"
+            style={{ background: "#e05d5d22", color: "#e05d5d", border: "1px solid #e05d5d" }}
+          >
+            {error}
+          </div>
+        )}
+
+        <div>
+          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+            Ready to paste{" "}
+            <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+              approved notes · your daily block starts here
+            </span>
+          </div>
+          {ready.length === 0 ? (
+            <div className="text-[12px]" style={{ color: "#5b6673" }}>
+              Nothing approved yet. Approve a few notes below.
+            </div>
+          ) : (
+            <div className="space-y-3">{ready.map(renderReady)}</div>
+          )}
+        </div>
+
+        <div>
+          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+            Approve partnership notes{" "}
+            <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+              nothing goes out until you approve
+            </span>
+          </div>
+          {drafts.length === 0 ? (
+            <div className="text-[12px]" style={{ color: "#5b6673" }}>
+              No partnership notes awaiting approval.
+            </div>
+          ) : (
+            <div className="space-y-3">{drafts.map(renderDraft)}</div>
+          )}
+        </div>
+
+        <BuyerResearchLane lane="partners" />
+
+        <div>
+          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
+            Conversations{" "}
+            <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
+              replied → intro call → agreement
+            </span>
+          </div>
+          {renderConversations(convs, PARTNER_STAGES, PARTNER_STAGE_LABEL)}
+        </div>
+      </div>
+    );
+  }
+
   const vDrafts = drafts.filter((d) => shows(d.product));
   const vReady = ready.filter((r) => shows(r.product));
   const vInFlight = inFlight.filter((q) => shows(q.product));
@@ -702,8 +886,6 @@ export function OutreachSection() {
         </div>
       )}
 
-      {showProspects && (
-      <>
       {/* ── (a) Find the Buyer ─────────────────────────────────────────── */}
       <div>
         <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
@@ -827,127 +1009,8 @@ export function OutreachSection() {
             marking replied stops the remaining touches
           </span>
         </div>
-        {vConvs.length === 0 ? (
-          <div className="text-[12px]" style={{ color: "#5b6673" }}>
-            No replies recorded yet.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {vConvs.map((c) => (
-              <div
-                key={c.conversation_id}
-                className="p-3 rounded-[12px] flex flex-wrap items-center gap-2 min-w-0"
-                style={{ background: "#10151b", border: "1px solid #1c222b", borderLeft: `3px solid ${productColor(c.product)}` }}
-              >
-                <ProductBadge name={c.product} />
-                <span className="text-[13px] font-bold truncate" style={{ color: "#eef2f5" }}>
-                  {c.company ?? "—"}
-                </span>
-                <span className="text-[11px] truncate" style={{ color: "#8b96a3" }}>
-                  {c.contact.name}
-                  {c.contact.title ? ` · ${c.contact.title}` : ""}
-                </span>
-                <Badge text={STAGE_LABEL[c.stage] ?? c.stage} color={c.stage === "won" ? "#6fce8f" : c.stage === "lost" ? "#e05d5d" : "#7ea6f5"} />
-                {c.lost_reason && (
-                  <span className="text-[11px]" style={{ color: "#5b6673" }}>
-                    {c.lost_reason}
-                  </span>
-                )}
-                <div className="flex flex-wrap gap-1 ml-auto">
-                  {STAGES.filter((s) => s !== c.stage).map((s) => (
-                    <button
-                      key={s}
-                      disabled={!c.lead_id || busy === c.conversation_id}
-                      onClick={() => {
-                        const reason = s === "lost" ? window.prompt("Lost reason?") ?? undefined : undefined;
-                        void act(c.conversation_id, () =>
-                          call(`/api/outreach/conversations/${c.lead_id}/stage`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ stage: s, lost_reason: reason }),
-                          })
-                        );
-                      }}
-                      className="px-2 py-1 rounded-[5px] text-[10.5px] font-mono"
-                      style={{
-                        background: "transparent",
-                        border: "1px solid #1c222b",
-                        color: s === "won" ? "#6fce8f" : s === "lost" ? "#e05d5d" : "#8b96a3",
-                      }}
-                    >
-                      {STAGE_LABEL[s]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {renderConversations(vConvs, STAGES, STAGE_LABEL)}
       </div>
-
-      </>
-      )}
-
-      {/* ── Partners: its own lane (2026-10-18) ───────────────────────────
-          Referral partners -- AI agencies, fractional CISOs, compliance and
-          audit firms, VC platform teams. Partnership notes, pasted by hand on
-          LinkedIn. Never mixed into the prospect lanes above. */}
-      {showPartners && (
-      <div id="partners" className="pt-4 space-y-3 min-w-0" style={{ borderTop: "1px solid #1c222b" }}>
-        <div className="flex flex-wrap items-baseline gap-2">
-          <div className="text-[15px] font-bold" style={{ color: "#eef2f5" }}>
-            Partners
-          </div>
-          <span className="text-[11px]" style={{ color: "#8b96a3" }}>
-            referral partners, not prospects · partnership notes · manual LinkedIn
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Counter label="founder not named" value={String(summary?.partners?.awaiting_buyer ?? "—")} />
-          <Counter
-            label="notes awaiting approval"
-            value={String(summary?.partners?.awaiting_approval ?? "—")}
-            tone={summary?.partners && summary.partners.awaiting_approval > 0 ? "#e8963f" : undefined}
-          />
-          <Counter label="ready to paste" value={String(summary?.partners?.ready_to_paste ?? "—")} />
-          <Counter label="replies this week" value={String(summary?.partners?.replies_this_week ?? "—")} />
-        </div>
-
-        <BuyerResearchLane lane="partners" />
-
-        <div>
-          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
-            Approve partnership notes{" "}
-            <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
-              nothing goes out until you approve
-            </span>
-          </div>
-          {partnerDrafts.length === 0 ? (
-            <div className="text-[12px]" style={{ color: "#5b6673" }}>
-              No partnership notes awaiting approval.
-            </div>
-          ) : (
-            <div className="space-y-3">{partnerDrafts.map(renderDraft)}</div>
-          )}
-        </div>
-
-        <div>
-          <div className="text-[13px] font-bold mb-2" style={{ color: "#c7cfd6" }}>
-            Ready to paste{" "}
-            <span className="text-[11px] font-normal" style={{ color: "#8b96a3" }}>
-              approved partnership notes
-            </span>
-          </div>
-          {partnerReady.length === 0 ? (
-            <div className="text-[12px]" style={{ color: "#5b6673" }}>
-              Nothing approved yet.
-            </div>
-          ) : (
-            <div className="space-y-3">{partnerReady.map(renderReady)}</div>
-          )}
-        </div>
-      </div>
-      )}
     </div>
   );
 }
