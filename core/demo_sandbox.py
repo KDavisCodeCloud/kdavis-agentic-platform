@@ -4,8 +4,11 @@ Copyright (c) 2026 THD Agentic Systems LLC. All rights reserved.
 
 Public demo sandbox (24-gap-closure build, Phase 6). Backs GET /demo
 (api/routes/demo.py) -- an unauthenticated visitor gets a scoped,
-time-limited session against ONE shared demo workspace, pre-seeded with
-8 synthetic incidents.
+time-limited session in ONE demo workspace. Since migration 059 each
+session owns its own copy of the 8 synthetic incidents
+(incidents.demo_session_id), and every demo-reachable incident query in
+api/routes/incidents.py is filtered to it via demo_scope_clause, so
+visitors never see or change each other's state.
 
 This module is the single source of truth for the seed data --
 scripts/seed_demo_incidents.py imports DEMO_INCIDENTS and
@@ -203,14 +206,24 @@ async def get_or_create_demo_workspace(conn) -> UUID:
     return row["id"]
 
 
-async def insert_demo_incidents(conn, workspace_id: UUID, wipe_first: bool = True) -> int:
-    """Shared by the CLI script, GET /demo's first-ever-call bootstrap,
-    and the 30-minute reset loop. --wipe-first makes re-running this
-    idempotent instead of accumulating duplicates on every reset."""
+async def insert_demo_incidents(
+    conn, workspace_id: UUID, wipe_first: bool = True, demo_session_id: Optional[UUID] = None,
+) -> int:
+    """Shared by the CLI script (demo_session_id=None, seeding a real
+    prospect's workspace) and create_demo_session (one copy per visitor,
+    migration 059). --wipe-first makes re-running this idempotent instead
+    of accumulating duplicates. With a demo_session_id it wipes only that
+    session's rows, never another visitor's."""
     if wipe_first:
-        deleted = await conn.execute(
-            "DELETE FROM incidents WHERE workspace_id = $1 AND is_test = true", workspace_id,
-        )
+        if demo_session_id is None:
+            deleted = await conn.execute(
+                "DELETE FROM incidents WHERE workspace_id = $1 AND is_test = true", workspace_id,
+            )
+        else:
+            deleted = await conn.execute(
+                "DELETE FROM incidents WHERE workspace_id = $1 AND is_test = true AND demo_session_id = $2",
+                workspace_id, demo_session_id,
+            )
         log.info("[DemoSandbox] Wiped existing test incidents for %s: %s", workspace_id, deleted)
 
     now = datetime.now(timezone.utc)
@@ -221,8 +234,9 @@ async def insert_demo_incidents(conn, workspace_id: UUID, wipe_first: bool = Tru
             INSERT INTO incidents (
                 workspace_id, agent_id, cloud_provider, raw_log_hash,
                 parsed_error, remediation_options, execution_status,
-                resource_name, severity, is_test, last_seen_at, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, 'pending_approval', $7, $8, true, $9, $9)
+                resource_name, severity, is_test, last_seen_at, created_at,
+                demo_session_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'pending_approval', $7, $8, true, $9, $9, $10)
             """,
             workspace_id,
             spec["agent_id"],
@@ -233,6 +247,7 @@ async def insert_demo_incidents(conn, workspace_id: UUID, wipe_first: bool = Tru
             spec["resource_name"],
             spec["severity"],
             created_at,
+            demo_session_id,
         )
     return len(DEMO_INCIDENTS)
 
@@ -240,14 +255,12 @@ async def insert_demo_incidents(conn, workspace_id: UUID, wipe_first: bool = Tru
 async def run_demo_reset(pool) -> None:
     """
     Scheduled entry point -- api/main.py's _demo_reset_loop runs this
-    every DEMO_RESET_INTERVAL_SECONDS (30 min). Resets the shared demo
-    workspace back to its 8-incident baseline regardless of how many
-    concurrent visitors have been approving/resolving incidents in it,
-    and prunes expired demo_sessions rows so that table doesn't grow
-    unbounded. Chosen over a per-GET-/demo reseed specifically because
-    this workspace is shared across every simultaneous visitor -- wiping
-    on every new session join would repeatedly discard whatever a
-    different visitor was in the middle of working through.
+    every DEMO_RESET_INTERVAL_SECONDS (30 min). Since migration 059 every
+    visitor has their own incidents, so there is no shared baseline to
+    restore: this pass only prunes expired demo_sessions rows. Their
+    incidents (and those incidents' comments) go with them via
+    ON DELETE CASCADE. It also removes any stray session-less test rows in
+    the demo workspace, which no demo visitor can see anyway.
     """
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -257,43 +270,42 @@ async def run_demo_reset(pool) -> None:
                 return
 
             workspace_id = await get_or_create_demo_workspace(conn)
-            count = await insert_demo_incidents(conn, workspace_id, wipe_first=True)
             pruned = await conn.execute("DELETE FROM demo_sessions WHERE expires_at < NOW()")
+            orphans = await conn.execute(
+                "DELETE FROM incidents WHERE workspace_id = $1 AND is_test = true AND demo_session_id IS NULL",
+                workspace_id,
+            )
 
     log.info(
-        "[DemoSandbox] Reset demo workspace %s to %d baseline incidents (pruned expired sessions: %s)",
-        workspace_id, count, pruned,
+        "[DemoSandbox] Pruned demo workspace %s (expired sessions: %s, session-less test incidents: %s)",
+        workspace_id, pruned, orphans,
     )
 
 
 async def create_demo_session(pool) -> tuple[str, datetime]:
     """
     GET /demo's entry point. Always creates a NEW session/token for the
-    visitor (never reuses another visitor's token) pointed at the one
-    shared demo workspace -- "creates or joins a demo session" means
-    joining the shared WORKSPACE state, not sharing a session token.
-    Seeds a baseline synchronously only if the workspace has zero test
-    incidents right now (the very first call ever, before the 30-minute
-    reset loop has had a chance to run) -- otherwise leaves whatever
-    state is currently there for the reset loop to normalize on its own
-    schedule.
+    visitor (never reuses another visitor's token) in the one demo
+    workspace, and seeds that session its own copy of the baseline
+    incidents (migration 059). The session row and its incidents are
+    written in one transaction, so a visitor never gets a token whose
+    console is empty. No other visitor's incidents are read or touched.
     """
     async with pool.acquire() as conn:
-        workspace_id = await get_or_create_demo_workspace(conn)
+        async with conn.transaction():
+            workspace_id = await get_or_create_demo_workspace(conn)
 
-        existing_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM incidents WHERE workspace_id = $1 AND is_test = true",
-            workspace_id,
-        )
-        if not existing_count:
-            await insert_demo_incidents(conn, workspace_id, wipe_first=False)
-
-        raw_token = DEMO_SESSION_TOKEN_PREFIX + secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + DEMO_SESSION_TTL
-        await conn.execute(
-            "INSERT INTO demo_sessions (workspace_id, session_token_hash, expires_at) VALUES ($1, $2, $3)",
-            workspace_id, hash_demo_token(raw_token), expires_at,
-        )
+            raw_token = DEMO_SESSION_TOKEN_PREFIX + secrets.token_urlsafe(32)
+            expires_at = datetime.now(timezone.utc) + DEMO_SESSION_TTL
+            session_id = await conn.fetchval(
+                """
+                INSERT INTO demo_sessions (workspace_id, session_token_hash, expires_at)
+                VALUES ($1, $2, $3)
+                RETURNING id
+                """,
+                workspace_id, hash_demo_token(raw_token), expires_at,
+            )
+            await insert_demo_incidents(conn, workspace_id, wipe_first=False, demo_session_id=session_id)
 
     return raw_token, expires_at
 
@@ -312,7 +324,7 @@ async def resolve_demo_session(pool, raw_token: str) -> Optional[dict]:
     token_hash = hash_demo_token(raw_token)
     async with pool.acquire() as conn:
         session_row = await conn.fetchrow(
-            "SELECT workspace_id, expires_at FROM demo_sessions WHERE session_token_hash = $1",
+            "SELECT id, workspace_id, expires_at FROM demo_sessions WHERE session_token_hash = $1",
             token_hash,
         )
         if not session_row:
@@ -339,4 +351,24 @@ async def resolve_demo_session(pool, raw_token: str) -> Optional[dict]:
     result["member_role"] = "approver"
     result["member_email"] = "Demo Visitor"
     result["is_demo_session"] = True
+    # Migration 059: api/routes/incidents.py scopes every demo-reachable
+    # incident lookup to this session's own rows via demo_scope_clause.
+    result["demo_session_id"] = session_row["id"]
     return result
+
+
+def demo_scope_clause(workspace: dict, param_index: int, column: str = "demo_session_id") -> tuple[str, list]:
+    """
+    SQL fragment + params that restrict an incidents query to the calling
+    demo visitor's own rows. Returns ("", []) for every real workspace or
+    member session, so real-customer queries are unchanged.
+
+    Fails closed: a demo identity without a session id raises instead of
+    falling back to unscoped access to every visitor's incidents.
+    """
+    if not workspace.get("is_demo_session"):
+        return "", []
+    session_id = workspace.get("demo_session_id")
+    if not session_id:
+        raise RuntimeError("Demo session identity is missing demo_session_id; refusing an unscoped incidents query")
+    return f" AND {column} = ${param_index}", [session_id]

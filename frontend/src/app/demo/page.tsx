@@ -1,14 +1,14 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Zap, Sparkles } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
 import { startDemoSession, ApiError } from '@/lib/api'
 
 // Phase 6 public demo sandbox. GET /api/v1/demo mints a scoped,
-// approver-level, 24h session against the one shared demo workspace
-// (8 synthetic incidents, reset every 30 minutes server-side -- see
-// core/demo_sandbox.py). No signup, no auth. Approve/Reject/Resolve
+// approver-level, 24h session with its OWN copy of the 8 synthetic
+// incidents (migration 059 -- see core/demo_sandbox.py), so nothing one
+// visitor does changes what another sees. No signup, no auth. Approve/Reject/Resolve
 // Manually all genuinely work; nothing here can ever touch a real cloud
 // account (three independent structural guarantees, see that module's
 // docstring) and this page never renders Settings/Members/Billing/
@@ -26,13 +26,8 @@ export default function DemoPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const cached = sessionStorage.getItem(_STORAGE_KEY)
-    if (cached) {
-      setToken(cached)
-      setLoading(false)
-      return
-    }
+  const mintSession = useCallback(() => {
+    setLoading(true)
     startDemoSession()
       .then(session => {
         sessionStorage.setItem(_STORAGE_KEY, session.demo_token)
@@ -48,6 +43,33 @@ export default function DemoPage() {
       })
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    const cached = sessionStorage.getItem(_STORAGE_KEY)
+    if (cached) {
+      setToken(cached)
+      setLoading(false)
+      return
+    }
+    mintSession()
+  }, [mintSession])
+
+  // The API rejected the cached token: it expired (24h) or was retired.
+  // Drop it and mint a fresh session with its own seeded incidents.
+  // At most one automatic re-mint per page load: a brand-new token being
+  // rejected too means something is wrong server-side, and looping would
+  // just burn through the rate limit.
+  const remintedRef = useRef(false)
+  const handleAuthError = useCallback(() => {
+    sessionStorage.removeItem(_STORAGE_KEY)
+    setToken(null)
+    if (remintedRef.current) {
+      setError('Could not start the demo session. Please refresh in a minute.')
+      return
+    }
+    remintedRef.current = true
+    mintSession()
+  }, [mintSession])
 
   if (loading) {
     return (
@@ -98,7 +120,7 @@ export default function DemoPage() {
       </div>
 
       <main className="flex-1 overflow-hidden">
-        <IncidentConsole token={token} />
+        <IncidentConsole token={token} onAuthError={handleAuthError} />
       </main>
     </div>
   )

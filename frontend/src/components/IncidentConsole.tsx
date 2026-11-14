@@ -6,12 +6,15 @@ import { AnimatePresence } from 'framer-motion'
 import { PipelineTracker } from './PipelineTracker'
 import { RemediationCard } from './RemediationCard'
 import { Button } from '@/components/ui/button'
-import { listIncidents, bulkIncidentAction, getConnectionsStatus } from '@/lib/api'
+import { listIncidents, bulkIncidentAction, getConnectionsStatus, isDemoSessionToken, ApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { Incident, IncidentStatus, IncidentFilters, ConnectionsStatus } from '@/lib/types'
 
 interface IncidentConsoleProps {
   token: string
+  // Called when the API rejects the token (401). The public demo page uses
+  // this to mint a fresh demo session instead of retrying a dead one.
+  onAuthError?: () => void
 }
 
 type FilterTab = 'all' | IncidentStatus
@@ -42,8 +45,14 @@ const POLL_INTERVAL_MS = 5_000
 // aws_connection_mode/azure_connection_mode regardless of cloud_provider.
 const _CLOUD_CONNECTION_MODE_GATED_AGENTS = new Set(['agent_05_iam_minimizer', 'agent_06_finops'])
 
-function isReadOnlyBlocked(incident: Incident, connections: ConnectionsStatus | null): boolean {
-  if (!connections || !incident.agent_id || !_CLOUD_CONNECTION_MODE_GATED_AGENTS.has(incident.agent_id)) return false
+// isDemo: the public demo workspace is always created with both
+// connections in read_only mode (core/demo_sandbox.py) and a demo token
+// cannot fetch connection status, so treat both as read-only rather than
+// offering an Approve that the API is guaranteed to 403.
+function isReadOnlyBlocked(incident: Incident, connections: ConnectionsStatus | null, isDemo: boolean): boolean {
+  if (!incident.agent_id || !_CLOUD_CONNECTION_MODE_GATED_AGENTS.has(incident.agent_id)) return false
+  if (isDemo) return incident.cloud_provider === 'aws' || incident.cloud_provider === 'azure'
+  if (!connections) return false
   if (incident.cloud_provider === 'aws') return connections.aws_connection_mode === 'read_only'
   if (incident.cloud_provider === 'azure') return connections.azure_connection_mode === 'read_only'
   return false
@@ -67,7 +76,12 @@ function hasActiveSearchFilters(f: SearchFilters): boolean {
   return !!(f.resource_name || f.severity || f.agent_id || f.date_from || f.date_to || f.assignedToMe)
 }
 
-export function IncidentConsole({ token }: IncidentConsoleProps) {
+export function IncidentConsole({ token, onAuthError }: IncidentConsoleProps) {
+  // Public demo session (/demo). Bulk actions, assignment, the "Assigned to
+  // me" filter and the connections lookup all need a real workspace member,
+  // and the API rejects a demo token for every one of them, so the demo
+  // never renders or calls them.
+  const isDemo = isDemoSessionToken(token)
   const [incidents, setIncidents]     = useState<Incident[]>([])
   const [selected, setSelected]       = useState<Incident | null>(null)
   const [filter, setFilter]           = useState<FilterTab>('all')
@@ -130,12 +144,16 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
         return stillValid.size === prev.size ? prev : stillValid
       })
     } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 401 && onAuthError) {
+        onAuthError()
+        return
+      }
       setConnected(false)
       setError(e instanceof Error ? e.message : 'Failed to load incidents')
     } finally {
       setLoading(false)
     }
-  }, [token, filter, searchFilters])
+  }, [token, filter, searchFilters, onAuthError])
 
   useEffect(() => {
     setLoading(true)
@@ -147,8 +165,9 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
   }, [fetchIncidents])
 
   useEffect(() => {
+    if (isDemo) return
     getConnectionsStatus(token).then(setConnections).catch(() => setConnections(null))
-  }, [token])
+  }, [token, isDemo])
 
   function handleApproved(incidentId: string, optionId: string) {
     setIncidents(prev =>
@@ -350,6 +369,7 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
               className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 focus:border-blue-500/50 focus:outline-none"
             />
           </div>
+          {!isDemo && (
           <button
             onClick={() => setSearchFilters(f => ({ ...f, assignedToMe: !f.assignedToMe }))}
             className={cn(
@@ -362,6 +382,7 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
             <UserCheck className="h-3 w-3" />
             Assigned to me
           </button>
+          )}
           {hasActiveSearchFilters(searchFilters) && (
             <button
               onClick={() => setSearchFilters(EMPTY_SEARCH_FILTERS)}
@@ -446,7 +467,7 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
               onSelect={setSelected}
               selectedId={selected?.incident_id ?? null}
               checkedIds={checkedIds}
-              onToggleCheck={toggleCheck}
+              onToggleCheck={isDemo ? undefined : toggleCheck}
             />
           )}
         </div>
@@ -461,8 +482,8 @@ export function IncidentConsole({ token }: IncidentConsoleProps) {
                 token={token}
                 onApproved={handleApproved}
                 onResolvedManually={handleResolvedManually}
-                onAssigned={handleAssigned}
-                readOnlyConnection={isReadOnlyBlocked(selected, connections)}
+                onAssigned={isDemo ? undefined : handleAssigned}
+                readOnlyConnection={isReadOnlyBlocked(selected, connections, isDemo)}
               />
             </div>
           )}

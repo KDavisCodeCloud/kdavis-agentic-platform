@@ -17,6 +17,7 @@ from core.demo_sandbox import (
     DEMO_INCIDENTS,
     DEMO_SESSION_TOKEN_PREFIX,
     create_demo_session,
+    demo_scope_clause,
     get_or_create_demo_workspace,
     hash_demo_token,
     insert_demo_incidents,
@@ -141,23 +142,29 @@ class TestCreateDemoSession:
         assert token.startswith(DEMO_SESSION_TOKEN_PREFIX)
         assert expires_at > datetime.now(timezone.utc)
 
-    async def test_seeds_baseline_when_workspace_has_zero_incidents(self):
-        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=0)
+    async def test_seeds_the_new_session_its_own_baseline(self):
+        """Migration 059: every session gets all 8 incidents, each tagged
+        with that session's id, no matter what other visitors have done."""
+        session_id = uuid4()
+        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=session_id)
         await create_demo_session(pool)
         insert_calls = [c for c in conn.execute.await_args_list if "INSERT INTO incidents" in c.args[0]]
-        assert len(insert_calls) == 8
+        assert len(insert_calls) == len(DEMO_INCIDENTS) == 8
+        assert all(c.args[-1] == session_id for c in insert_calls)
 
-    async def test_does_not_reseed_when_incidents_already_exist(self):
-        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=3)
+    async def test_never_wipes_other_visitors_incidents(self):
+        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=uuid4())
         await create_demo_session(pool)
-        insert_calls = [c for c in conn.execute.await_args_list if "INSERT INTO incidents" in c.args[0]]
-        assert len(insert_calls) == 0
+        deletes = [c for c in conn.execute.await_args_list if "DELETE" in c.args[0]]
+        assert deletes == []
 
-    async def test_writes_a_demo_sessions_row(self):
-        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=8)
+    async def test_writes_one_demo_sessions_row_in_the_same_transaction(self):
+        pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=uuid4())
         await create_demo_session(pool)
-        session_inserts = [c for c in conn.execute.await_args_list if "INSERT INTO demo_sessions" in c.args[0]]
+        session_inserts = [c for c in conn.fetchval.await_args_list if "INSERT INTO demo_sessions" in c.args[0]]
         assert len(session_inserts) == 1
+        assert "RETURNING id" in session_inserts[0].args[0]
+        conn.transaction.assert_called_once()
 
 
 class TestResolveDemoSession:
@@ -184,7 +191,8 @@ class TestResolveDemoSession:
 
     async def test_valid_session_returns_approver_shaped_dict(self):
         workspace_id = uuid4()
-        session_row = {"workspace_id": workspace_id, "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)}
+        session_id = uuid4()
+        session_row = {"id": session_id, "workspace_id": workspace_id, "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)}
         workspace_row = {"id": workspace_id, "stripe_subscription_status": "active"}
         pool, conn = _make_pool(fetchrow_side_effect=[session_row, workspace_row])
 
@@ -194,6 +202,7 @@ class TestResolveDemoSession:
         assert result["member_id"] is None
         assert result["member_role"] == "approver"
         assert result["is_demo_session"] is True
+        assert result["demo_session_id"] == session_id
 
     async def test_token_is_hashed_before_lookup(self):
         pool, conn = _make_pool(fetchrow_side_effect=[None])
@@ -205,14 +214,18 @@ class TestResolveDemoSession:
 
 
 class TestRunDemoReset:
-    async def test_wipes_and_reseeds_to_exactly_the_baseline_count(self):
+    async def test_never_reseeds_and_only_deletes_session_less_test_rows(self):
+        """Migration 059: no shared baseline any more. Live sessions'
+        incidents must survive a reset pass untouched."""
         workspace_id = uuid4()
         pool, conn = _make_pool(fetchrow_side_effect=[{"id": workspace_id}], fetchval_return=True)
         await run_demo_reset(pool)
         insert_calls = [c for c in conn.execute.await_args_list if "INSERT INTO incidents" in c.args[0]]
         delete_calls = [c for c in conn.execute.await_args_list if "DELETE FROM incidents" in c.args[0]]
-        assert len(insert_calls) == len(DEMO_INCIDENTS) == 8
+        assert insert_calls == []
         assert len(delete_calls) == 1
+        assert "demo_session_id IS NULL" in delete_calls[0].args[0]
+        assert "is_test = true" in delete_calls[0].args[0]
 
     async def test_prunes_expired_demo_sessions(self):
         pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=True)
@@ -272,6 +285,7 @@ class TestDemoIdentityCanApproveASyntheticIncident:
             "member_role": "approver",
             "member_email": "Demo Visitor",
             "is_demo_session": True,
+            "demo_session_id": uuid4(),
         }
 
         from unittest.mock import patch
@@ -285,6 +299,9 @@ class TestDemoIdentityCanApproveASyntheticIncident:
 
         assert result.status == "executed"
         assert "simulated" in result.message.lower()
+        lookup = conn.fetchrow.await_args_list[0]
+        assert "demo_session_id = $3" in lookup.args[0]
+        assert lookup.args[3] == demo_workspace["demo_session_id"]
 
 
 class TestStartDemoSessionRoute:
@@ -360,3 +377,62 @@ class TestDemoCredentialCannotReachProtectedRoutes:
                 if dep.call is get_workspace_or_member_or_demo:
                     found = True
         assert found, "expected api/routes/incidents.py to have at least one route wired for the demo credential"
+
+
+class TestDemoScopeClause:
+    """Migration 059 -- the one helper every demo-reachable incidents query
+    goes through."""
+
+    def test_real_workspace_gets_no_extra_filter(self):
+        assert demo_scope_clause({"id": uuid4(), "member_id": "m1"}, 3) == ("", [])
+
+    def test_demo_session_is_filtered_to_its_own_rows(self):
+        session_id = uuid4()
+        sql, params = demo_scope_clause({"is_demo_session": True, "demo_session_id": session_id}, 3, column="i.demo_session_id")
+        assert sql == " AND i.demo_session_id = $3"
+        assert params == [session_id]
+
+    def test_demo_identity_without_session_id_fails_closed(self):
+        with pytest.raises(RuntimeError):
+            demo_scope_clause({"is_demo_session": True}, 3)
+
+
+class TestEveryDemoReachableIncidentRouteIsSessionScoped:
+    """Structural guard: any incidents route that accepts a demo token must
+    scope its incident lookup with demo_scope_clause. A future route that
+    forgets would let one demo visitor read or act on another's incidents."""
+
+    def _demo_routes(self):
+        from api.middleware.auth import get_workspace_or_member_or_demo
+        from api.routes.incidents import router
+
+        routes = []
+        for route in router.routes:
+            deps = [d.call for d in route.dependant.dependencies]
+            if get_workspace_or_member_or_demo in deps:
+                routes.append(route)
+        return routes
+
+    def test_there_are_demo_reachable_routes(self):
+        assert len(self._demo_routes()) >= 6
+
+    def test_each_one_calls_demo_scope_clause(self):
+        import inspect
+
+        missing = [
+            route.path
+            for route in self._demo_routes()
+            if "demo_scope_clause(" not in inspect.getsource(route.endpoint)
+        ]
+        assert missing == [], f"demo-reachable routes without session scoping: {missing}"
+
+
+class TestCommentLengthCap:
+    def test_comment_over_4000_chars_is_rejected(self):
+        from pydantic import ValidationError
+
+        from db.models import IncidentCommentCreateRequest
+
+        IncidentCommentCreateRequest(body="x" * 4000)
+        with pytest.raises(ValidationError):
+            IncidentCommentCreateRequest(body="x" * 4001)

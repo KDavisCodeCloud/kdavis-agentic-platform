@@ -194,7 +194,9 @@ class IncidentAssignRequest(BaseModel):
 
 
 class IncidentCommentCreateRequest(BaseModel):
-    body: str
+    # Bounded so no caller (the public demo included) can store an
+    # arbitrarily large comment; 4,000 chars is well beyond any real note.
+    body: str = Field(..., max_length=4000)
 
 
 class IncidentCommentResponse(BaseModel):

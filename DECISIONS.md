@@ -267,3 +267,32 @@ Engine `c2bdc07` (migration `20261018000066_lead_targeting_extensions.sql`).
   tenant-middleware exemption), so the Find-the-Buyer lane never loaded; and
   the board-token cache read an arbitrary 200 of 392 rows every run — it now
   reads least-recently-fetched first.
+
+## 2026-11-14 — Public demo: per-visitor state (migration 059)
+
+The `/demo` sandbox used one shared set of 8 incidents for every visitor, so
+one visitor approving everything emptied the console for everyone for up to
+30 minutes, and comments were visible to all concurrent visitors.
+
+- **Each demo session owns its incidents.** `incidents.demo_session_id`
+  (FK to `demo_sessions`, `ON DELETE CASCADE`). `create_demo_session` seeds
+  the 8 baseline incidents for that session in the same transaction as the
+  session row. The demo workspace itself stays a singleton.
+- **One scoping helper, enforced by a test.** Every incidents route that
+  accepts a demo token adds `core.demo_sandbox.demo_scope_clause` to its
+  incident lookup. It returns an empty clause for real workspaces (so their
+  queries are unchanged) and fails closed if a demo identity lacks a
+  session id. `tests/test_demo_sandbox.py` fails if a demo-reachable route
+  omits it.
+- **Reset now prunes, never reseeds.** The 30-minute pass deletes expired
+  sessions; their incidents and comments cascade away. `audit_events` and
+  `token_usage` rows survive (their FKs are `SET NULL`).
+- **Demo UI shows only what a demo token can do.** Bulk select, assignment,
+  "Assigned to me", resource exemption and the connections lookup are not
+  rendered for demo tokens (the API 401s them). IAM/FinOps cloud-write
+  options show as Read-Only instead of an Approve that 403s. On a 401 the
+  page mints a fresh session, at most once per load.
+- **Comments are capped at 4,000 characters** for all callers.
+- **Proved before deploy** against a throwaway Postgres 16 with the
+  production migration chain: 059 applied through `db/migrate.py`, then an
+  18-check end-to-end isolation run against the real route code.

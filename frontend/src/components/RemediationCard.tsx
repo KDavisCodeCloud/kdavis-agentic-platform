@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
   approveIncident, resolveIncidentManually, assignIncident, listWorkspaceMembers,
-  listIncidentComments, createIncidentComment, exemptResourceFromIncident,
+  listIncidentComments, createIncidentComment, exemptResourceFromIncident, isDemoSessionToken,
 } from '@/lib/api'
 import { cn, fmtDuration, timeAgo } from '@/lib/utils'
 import { IMPACT_META, SEVERITY_META, STATUS_META, type Incident, type RemediationOption, type WorkspaceMember, type IncidentComment } from '@/lib/types'
@@ -274,6 +274,7 @@ function CommentsThread({ incidentId, token }: { incidentId: string; token: stri
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !posting) handleSubmit() }}
           placeholder="Add a comment..."
+          maxLength={4000}
           disabled={posting}
           className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500/50 focus:outline-none disabled:opacity-50"
         />
@@ -512,7 +513,8 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
           </div>
         )}
 
-        <ExemptResourceButton incident={incident} token={token} />
+        {/* Exemptions are a workspace policy change; the API rejects demo tokens for it. */}
+        {!isDemoSessionToken(token) && <ExemptResourceButton incident={incident} token={token} />}
       </div>
 
       {/* Body */}

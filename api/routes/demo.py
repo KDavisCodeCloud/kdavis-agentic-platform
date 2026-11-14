@@ -18,14 +18,11 @@ same fixed-string convention api/routes/email_public.py already uses for
 anonymous/pre-workspace requests -- falls back to source IP since there
 is no workspace token yet to key on.
 
-State reset: the demo workspace's 8-incident baseline is restored every
-30 minutes by api/main.py's _demo_reset_loop (core/demo_sandbox.py's
-run_demo_reset), not on every call to this route -- the workspace is
-shared across every concurrent visitor, so resetting per-session-join
-would repeatedly discard whatever a different visitor was mid-approval
-on. This route only seeds synchronously if the workspace happens to have
-zero test incidents right now (the very first call ever, before the
-reset loop has run once).
+State (migration 059): every call seeds the new session its own copy of
+the 8 baseline incidents, so no visitor can change what another visitor
+sees. api/main.py's _demo_reset_loop (core/demo_sandbox.py's
+run_demo_reset) prunes expired sessions every 30 minutes, and their
+incidents and comments cascade away with them.
 """
 
 import logging

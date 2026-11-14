@@ -53,6 +53,7 @@ from agents.agent_09_onboarding_buddy.workflow import OnboardingWorkflow
 from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
 from agents.agent_11_resource_health.workflow import ResourceHealthWorkflow
 from core.audit import write_audit_event
+from core.demo_sandbox import demo_scope_clause
 from core.cloud_errors import CloudPermissionError
 from core.hitl import HITLGate
 from core.workspace_credentials import (
@@ -209,6 +210,7 @@ async def get_incident(
     Only returns incidents belonging to the authenticated workspace.
     """
     db = request.app.state.db_pool
+    scope_sql, scope_params = demo_scope_clause(workspace, 3, column="i.demo_session_id")
     async with workspace_scoped_connection(db, workspace["id"]) as conn:
         row = await conn.fetchrow(
             """
@@ -220,9 +222,10 @@ async def get_incident(
             FROM incidents i
             LEFT JOIN workspace_members m ON m.id = i.assigned_to
             WHERE i.id = $1 AND i.workspace_id = $2
-            """,
+            """ + scope_sql,
             UUID(incident_id),
             workspace["id"],
+            *scope_params,
         )
 
     if not row:
@@ -282,6 +285,7 @@ async def approve_incident(
         )
 
     db = request.app.state.db_pool
+    scope_sql, scope_params = demo_scope_clause(workspace, 3)
 
     async with db.acquire() as conn:
         row = await conn.fetchrow(
@@ -290,9 +294,10 @@ async def approve_incident(
                    estimated_duration_seconds, cloud_provider, is_test
             FROM incidents
             WHERE id = $1 AND workspace_id = $2
-            """,
+            """ + scope_sql,
             UUID(incident_id),
             workspace["id"],
+            *scope_params,
         )
 
     if not row:
@@ -513,12 +518,14 @@ async def reject_incident(
         )
 
     db = request.app.state.db_pool
+    scope_sql, scope_params = demo_scope_clause(workspace, 3)
 
     async with db.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id, execution_status FROM incidents WHERE id = $1 AND workspace_id = $2",
+            "SELECT id, execution_status FROM incidents WHERE id = $1 AND workspace_id = $2" + scope_sql,
             UUID(incident_id),
             workspace["id"],
+            *scope_params,
         )
 
     if not row:
@@ -577,6 +584,7 @@ async def resolve_incident_manually(
         )
 
     db = request.app.state.db_pool
+    scope_sql, scope_params = demo_scope_clause(workspace, 3)
 
     async with db.acquire() as conn:
         row = await conn.fetchrow(
@@ -584,9 +592,10 @@ async def resolve_incident_manually(
             SELECT id, agent_id, execution_status, resource_name, resource_group,
                    metric_name, parsed_error, cloud_provider, severity
             FROM incidents WHERE id = $1 AND workspace_id = $2
-            """,
+            """ + scope_sql,
             UUID(incident_id),
             workspace["id"],
+            *scope_params,
         )
 
     if not row:
@@ -725,6 +734,11 @@ async def list_incidents(
         params.append(value)
         nonlocal query
         query += f" AND {clause.format(n=len(params))}"
+
+    # Migration 059: a demo visitor only ever lists their own session's rows.
+    scope_sql, scope_params = demo_scope_clause(workspace, len(params) + 1, column="i.demo_session_id")
+    query += scope_sql
+    params.extend(scope_params)
 
     if status_filter:
         _add("i.execution_status = ${n}", status_filter)
@@ -904,11 +918,12 @@ async def list_incident_comments(
     itself via get_incident.
     """
     db = request.app.state.db_pool
+    scope_sql, scope_params = demo_scope_clause(workspace, 3)
 
     async with db.acquire() as conn:
         incident_row = await conn.fetchrow(
-            "SELECT id FROM incidents WHERE id = $1 AND workspace_id = $2",
-            UUID(incident_id), workspace["id"],
+            "SELECT id FROM incidents WHERE id = $1 AND workspace_id = $2" + scope_sql,
+            UUID(incident_id), workspace["id"], *scope_params,
         )
         if not incident_row:
             raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
@@ -956,12 +971,13 @@ async def create_incident_comment(
         raise HTTPException(status_code=400, detail="Comment body cannot be empty")
 
     db = request.app.state.db_pool
+    scope_sql, scope_params = demo_scope_clause(workspace, 3)
     member_id = workspace.get("member_id")
 
     async with db.acquire() as conn:
         incident_row = await conn.fetchrow(
-            "SELECT id FROM incidents WHERE id = $1 AND workspace_id = $2",
-            UUID(incident_id), workspace["id"],
+            "SELECT id FROM incidents WHERE id = $1 AND workspace_id = $2" + scope_sql,
+            UUID(incident_id), workspace["id"], *scope_params,
         )
         if not incident_row:
             raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
