@@ -88,7 +88,7 @@ export function MarketingNav() {
             textDecoration: 'none',
           }}
         >
-          Start free trial
+          Get started
         </a>
       </div>
     </nav>
@@ -160,7 +160,7 @@ export function Eyebrow({ label, sub }: { label: string; sub?: string }) {
   )
 }
 
-export function PrimaryCta({ children = 'Start free trial', href = '/signup' }: { children?: React.ReactNode; href?: string }) {
+export function PrimaryCta({ children = 'Get started', href = '/signup' }: { children?: React.ReactNode; href?: string }) {
   return (
     <a
       href={href}

@@ -134,7 +134,7 @@ export default function SecurityPage() {
             </a>
           </div>
           <div style={{ marginTop: 22 }}>
-            <PrimaryCta>Start free trial</PrimaryCta>
+            <PrimaryCta>Get started</PrimaryCta>
           </div>
         </section>
 

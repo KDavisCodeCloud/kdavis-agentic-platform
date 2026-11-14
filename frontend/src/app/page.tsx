@@ -335,7 +335,7 @@ export default function LandingPage() {
                   textDecoration: 'none',
                 }}
               >
-                Start free
+                Get started
               </a>
             </div>
           </nav>
@@ -421,7 +421,7 @@ export default function LandingPage() {
                   borderRadius: 10,
                 }}
               >
-                Start free
+                Get started
               </a>
               <a
                 href="/demo"
@@ -438,7 +438,7 @@ export default function LandingPage() {
               </a>
             </div>
             <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.4)', margin: '18px 0 0' }}>
-              14-day money-back guarantee · no card required to start · no signup required for the live demo
+              Flat monthly pricing · cancel anytime · no signup required for the live demo
             </p>
 
             {/* Social proof bar */}
@@ -1037,10 +1037,10 @@ export default function LandingPage() {
 
             <div style={{ marginTop: 42, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
               <a href="/signup" style={{ textDecoration: 'none', fontSize: 15, fontWeight: 600, color: '#06101f', background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: '15px 30px', borderRadius: 11, boxShadow: '0 14px 34px -10px rgba(61,125,255,.75)' }}>
-                Start free
+                Get started
               </a>
               <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.42)', margin: 0 }}>
-                14-day money-back guarantee · no card required to start
+                Flat monthly pricing · cancel anytime
               </p>
             </div>
           </div>
@@ -1104,7 +1104,7 @@ export default function LandingPage() {
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13.5, color: 'rgba(232,236,242,.38)' }}><span style={{ color: 'rgba(255,255,255,.28)' }}>✕</span>No role-based access</div>
                 </div>
                 <a href="/signup" style={{ marginTop: 'auto', textAlign: 'center', display: 'block', textDecoration: 'none', fontSize: 14, fontWeight: 500, color: '#e8ecf2', border: '1px solid rgba(255,255,255,.18)', padding: 12, borderRadius: 10 }}>
-                  Start free
+                  Get started
                 </a>
               </div>
 
@@ -1130,7 +1130,7 @@ export default function LandingPage() {
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13.5, color: 'rgba(232,236,242,.85)' }}><span style={{ color: '#5a96ff' }}>▸</span>Priority email support — 1 business day response</div>
                 </div>
                 <a href="/signup" style={{ marginTop: 'auto', textAlign: 'center', display: 'block', textDecoration: 'none', fontSize: 14, fontWeight: 600, color: '#06101f', background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 12, borderRadius: 10, boxShadow: '0 12px 30px -10px rgba(61,125,255,.7)' }}>
-                  Start free
+                  Get started
                 </a>
               </div>
 
@@ -1217,11 +1217,11 @@ export default function LandingPage() {
 
             <div style={{ display: 'flex', justifyContent: 'center' }}>
               <a href="/signup" style={{ textDecoration: 'none', fontSize: 15, fontWeight: 600, color: '#06101f', background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: '15px 30px', borderRadius: 11, boxShadow: '0 14px 34px -10px rgba(61,125,255,.75)' }}>
-                Start free
+                Get started
               </a>
             </div>
             <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: 'rgba(232,236,242,.4)', margin: '20px 0 0' }}>
-              14-day money-back guarantee · connect read-only first · no card required to start
+              Connect read-only first · flat monthly pricing · cancel anytime
             </p>
           </div>
         </section>

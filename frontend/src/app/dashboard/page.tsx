@@ -109,7 +109,7 @@ function CheckoutSuccessGate({ onReady }: { onReady: (token: string) => void }) 
             <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
               <Check className="h-6 w-6 text-emerald-400" />
             </div>
-            <h2 className="text-lg font-semibold text-zinc-100">Trial started — you&apos;re in.</h2>
+            <h2 className="text-lg font-semibold text-zinc-100">Subscription active — you&apos;re in.</h2>
             <p className="mt-2 text-sm text-zinc-500">Save your workspace access token now — it won&apos;t be shown again.</p>
             <div className="mt-4 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-3">
               <code className="flex-1 truncate font-mono text-xs text-blue-300">{revealedToken}</code>
@@ -399,7 +399,7 @@ export default function DashboardPage() {
       {showWelcome && activeTab === 'connections' && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-500/20 bg-blue-500/10 px-5 py-2.5 text-xs text-blue-200">
           <span>
-            <strong className="font-semibold">Trial started.</strong> Connect a repo and a cloud account below
+            <strong className="font-semibold">You&apos;re subscribed.</strong> Connect a repo and a cloud account below
             so your agents have something real to look at — nothing runs without your approval in the HITL
             Console.
           </span>

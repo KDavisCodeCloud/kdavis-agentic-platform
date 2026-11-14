@@ -82,7 +82,7 @@ export default function DemoPage() {
           href="/signup"
           className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500"
         >
-          Start your own free trial →
+          Get started on your own stack →
         </a>
       </header>
 

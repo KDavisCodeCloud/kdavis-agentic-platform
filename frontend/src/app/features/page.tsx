@@ -186,7 +186,7 @@ export default function FeaturesPage() {
                 monitoring — come with Growth and Enterprise.
               </p>
             </div>
-            <PrimaryCta>Start free trial</PrimaryCta>
+            <PrimaryCta>Get started</PrimaryCta>
           </div>
         </section>
 

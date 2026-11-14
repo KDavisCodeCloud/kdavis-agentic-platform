@@ -374,7 +374,7 @@ export default function LoginPage() {
           <p style={{ textAlign: 'center', fontSize: 13.5, color: 'rgba(232,236,242,.5)', margin: 0 }}>
             No account?{' '}
             <a href="/signup" style={{ color: '#9fc2ff', fontWeight: 500, textDecoration: 'none' }}>
-              Start 14-day free trial
+              Create one
             </a>
           </p>
         </div>

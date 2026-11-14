@@ -143,7 +143,7 @@ export default function ComparisonPage() {
                 you approve it.
               </p>
             </div>
-            <PrimaryCta>Start free trial</PrimaryCta>
+            <PrimaryCta>Get started</PrimaryCta>
           </div>
         </section>
 

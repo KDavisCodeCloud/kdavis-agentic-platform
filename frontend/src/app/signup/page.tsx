@@ -108,7 +108,7 @@ export default function SignupPage() {
             Approve your first fix.
           </h2>
           <p style={{ fontSize: 14.5, lineHeight: 1.6, color: 'rgba(232,236,242,.55)', margin: '0 0 28px' }}>
-            14 days free. No card charged until trial ends.
+            Flat monthly pricing. Cancel anytime.
           </p>
 
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -144,7 +144,7 @@ export default function SignupPage() {
             Create your account
           </h1>
           <p style={{ fontSize: 14, color: 'rgba(232,236,242,.5)', margin: '0 0 26px' }}>
-            Start your 14-day free trial — no charge until it ends.
+            Pick your plan on the next step. Cancel anytime.
           </p>
 
           <form onSubmit={handleSubmit}>

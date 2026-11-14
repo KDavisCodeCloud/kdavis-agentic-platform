@@ -58,7 +58,7 @@ export default function CheckoutPage() {
     setToken(stored)
   }, [router])
 
-  async function handleStartTrial() {
+  async function handleSubscribe() {
     if (!token) return
     setSubmitting(true)
     setError('')
@@ -144,12 +144,12 @@ export default function CheckoutPage() {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontFamily: "'JetBrains Mono',monospace", fontSize: 10.5, color: 'rgba(232,236,242,.4)' }}>
             <span>🔒 Payment handled by Stripe — we never see your card</span>
-            <span>✕ Cancel anytime before the trial ends</span>
+            <span>✕ Cancel anytime from your billing portal</span>
             <span>☑ SOC 2-ready infrastructure</span>
           </div>
         </div>
 
-        {/* RIGHT: start trial */}
+        {/* RIGHT: subscribe */}
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 40px', minWidth: 320 }}>
           <div style={{ width: '100%', maxWidth: 420, textAlign: 'center' }}>
             <div
@@ -160,21 +160,21 @@ export default function CheckoutPage() {
             >
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3fd17a', boxShadow: '0 0 8px #3fd17a' }} />
               <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#3fd17a', fontWeight: 600 }}>
-                14-day free trial starts today
+                Billed monthly · cancel anytime
               </span>
             </div>
             <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 24, color: '#fff', margin: '0 0 10px' }}>
               Ready when you are.
             </h1>
             <p style={{ fontSize: 14, lineHeight: 1.6, color: 'rgba(232,236,242,.55)', margin: '0 0 28px' }}>
-              You&apos;ll enter payment details on Stripe&apos;s secure checkout page. Nothing is charged until your
-              14-day trial ends, and you can cancel anytime before then.
+              You&apos;ll enter payment details on Stripe&apos;s secure checkout page. Your first month is charged
+              today, and you can cancel anytime from your billing portal.
             </p>
 
             {error && <p style={{ marginBottom: 14, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
 
             <button
-              onClick={handleStartTrial}
+              onClick={handleSubscribe}
               disabled={submitting}
               style={{
                 width: '100%', fontSize: 15, fontWeight: 600, color: '#06101f',
@@ -184,7 +184,7 @@ export default function CheckoutPage() {
                 fontFamily: "'IBM Plex Sans',sans-serif",
               }}
             >
-              {submitting ? 'Redirecting to Stripe…' : `Start 14-day free trial — ${plan.price}/mo →`}
+              {submitting ? 'Redirecting to Stripe…' : `Subscribe — ${plan.price}/mo →`}
             </button>
           </div>
         </div>
