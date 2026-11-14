@@ -12,7 +12,7 @@ import type { Incident, IncidentStatus, IncidentFilters, ConnectionsStatus } fro
 
 interface IncidentConsoleProps {
   token: string
-  // Called when the API rejects the token (401). The public demo page uses
+  // Called when the API rejects the token (401/403). The public demo page uses
   // this to mint a fresh demo session instead of retrying a dead one.
   onAuthError?: () => void
 }
@@ -144,7 +144,9 @@ export function IncidentConsole({ token, onAuthError }: IncidentConsoleProps) {
         return stillValid.size === prev.size ? prev : stillValid
       })
     } catch (e: unknown) {
-      if (e instanceof ApiError && e.status === 401 && onAuthError) {
+      // 403 too: api/middleware/auth.py's _get_workspace_by_demo_session
+      // answers an expired/deleted demo session with 403, not 401.
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403) && onAuthError) {
         onAuthError()
         return
       }
