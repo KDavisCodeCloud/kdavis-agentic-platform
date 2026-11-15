@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
   approveIncident, resolveIncidentManually, assignIncident, listWorkspaceMembers,
-  listIncidentComments, createIncidentComment, exemptResourceFromIncident, isDemoSessionToken,
+  listIncidentComments, createIncidentComment, exemptResourceFromIncident, isDemoSessionToken, rejectIncident,
 } from '@/lib/api'
+import { AuditTrail, BlastRadiusBadge, DiffView, EvidencePanel } from '@/components/incident/IncidentEvidence'
 import { cn, fmtDuration, timeAgo } from '@/lib/utils'
 import { IMPACT_META, SEVERITY_META, STATUS_META, type Incident, type RemediationOption, type WorkspaceMember, type IncidentComment } from '@/lib/types'
 
@@ -72,11 +73,16 @@ const FALLBACK_LOGS = [
   '✓  Incident resolved',
 ]
 
-function ExecutionLog({ incident }: { incident: Incident }) {
+// optionLines (gap-table #9): the approved option's own execution_log, so
+// the stream describes THIS change on THIS resource. Falls back to the
+// per-agent / generic lines for options that don't carry one. onDone fires
+// once every line has been shown, so the card can hold the stream on screen
+// until it finishes even if the incident's status already moved on.
+function ExecutionLog({ incident, optionLines, onDone }: { incident: Incident; optionLines?: string[] | null; onDone?: () => void }) {
   const [visibleCount, setVisibleCount] = useState(0)
   const [elapsed, setElapsed]           = useState(0)
   const startRef                        = useRef(Date.now())
-  const lines = EXEC_LOGS[incident.agent_id ?? ''] ?? FALLBACK_LOGS
+  const lines = optionLines?.length ? optionLines : (EXEC_LOGS[incident.agent_id ?? ''] ?? FALLBACK_LOGS)
   const estimated = incident.estimated_duration_seconds ?? 30
   // Cap visual progress at 95% — final jump to 100% happens when poll detects completion
   const progress = Math.min((elapsed / estimated) * 100, 95)
@@ -90,6 +96,15 @@ function ExecutionLog({ incident }: { incident: Incident }) {
     }, 1000)
     return () => { clearInterval(logTimer); clearInterval(clockTimer) }
   }, [lines.length])
+
+  // Hand back to the card ~1.5s after the last line, so it can be read.
+  const onDoneRef = useRef(onDone)
+  onDoneRef.current = onDone
+  useEffect(() => {
+    if (visibleCount < lines.length) return
+    const t = setTimeout(() => onDoneRef.current?.(), 1500)
+    return () => clearTimeout(t)
+  }, [visibleCount, lines.length])
 
   return (
     <div className="space-y-3">
@@ -132,7 +147,10 @@ function ExecutionLog({ incident }: { incident: Incident }) {
               transition={{ duration: 0.15 }}
               className={cn(
                 'leading-relaxed',
-                line.startsWith('✓') ? 'text-emerald-400' : 'text-zinc-400',
+                line.startsWith('✓') ? 'text-emerald-400'
+                  : line.startsWith('✗') ? 'text-red-400'
+                  : line.startsWith('!') ? 'text-amber-400'
+                  : 'text-zinc-400',
               )}
             >
               {line}
@@ -378,9 +396,11 @@ interface RemediationCardProps {
   // the primary action. No approve call is ever attempted from here —
   // the server independently rejects it too (defense in depth).
   readOnlyConnection?: boolean
+  // Gap-table #8: explicit Reject. Optional so other callers need no change.
+  onRejected?: (incidentId: string) => void
 }
 
-export function RemediationCard({ incident, token, onApproved, onResolvedManually, onAssigned, readOnlyConnection }: RemediationCardProps) {
+export function RemediationCard({ incident, token, onApproved, onResolvedManually, onAssigned, readOnlyConnection, onRejected }: RemediationCardProps) {
   const [selected, setSelected]         = useState<string | null>(null)
   const [customInput, setCustom]        = useState('')
   const [expanded, setExpanded]         = useState<string | null>(null)
@@ -389,6 +409,13 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
   const [manualNote, setManualNote]     = useState('')
   const [manualLoading, setManualLoading] = useState(false)
   const [manualError, setManualError]   = useState<string | null>(null)
+  // Gap-table #9: lines of the approved option's log, held on screen until
+  // the stream finishes (the demo marks an approval done instantly).
+  const [streamLines, setStreamLines]   = useState<string[] | null>(null)
+  const [rejecting, setRejecting]       = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+  const [rejectLoading, setRejectLoading] = useState(false)
+  const [rejectError, setRejectError]   = useState<string | null>(null)
 
   const isPending   = incident.status === 'pending_approval'
   const isExecuting = incident.status === 'executing'
@@ -403,6 +430,8 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
         selected_option_id: selected,
         custom_solution_input: selected === 'custom' ? customInput : undefined,
       })
+      const chosen = incident.options.find((o) => o.id === selected)
+      if (selected !== 'hold' && chosen?.execution_log?.length) setStreamLines(chosen.execution_log)
       onApproved(incident.incident_id, selected)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Approval failed')
@@ -423,6 +452,22 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
       setManualError(e instanceof Error ? e.message : 'Could not record resolution')
     } finally {
       setManualLoading(false)
+    }
+  }
+
+  async function handleConfirmReject() {
+    const reason = rejectReason.trim()
+    if (!reason) return
+    setRejectLoading(true)
+    setRejectError(null)
+    try {
+      await rejectIncident(token, incident.incident_id, reason)
+      setRejecting(false)
+      onRejected?.(incident.incident_id)
+    } catch (e: unknown) {
+      setRejectError(e instanceof Error ? e.message : 'Could not reject')
+    } finally {
+      setRejectLoading(false)
     }
   }
 
@@ -519,8 +564,17 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-5">
-        {/* Execution log — shown while running */}
-        {isExecuting && <ExecutionLog incident={incident} />}
+        {/* Execution log — shown while running, and held until it finishes */}
+        {(isExecuting || streamLines) && (
+          <ExecutionLog incident={incident} optionLines={streamLines} onDone={() => setStreamLines(null)} />
+        )}
+
+        {/* Root-cause evidence (gap-table #6) — before the options, so the why comes first */}
+        {isPending && (
+          <div className="mb-5">
+            <EvidencePanel evidence={incident.evidence} />
+          </div>
+        )}
 
         {/* Option selector — shown while pending */}
         {isPending && (
@@ -587,6 +641,10 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                           </span>
                         )}
                       </div>
+
+                      {/* Gap-table #7/#8: scope of the change, and the change itself */}
+                      <BlastRadiusBadge blast={opt.blast_radius} />
+                      {(isSelected || isExp) && <DiffView diff={opt.diff} />}
 
                       {isBlockedByReadOnly && (
                         <p className="mt-1 flex items-center gap-1 text-xs text-amber-400">
@@ -691,8 +749,8 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
           </div>
         )}
 
-        {/* Completion panel — shown for resolved/held/failed */}
-        {!isPending && !isExecuting && (
+        {/* Completion panel — shown for resolved/held/failed, after any stream finishes */}
+        {!isPending && !isExecuting && !streamLines && (
           <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
             {incident.status === 'executed' && (
               <>
@@ -765,6 +823,9 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
         {/* Comments thread — 24-gap-closure Phase 2. Always visible,
             regardless of incident status; a comment thread is a
             collaborative record, not part of the approve/resolve flow. */}
+        {/* Gap-table #10: every decision on this incident, from audit_events */}
+        <AuditTrail incidentId={incident.incident_id} status={incident.status} token={token} />
+
         <CommentsThread incidentId={incident.incident_id} token={token} />
       </div>
 
@@ -777,7 +838,45 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
               {error}
             </p>
           )}
+          {/* Gap-table #8: an explicit Reject, with a reason that lands in the audit trail */}
+          {rejecting && (
+            <div className="space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+              <label htmlFor={`reject-${incident.incident_id}`} className="text-xs font-medium text-red-300">
+                Why reject this fix? (recorded in the audit trail)
+              </label>
+              <textarea
+                id={`reject-${incident.incident_id}`}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                maxLength={2000}
+                rows={2}
+                placeholder="e.g. Not during the release freeze; will scale manually."
+                className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-base text-zinc-200 placeholder:text-zinc-600 focus:border-red-500/50 focus:outline-none sm:text-xs"
+              />
+              {rejectError && <p className="text-xs text-red-400">{rejectError}</p>}
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" className="flex-1 border border-zinc-700" disabled={rejectLoading}
+                        onClick={() => { setRejecting(false); setRejectError(null) }}>
+                  Cancel
+                </Button>
+                <Button size="sm" className="flex-1 bg-red-600 text-white hover:bg-red-500" disabled={!rejectReason.trim() || rejectLoading}
+                        loading={rejectLoading} onClick={handleConfirmReject}>
+                  <XCircle className="h-4 w-4" />
+                  Confirm reject
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex-1 border border-red-500/40 text-red-300 hover:bg-red-500/10"
+              disabled={loading || rejecting}
+              onClick={() => setRejecting(true)}
+            >
+              Reject
+            </Button>
             <Button
               variant="ghost"
               size="sm"

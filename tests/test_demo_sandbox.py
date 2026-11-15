@@ -150,7 +150,8 @@ class TestCreateDemoSession:
         await create_demo_session(pool)
         insert_calls = [c for c in conn.execute.await_args_list if "INSERT INTO incidents" in c.args[0]]
         assert len(insert_calls) == len(DEMO_INCIDENTS) == 8
-        assert all(c.args[-1] == session_id for c in insert_calls)
+        # demo_session_id is $10; evidence ($11, migration 061) comes after it.
+        assert all(c.args[10] == session_id for c in insert_calls)
 
     async def test_never_wipes_other_visitors_incidents(self):
         pool, conn = _make_pool(fetchrow_side_effect=[{"id": uuid4()}], fetchval_return=uuid4())
@@ -436,3 +437,69 @@ class TestCommentLengthCap:
         IncidentCommentCreateRequest(body="x" * 4000)
         with pytest.raises(ValidationError):
             IncidentCommentCreateRequest(body="x" * 4001)
+
+
+class TestDemoScenarioContent:
+    """Gap-table #5-#9: what a buyer evaluating the demo actually sees."""
+
+    def test_still_eight_incidents(self):
+        assert len(DEMO_INCIDENTS) == 8
+
+    def test_the_four_target_scenarios_are_present(self):
+        text = " ".join(i["parsed_error"] for i in DEMO_INCIDENTS)
+        assert "CrashLoopBackOff" in text and "OOMKilled" in text
+        assert "0.0.0.0/0" in text and "Terraform" in text          # SG drift
+        assert "AccessDenied" in text and "github-deploy-role" in text  # CI IAM mismatch
+        assert "publicly readable" in text and "Block Public Access" in text  # S3 exposure
+
+    def test_every_incident_has_valid_evidence(self):
+        from db.models import EvidenceBlock
+
+        for inc in DEMO_INCIDENTS:
+            assert inc.get("evidence"), inc["resource_name"]
+            for block in inc["evidence"]:
+                EvidenceBlock(**block)
+                assert block["lines"]
+
+    def test_every_option_has_blast_radius_and_its_own_execution_log(self):
+        from db.models import RemediationOption
+
+        for inc in DEMO_INCIDENTS:
+            for opt in inc["remediation_options"]:
+                o = RemediationOption(**opt)
+                assert o.blast_radius is not None, (inc["resource_name"], o.id)
+                assert o.execution_log, (inc["resource_name"], o.id)
+
+    def test_diffs_are_unified_diffs(self):
+        for inc in DEMO_INCIDENTS:
+            for opt in inc["remediation_options"]:
+                if opt.get("diff"):
+                    lines = opt["diff"].splitlines()
+                    assert lines[0].startswith("--- ") and lines[1].startswith("+++ "), opt["title"]
+                    assert any(l.startswith(("+", "-")) and not l.startswith(("+++", "---")) for l in lines)
+
+    def test_execution_log_matches_its_incident(self):
+        """No generic logs: each option's log names something from its own incident."""
+        markers = {
+            "agent_02_k8s_alert": "checkout-service",
+            "agent_01_cicd_triage": "deploy-assets",
+            "agent_10_dependency_patch": "lodash",
+            "agent_06_finops": "i-0a1b2c3d4e5f67890",
+        }
+        for inc in DEMO_INCIDENTS:
+            marker = markers.get(inc["agent_id"])
+            if not marker:
+                continue
+            for opt in inc["remediation_options"]:
+                assert any(marker in line for line in opt["execution_log"]), (inc["agent_id"], opt["id"])
+
+    def test_rds_storage_growth_is_marked_irreversible(self):
+        rds = [i for i in DEMO_INCIDENTS if i["agent_id"] == "agent_11_resource_health"][0]
+        assert rds["remediation_options"][0]["blast_radius"]["reversible"] is False
+
+    async def test_insert_passes_evidence_natively(self):
+        pool, conn = _make_pool()
+        await insert_demo_incidents(conn, uuid4(), wipe_first=False, demo_session_id=uuid4())
+        inserts = [c for c in conn.execute.await_args_list if "INSERT INTO incidents" in c.args[0]]
+        assert "evidence" in inserts[0].args[0]
+        assert isinstance(inserts[0].args[-1], list)

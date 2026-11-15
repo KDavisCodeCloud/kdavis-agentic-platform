@@ -20,12 +20,34 @@ from pydantic import BaseModel, Field
 # Remediation option embedded in incident JSONB
 # ──────────────────────────────────────────────
 
+class BlastRadius(BaseModel):
+    """What an option touches if approved (gap-table #8). Plain words, shown
+    as a badge next to the option, so an approver can weigh scope before
+    approving -- not a computed risk score."""
+    scope: str                   # "1 deployment, 3 pods"
+    change_surface: str          # "Kubernetes API" | "pull request" | "AWS IAM" ...
+    reversible: bool
+
+
 class RemediationOption(BaseModel):
     id: str                      # "opt_1", "opt_2", "opt_3", "hold"
     title: str
     description: str
     impact: str                  # "low" | "medium" | "high"
     docs_url: str
+    # Gap-table #7-#9, all optional so every agent's existing options stay
+    # valid unchanged: the exact change as a unified diff, what it touches,
+    # and the execution steps this option will stream when approved.
+    diff: Optional[str] = None
+    blast_radius: Optional[BlastRadius] = None
+    execution_log: Optional[list[str]] = None
+
+
+class EvidenceBlock(BaseModel):
+    """One piece of root-cause evidence (migration 061, gap-table #6)."""
+    kind: str                    # "log" | "kubectl" | "metrics" | "terraform" | "cli"
+    title: str
+    lines: list[str]
 
 
 # ──────────────────────────────────────────────
@@ -167,6 +189,8 @@ class IncidentResponse(BaseModel):
     options: list[RemediationOption]
     estimated_duration_seconds: Optional[int] = None
     severity: Optional[str] = None  # critical|high|medium|low -- migration 042
+    # Migration 061: root-cause evidence blocks, None when an agent produced none.
+    evidence: Optional[list[EvidenceBlock]] = None
     # 24-gap-closure Phase 2. agent_id/created_at were referenced throughout
     # the frontend (PipelineTracker.tsx, RemediationCard.tsx) but never
     # actually returned by get_incident/list_incidents -- a real pre-existing

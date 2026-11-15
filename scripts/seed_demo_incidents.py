@@ -56,6 +56,10 @@ async def seed(workspace_id: str, wipe_first: bool) -> None:
 
     ws_uuid = UUID(workspace_id)
     conn = await asyncpg.connect(url, statement_cache_size=0)
+    # Same jsonb codec as the app pool (api/main.py), so evidence (migration 061)
+    # and every other jsonb column are written exactly as the live app writes them.
+    from core.db import register_jsonb_codec
+    await register_jsonb_codec(conn)
     try:
         row = await conn.fetchrow("SELECT id FROM workspaces WHERE id = $1", ws_uuid)
         if not row:

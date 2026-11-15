@@ -15,12 +15,39 @@ export type IncidentStatus =
 
 export type ImpactLevel = 'low' | 'medium' | 'high'
 
+// Gap-table #7-#9 (db.models.BlastRadius). All optional: agents that don't
+// produce them yet keep rendering exactly as before.
+export interface BlastRadius {
+  scope: string
+  change_surface: string
+  reversible: boolean
+}
+
 export interface RemediationOption {
   id: string
   title: string
   description: string
   impact: ImpactLevel
   docs_url: string
+  diff?: string | null
+  blast_radius?: BlastRadius | null
+  execution_log?: string[] | null
+}
+
+// Migration 061, gap-table #6.
+export interface EvidenceBlock {
+  kind: string
+  title: string
+  lines: string[]
+}
+
+// GET /incidents/{id}/audit, gap-table #10.
+export interface IncidentAuditEntry {
+  action: string
+  label: string
+  status: string | null
+  detail: { reason?: string; resolution_note?: string; selected_option_id?: string }
+  at: string | null
 }
 
 export interface Incident {
@@ -46,6 +73,7 @@ export interface Incident {
   created_at?: string
   assigned_to?: string | null
   assigned_to_email?: string | null
+  evidence?: EvidenceBlock[] | null
   // set locally right after a manual resolution — not returned by
   // GET /incidents or GET /incidents/{id} (same convention as
   // custom_solution_input on the pre-existing custom-fix path)

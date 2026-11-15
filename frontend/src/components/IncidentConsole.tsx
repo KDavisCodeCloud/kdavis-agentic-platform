@@ -200,6 +200,13 @@ export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentC
     }
   }
 
+  function handleRejected(incidentId: string) {
+    setIncidents(prev => prev.map(i => (i.incident_id === incidentId ? { ...i, status: 'rejected' } : i)))
+    if (selected?.incident_id === incidentId) {
+      setSelected(prev => (prev ? { ...prev, status: 'rejected' } : null))
+    }
+  }
+
   function handleResolvedManually(incidentId: string, resolutionNote: string | null) {
     onFixApproved?.()
     setIncidents(prev =>
@@ -499,6 +506,7 @@ export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentC
                 token={token}
                 onApproved={handleApproved}
                 onResolvedManually={handleResolvedManually}
+                onRejected={handleRejected}
                 onAssigned={isDemo ? undefined : handleAssigned}
                 readOnlyConnection={isReadOnlyBlocked(selected, connections, isDemo)}
               />

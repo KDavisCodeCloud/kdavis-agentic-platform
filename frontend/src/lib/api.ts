@@ -10,7 +10,7 @@ import type {
   IncidentFilters, WorkspaceMembersResponse, WorkspaceMember, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
   ExhaustedRetriesResponse, SetTokenExpiryResult, RequireMfaResult,
   SetupChecklist, ConnectionTestResult, LlmUsage,
-  ExecutionPolicy, ResourceExemption,
+  ExecutionPolicy, ResourceExemption, IncidentAuditEntry,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -305,6 +305,26 @@ export async function resolveIncidentManually(
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+// Gap-table #8: an explicit Reject, with a required reason. Writes an
+// audit_events row server-side (remediation_rejected).
+export async function rejectIncident(
+  token: string,
+  incidentId: string,
+  reason: string,
+): Promise<{ incident_id: string; status: 'rejected'; reason: string }> {
+  if (MOCK_MODE) return { incident_id: incidentId, status: 'rejected', reason }
+  return request(`/incidents/${incidentId}/reject`, token, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+}
+
+// Gap-table #10: this incident's own audit trail, oldest first.
+export async function listIncidentAudit(token: string, incidentId: string): Promise<IncidentAuditEntry[]> {
+  if (MOCK_MODE) return []
+  return request<IncidentAuditEntry[]>(`/incidents/${incidentId}/audit`, token)
 }
 
 // "Exempt this resource" on the incident card (Settings → Policies, Step 2).

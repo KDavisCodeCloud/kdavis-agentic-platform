@@ -24,7 +24,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from api.middleware.auth import get_workspace_or_member, get_workspace_or_member_or_demo
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db.models import (
     IncidentApproveRequest,
@@ -64,7 +64,17 @@ from core.workspace_scope import workspace_scoped_connection
 
 
 class IncidentRejectRequest(BaseModel):
-    reason: str
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
+def _evidence(raw) -> Optional[list]:
+    """incidents.evidence (migration 061) as a list, whether the driver
+    returned it decoded (jsonb codec) or as a JSON string. None when absent."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    return raw or None
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -218,7 +228,7 @@ async def get_incident(
             SELECT i.id, i.workspace_id, i.agent_id, i.parsed_error, i.remediation_options,
                    i.selected_option_id, i.execution_status, i.estimated_duration_seconds, i.tokens_used,
                    i.severity, i.resource_id, i.resource_name, i.cloud_provider, i.created_at, i.assigned_to,
-                   i.failure_reason, i.failure_kind,
+                   i.failure_reason, i.failure_kind, i.evidence,
                    m.email AS assigned_to_email
             FROM incidents i
             LEFT JOIN workspace_members m ON m.id = i.assigned_to
@@ -257,6 +267,7 @@ async def get_incident(
         assigned_to_email=row["assigned_to_email"],
         failure_reason=row["failure_reason"],
         failure_kind=row["failure_kind"],
+        evidence=_evidence(row.get("evidence")),
     )
 
 
@@ -382,16 +393,34 @@ async def approve_incident(
         # "system_connection_test", never a real _WORKFLOW_CLASSES key) and
         # must never take a real remediation action regardless -- approve
         # simulates instant success instead of calling any agent's resume().
+        # Gap-table #9: an option whose own execution_log ends in a failure
+        # line ("✗ ...") is simulated as failing, so the outcome never
+        # contradicts the log the approver just watched (e.g. "re-run the
+        # job only" on an IAM mismatch). Everything else simulates success.
+        sim_log = (selected_option or {}).get("execution_log") or []
+        sim_failed = bool(sim_log) and str(sim_log[-1]).lstrip().startswith("✗")
         async with db.acquire() as conn:
-            await conn.execute(
-                "UPDATE incidents SET execution_status = 'executed' WHERE id = $1",
-                UUID(incident_id),
-            )
+            if sim_failed:
+                await conn.execute(
+                    """
+                    UPDATE incidents SET execution_status = 'failed',
+                           failure_kind = 'execution_error', failure_reason = $2
+                    WHERE id = $1
+                    """,
+                    UUID(incident_id),
+                    str(sim_log[-1]).lstrip("✗ ").strip()[:500],
+                )
+            else:
+                await conn.execute(
+                    "UPDATE incidents SET execution_status = 'executed' WHERE id = $1",
+                    UUID(incident_id),
+                )
         await write_audit_event(
             workspace_id=str(workspace["id"]),
             action="test_incident_approved_simulated",
-            status="success",
+            status="failed" if sim_failed else "success",
             incident_id=incident_id,
+            metadata={"selected_option_id": selected_id},
         )
         # Migration 060 funnel: a public-demo approval is a conversion step.
         # Best-effort; never fails the approval.
@@ -402,7 +431,7 @@ async def approve_incident(
             )
         return ApprovalResponse(
             incident_id=incident_id,
-            status="executed",
+            status="failed" if sim_failed else "executed",
             selected_option_id=selected_id,
             message="Test incident approved — simulated, no real action was taken.",
         )
@@ -557,6 +586,18 @@ async def reject_incident(
         )
 
     log.info("[IncidentsRoute] Incident %s rejected: reason=%s", incident_id, body.reason[:80])
+
+    # The docstring always promised this; until 2026-11-14 a reject only set
+    # custom_solution_input and never reached audit_events (gap-table #10).
+    await write_audit_event(
+        workspace_id=str(workspace["id"]),
+        action="remediation_rejected",
+        status="rejected",
+        incident_id=incident_id,
+        metadata={"reason": body.reason},
+    )
+    if workspace.get("is_demo_session"):
+        await record_demo_server_event(db, "fix_rejected", workspace["demo_session_id"])
 
     return {
         "incident_id": incident_id,
@@ -736,6 +777,7 @@ async def list_incidents(
         SELECT i.id, i.parsed_error, i.remediation_options, i.execution_status,
                i.estimated_duration_seconds, i.severity, i.agent_id, i.resource_id,
                i.resource_name, i.cloud_provider, i.created_at, i.assigned_to, i.failure_reason, i.failure_kind,
+               i.evidence,
                m.email AS assigned_to_email
         FROM incidents i
         LEFT JOIN workspace_members m ON m.id = i.assigned_to
@@ -821,6 +863,7 @@ async def list_incidents(
                 assigned_to_email=row["assigned_to_email"],
                 failure_reason=row["failure_reason"],
                 failure_kind=row["failure_kind"],
+                evidence=_evidence(row.get("evidence")),
             )
         )
     return results
@@ -1018,6 +1061,68 @@ async def create_incident_comment(
 
 
 _BULK_ACTIONS = frozenset({"dismiss", "resolve_manually"})
+
+
+# Audit trail for one incident (gap-table #10). Labels are written for an
+# approver, not an engineer; unknown actions fall back to the raw name.
+_AUDIT_ACTION_LABELS = {
+    "test_incident_approved_simulated": "Fix approved (simulated, demo)",
+    "remediation_rejected": "Fix rejected",
+    "manual_resolution": "Resolved manually",
+    "remediation_approved": "Fix approved",
+    "remediation_executed": "Fix executed",
+    "remediation_failed": "Fix failed",
+}
+# Only these metadata keys are ever returned -- never the raw metadata blob.
+_AUDIT_DETAIL_KEYS = ("reason", "resolution_note", "selected_option_id")
+
+
+@router.get("/{incident_id}/audit")
+async def list_incident_audit(
+    incident_id: str,
+    request: Request,
+    workspace: dict = Depends(get_workspace_or_member_or_demo),
+) -> list[dict]:
+    """The audit_events rows for one incident, oldest first -- the same rows
+    the workspace audit log holds, shown inline on the incident card so an
+    approver (or a demo visitor) can see that every decision is recorded."""
+    db = request.app.state.db_pool
+    scope_sql, scope_params = demo_scope_clause(workspace, 3)
+    async with db.acquire() as conn:
+        exists = await conn.fetchval(
+            "SELECT 1 FROM incidents WHERE id = $1 AND workspace_id = $2" + scope_sql,
+            UUID(incident_id), workspace["id"], *scope_params,
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+        rows = await conn.fetch(
+            """
+            SELECT action, status, metadata, created_at
+            FROM audit_events
+            WHERE incident_id = $1 AND workspace_id = $2
+            ORDER BY created_at ASC
+            LIMIT 100
+            """,
+            UUID(incident_id), workspace["id"],
+        )
+    out = []
+    for r in rows:
+        meta = r["metadata"]
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        meta = meta if isinstance(meta, dict) else {}
+        out.append({
+            "action": r["action"],
+            "label": (
+                "Fix approved; simulated run failed (demo)"
+                if r["action"] == "test_incident_approved_simulated" and r["status"] == "failed"
+                else _AUDIT_ACTION_LABELS.get(r["action"], r["action"].replace("_", " "))
+            ),
+            "status": r["status"],
+            "detail": {k: meta[k] for k in _AUDIT_DETAIL_KEYS if meta.get(k)},
+            "at": r["created_at"].isoformat() if r["created_at"] else None,
+        })
+    return out
 
 
 @router.post("/bulk", response_model=BulkIncidentActionResponse)

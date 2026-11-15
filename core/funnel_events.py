@@ -35,7 +35,7 @@ PRODUCT_ID = "cloud_decoded"
 
 CLIENT_EVENTS = frozenset({"demo_opened", "incident_viewed", "signup_clicked", "booking_clicked"})
 SERVER_EVENTS = frozenset({
-    "fix_approved", "fix_resolved_manually",
+    "fix_approved", "fix_resolved_manually", "fix_rejected",
     "signup_completed", "checkout_started", "subscribed",
 })
 ALL_EVENTS = CLIENT_EVENTS | SERVER_EVENTS
