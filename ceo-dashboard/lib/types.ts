@@ -466,4 +466,41 @@ export type BuyerResearchTask = {
     status: string | null;
     committed: boolean;
   }[];
+  // Lead-sources brief (2026-11-15). The resolver's best guess at the buyer,
+  // with where it came from -- a suggestion to confirm, never a saved contact.
+  buyer_suggestion?: BuyerCandidate | null;
+  buyer_candidates?: BuyerCandidate[];
+  buyer_resolution?: {
+    outcome: "auto_resolved" | "prefilled" | "manual";
+    checked_at: string;
+    sources_tried: Record<string, number>;
+    candidates: number;
+  } | null;
+  signals?: LeadSignals;
+};
+
+export type BuyerCandidate = {
+  name: string | null;
+  title: string | null;
+  source: "form_d" | "company_page" | "github" | "hn_poster" | "search_snippet" | string;
+  confidence: "high" | "medium" | "low" | string;
+  title_verdict?: string;
+  evidence?: string | null;
+  evidence_url?: string | null;
+  email?: string | null;
+  email_grade?: string | null;
+};
+
+// Source + signals label shown on Find the Buyer and draft cards.
+export type LeadSignals = {
+  source: string | null;
+  posting_age_days: number | null;
+  posting_date: string | null;
+  funding_date: string | null;
+  funding_amount: number | null;
+  funding_source: string | null;
+  headcount_band: string | null;
+  size_estimate: number | null;
+  size_estimate_method: string | null;
+  remote: boolean | null;
 };

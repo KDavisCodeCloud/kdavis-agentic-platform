@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchBuyerResearchTasks, saveBuyerContact, skipBuyerResearchTask } from "@/lib/api";
 import { ConflictNote, ProductBadge, productColor, productKey, type ProductKey } from "@/components/ui/OutreachProduct";
-import type { BuyerResearchTask } from "@/lib/types";
+import type { BuyerCandidate, BuyerResearchTask, LeadSignals } from "@/lib/types";
 
 // Buyer-research lane (decision 5b, 2026-10-01).
 //
@@ -52,6 +52,87 @@ function scoreColor(value: number | null): string {
   if (value >= 0.7) return "#6fce8f";
   if (value >= 0.5) return MINT;
   return AMBER;
+}
+
+// Lead-sources brief (2026-11-15): where a lead / suggested buyer came from.
+const SOURCE_LABEL: Record<string, string> = {
+  cloud_decoded_job_signal: "ATS board",
+  job_posting_signal: "ATS board",
+  hn_thread: "Hacker News",
+  form_d: "SEC Form D",
+  company_page: "company site",
+  github: "GitHub",
+  hn_poster: "HN poster",
+  search_snippet: "search result",
+};
+
+function fundingText(sig: LeadSignals): string {
+  const amount = sig.funding_amount ? " · $" + Math.round(sig.funding_amount / 1000).toLocaleString() + "k" : "";
+  const via = sig.funding_source === "sec_form_d" ? " (Form D)" : "";
+  return "funded " + sig.funding_date + amount + via;
+}
+
+function SignalChips({ signals }: { signals?: LeadSignals }) {
+  if (!signals) return null;
+  const chips: { text: string; color: string }[] = [];
+  if (signals.source) chips.push({ text: SOURCE_LABEL[signals.source] ?? signals.source, color: "#7ea6f5" });
+  if (signals.posting_age_days != null)
+    chips.push({
+      text: "role open " + signals.posting_age_days + "d",
+      color: signals.posting_age_days >= 30 ? AMBER : SECONDARY,
+    });
+  if (signals.funding_date) chips.push({ text: fundingText(signals), color: "#6fce8f" });
+  if (signals.size_estimate != null)
+    chips.push({
+      text: "~" + signals.size_estimate + " people (" + (signals.size_estimate_method ?? "est.") + ")",
+      color: SECONDARY,
+    });
+  else if (signals.headcount_band) chips.push({ text: signals.headcount_band + " people", color: SECONDARY });
+  if (signals.remote === true) chips.push({ text: "remote", color: MUTED });
+  if (!chips.length) return null;
+  return (
+    <div className="flex flex-wrap" style={{ gap: 4, marginTop: 6 }}>
+      {chips.map((c) => <Tag key={c.text} text={c.text} color={c.color} />)}
+    </div>
+  );
+}
+
+function SuggestionRow({ s, onUse }: { s: BuyerCandidate; onUse: () => void }) {
+  const conf = s.confidence === "high" ? "#6fce8f" : s.confidence === "medium" ? MINT : AMBER;
+  return (
+    <div
+      className="flex flex-wrap items-center"
+      style={{
+        gap: 8, margin: "0 0 10px", padding: "8px 10px", borderRadius: 8,
+        background: MINT + "0f", border: "1px solid " + MINT + "33", fontSize: 11.5, color: SECONDARY,
+      }}
+    >
+      <span style={{ color: MUTED }}>suggested buyer:</span>
+      <span style={{ color: TEXT, fontWeight: 600 }}>{s.name}</span>
+      {s.title && <span>{s.title}</span>}
+      <Tag text={(SOURCE_LABEL[s.source] ?? s.source) + " · " + s.confidence} color={conf} />
+      {s.email && (
+        <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 10.5 }}>
+          {s.email} ({s.email_grade ?? "unverified"})
+        </span>
+      )}
+      {s.evidence_url && (
+        <a href={s.evidence_url} target="_blank" rel="noreferrer noopener" style={{ color: MINT, fontSize: 10.5 }}>
+          evidence
+        </a>
+      )}
+      <button
+        onClick={onUse}
+        style={{
+          marginLeft: "auto", fontSize: 11, fontFamily: "var(--font-mono, monospace)", color: MINT,
+          border: "1px solid " + MINT + "55", borderRadius: 6, padding: "4px 10px", background: "transparent",
+          minHeight: 28,
+        }}
+      >
+        use suggestion
+      </button>
+    </div>
+  );
 }
 
 const PARTNER_LABEL: Record<string, string> = {
@@ -252,6 +333,8 @@ export function BuyerResearchLane({
                 )}
               </div>
 
+              <SignalChips signals={task.signals} />
+
               {(task.pain_phrases ?? []).length > 0 && (
                 <p style={{ fontSize: 11, color: SECONDARY, margin: "6px 0 0" }}>
                   <span style={{ color: MUTED }}>pain in posting: </span>
@@ -364,6 +447,21 @@ export function BuyerResearchLane({
                 Look for:{" "}
                 <span style={{ color: SECONDARY }}>{task.target_titles.join(" · ")}</span>
               </p>
+
+              {/* Resolver suggestion (2026-11-15): one click fills name and
+                  title; the profile URL is still pasted by a human, and
+                  nothing is saved until "Save contact". */}
+              {task.buyer_suggestion?.name && (
+                <SuggestionRow
+                  s={task.buyer_suggestion}
+                  onUse={() =>
+                    setDraft(task.lead_id, {
+                      name: task.buyer_suggestion?.name ?? "",
+                      title: task.buyer_suggestion?.title ?? "",
+                    })
+                  }
+                />
+              )}
 
               {/* Paste field. Three inputs, all required -- a profile URL with
                   no name and title leaves the lead unaddressable, and a name
