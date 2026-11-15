@@ -34,8 +34,13 @@ interface StoredAttribution extends Attribution {
 
 // Reads ?ref= / utm_* from the current URL. A new ref or campaign replaces
 // any earlier one (the latest outreach link is the one that brought them
-// back). The ref is then removed from the address bar so a copied or shared
-// URL doesn't credit someone else's visit to this lead.
+// back). Every captured parameter is then removed from the address bar:
+//  - so a copied or shared URL doesn't credit someone else's visit to this lead;
+//  - so a second capture in the same page load (the demo page captures before
+//    minting, then the root layout's AttributionCapture runs) finds nothing and
+//    is a true no-op. Stripping only ref broke this: the second pass saw the
+//    utm_* still in the URL and overwrote the stored attribution without the
+//    ref (caught by the 2026-11-15 live post-deploy check).
 export function captureAttributionFromUrl(): void {
   try {
     const url = new URL(window.location.href)
@@ -49,10 +54,8 @@ export function captureAttributionFromUrl(): void {
     if (!next.ref && !UTM_KEYS.some(k => next[k])) return
 
     localStorage.setItem(ATTRIBUTION_KEY, JSON.stringify(next))
-    if (url.searchParams.has('ref')) {
-      url.searchParams.delete('ref')
-      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
-    }
+    for (const key of ['ref', ...UTM_KEYS]) url.searchParams.delete(key)
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
   } catch {
     // storage blocked or malformed URL: proceed unattributed
   }
