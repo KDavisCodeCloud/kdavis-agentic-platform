@@ -1665,7 +1665,12 @@ type, confirm real vs. legitimate, fix the real ones, then widen the
 static guard test to cover the whole codebase once it won't produce
 false positives on legitimate `text` columns.
 
-### 34. Outreach ref links: the mse-api half is not built yet (2026-11-14)
+### 34. Outreach ref links: the mse-api half is not built yet (2026-11-14) — RESOLVED 2026-11-15
+
+**Resolved:** kdavis-microsaas-engine `abadac1` (deployed to mse-api staging, then prod)
+attaches `?ref=r<10 hex of lead id>` at generation and at approval; Outreach cards carry
+`demo_ref`; the CEO dashboard shows each contact's demo activity (`dfa2705`). Original
+entry kept below for history.
 
 The Cloud Decoded side of per-lead attribution is live as of migration 060
 (`core/funnel_events.py`, `api/routes/funnel_events.py`): a `?ref=` code on
@@ -1686,7 +1691,13 @@ Remaining work, in mse-api (`microsaas-engine`, default branch `main`):
 3. Optionally surface `GET /api/v1/internal/funnel/summary?days=30` as a
    funnel panel.
 
-### 35. Four sanitizer / agent_01 tests already fail on `master` (found 2026-11-14)
+### 35. Four sanitizer / agent_01 tests already fail on `master` (found 2026-11-14) — RESOLVED 2026-11-15
+
+**Resolved (`2a50ac1`):** the three sanitizer failures were mislabelled, not leaked, secrets
+— but a wider probe found 13 of 18 real-world secret formats (JSON keys, `aws sts` / `az ad sp`
+output, k8s Secret data, GitHub/Slack/Stripe tokens, `password=` in logs) passing through
+unredacted. All 18 now redact; 11 diagnostic lines are pinned as must-survive. The agent_01
+test never wired its own mock. Full suite green. Original entry kept below for history.
 
 Found while running the full suite for migration 060, confirmed failing on
 the committed HEAD in a clean worktree, so not caused by that change:

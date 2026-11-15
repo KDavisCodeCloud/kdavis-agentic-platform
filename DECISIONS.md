@@ -330,3 +330,30 @@ carry a `?ref=` code, and activity from them is recorded against it.
 - **Proved** on the throwaway Postgres 16: 060 applied through
   `db/migrate.py` with the production jsonb codec, then 20/20 end-to-end
   checks of a full ref journey against the real route code.
+
+## 2026-11-15 — Sanitizer hardening, booking CTA at runtime, demo evidence (GAPS #35, gap-table #5-#11)
+
+- **DataSanitizationShield (GAPS #35).** Key/value patterns now accept env,
+  YAML, JSON and connection-string forms and replace only the value, keeping
+  the key so an operator still sees which credential was involved. A
+  catch-all redacts any key that *ends* in a secret word (ending, not
+  containing, so `secretName`, `tokenUrl`, `passwordPolicy` stay readable for
+  diagnosis). Generic patterns never re-label a value a specific one already
+  redacted. `sanitize_dict` redacts by key. Over-redaction from the older
+  `dotenv_assignment` rule (`max_tokens=…`, `keyvault_name=…`) was kept on
+  purpose: narrowing it would let `GITHUB_TOKEN_PROD=…` through.
+- **Fake secrets in tests are assembled at runtime.** GitHub push protection
+  blocked a test file containing token-shaped literals; the fix was to build
+  them from pieces, not to allow-list them.
+- **Booking CTA (#11).** `CAL_BOOKING_URL` lives on the Railway API and is
+  read per request by `GET /api/v1/demo/config`, because Vercel bakes env
+  vars into each deployment (a `NEXT_PUBLIC_` var would need a rebuild). Only
+  plain https URLs are ever returned; otherwise the button stays hidden.
+- **Demo evidence (#5-#10).** Evidence is a nullable `incidents.evidence`
+  JSONB column (migration 061); diff, blast radius and execution log are
+  optional fields inside `remediation_options`, so real agents' incidents
+  are unchanged until an agent starts producing them. A demo option whose
+  log ends in a failure line is simulated as `failed`, never `executed`.
+  Reject now writes `audit_events` (it never did, for anyone).
+- **mse-api deploys are by SHA in both environments** (`serviceInstanceDeployV2`);
+  a push to `main` deploys nothing. Staging first, then production.
