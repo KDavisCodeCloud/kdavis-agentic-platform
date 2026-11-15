@@ -19,7 +19,7 @@ const ATTRIBUTION_TTL_MS = 90 * 24 * 60 * 60 * 1000
 const REF_RE = /^[A-Za-z0-9_-]{4,64}$/
 const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign'] as const
 
-export type ClientFunnelEvent = 'demo_opened' | 'incident_viewed' | 'signup_clicked'
+export type ClientFunnelEvent = 'demo_opened' | 'incident_viewed' | 'signup_clicked' | 'booking_clicked'
 
 export interface Attribution {
   ref?: string

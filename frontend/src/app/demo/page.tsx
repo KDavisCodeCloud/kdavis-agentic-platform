@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Zap, Sparkles } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
-import { startDemoSession, ApiError } from '@/lib/api'
+import { startDemoSession, getDemoConfig, ApiError } from '@/lib/api'
 import { captureAttributionFromUrl, getAttribution, trackEvent } from '@/lib/attribution'
 
 // Phase 6 public demo sandbox. GET /api/v1/demo mints a scoped,
@@ -26,6 +26,13 @@ export default function DemoPage() {
   const [expiresAt, setExpiresAt] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // Gap-table #11: shown after the visitor's first approval.
+  const [showCta, setShowCta] = useState(false)
+  const [bookingUrl, setBookingUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    void getDemoConfig().then(c => setBookingUrl(c.booking_url))
+  }, [])
 
   const mintSession = useCallback(() => {
     setLoading(true)
@@ -127,8 +134,34 @@ export default function DemoPage() {
       </div>
 
       <main className="flex-1 overflow-hidden">
-        <IncidentConsole token={token} onAuthError={handleAuthError} />
+        <IncidentConsole token={token} onAuthError={handleAuthError} onFixApproved={() => setShowCta(true)} />
       </main>
+
+      {showCta && (
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-blue-500/30 bg-blue-500/10 px-5 py-3">
+          <p className="min-w-0 flex-1 text-sm text-zinc-200">
+            <strong className="font-semibold text-zinc-100">That&apos;s the loop.</strong> Cloud Decoded diagnoses, you
+            approve, then it runs. Nothing executes on your infrastructure without your approval.
+          </p>
+          {bookingUrl && (
+            <a
+              href={bookingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => trackEvent('booking_clicked', { demoToken: token, properties: { cta: '/demo' } })}
+              className="inline-flex min-h-[44px] items-center rounded-lg border border-zinc-600 px-4 py-2 text-sm text-zinc-100 hover:bg-zinc-900"
+            >
+              Book a 15-min walkthrough
+            </a>
+          )}
+          <a
+            href="/signup"
+            className="inline-flex min-h-[44px] items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            Get started →
+          </a>
+        </div>
+      )}
     </div>
   )
 }

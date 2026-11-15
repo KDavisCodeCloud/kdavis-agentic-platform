@@ -118,6 +118,22 @@ export interface DemoSession {
   message: string
 }
 
+// Gap-table #11: what the demo's post-approval CTA may show. booking_url comes
+// from CAL_BOOKING_URL on the API, read per request, so it can be set or
+// cleared without a frontend build. Never throws: no config means the
+// "Get started" button alone.
+export async function getDemoConfig(): Promise<{ booking_url: string | null }> {
+  try {
+    const res = await fetch(`${API_URL}/api/v1/demo/config`)
+    if (!res.ok) return { booking_url: null }
+    const body = (await res.json()) as { booking_url?: string | null }
+    const url = body.booking_url ?? null
+    return { booking_url: url && url.startsWith('https://') ? url : null }
+  } catch {
+    return { booking_url: null }
+  }
+}
+
 // Unauthenticated -- deliberately does not go through request() (there is
 // no token yet to send).
 // attribution (migration 060): the visitor's ?ref= / utm_* (see

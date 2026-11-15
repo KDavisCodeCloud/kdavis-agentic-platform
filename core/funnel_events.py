@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 PRODUCT_ID = "cloud_decoded"
 
-CLIENT_EVENTS = frozenset({"demo_opened", "incident_viewed", "signup_clicked"})
+CLIENT_EVENTS = frozenset({"demo_opened", "incident_viewed", "signup_clicked", "booking_clicked"})
 SERVER_EVENTS = frozenset({
     "fix_approved", "fix_resolved_manually",
     "signup_completed", "checkout_started", "subscribed",

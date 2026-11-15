@@ -26,6 +26,7 @@ incidents and comments cascade away with them.
 """
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
@@ -36,6 +37,33 @@ from core.demo_sandbox import create_demo_session
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/demo", tags=["demo"])
+
+
+class DemoConfigResponse(BaseModel):
+    booking_url: Optional[str] = None
+
+
+def _booking_url() -> Optional[str]:
+    """CAL_BOOKING_URL, read per request so setting or clearing it on Railway
+    takes effect without a code change or frontend build (gap-table #11).
+    Only an https URL is ever handed to the page; anything else is treated as
+    unset (and logged) rather than rendered as a broken or unsafe link."""
+    url = (os.getenv("CAL_BOOKING_URL") or "").strip()
+    if not url:
+        return None
+    if not url.startswith("https://") or any(c.isspace() for c in url):
+        log.warning("[Demo] CAL_BOOKING_URL is set but not a plain https URL; booking CTA stays hidden")
+        return None
+    return url
+
+
+@router.get("/config", response_model=DemoConfigResponse)
+@limiter.limit("60/minute")
+async def demo_config(request: Request) -> DemoConfigResponse:
+    """Public. What the demo page's post-approval CTA can show. booking_url
+    is null until CAL_BOOKING_URL is set, and the "Book a 15-min walkthrough"
+    button stays hidden while it is."""
+    return DemoConfigResponse(booking_url=_booking_url())
 
 
 class DemoSessionResponse(BaseModel):

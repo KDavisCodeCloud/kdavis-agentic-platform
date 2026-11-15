@@ -16,6 +16,9 @@ interface IncidentConsoleProps {
   // Called when the API rejects the token (401/403). The public demo page uses
   // this to mint a fresh demo session instead of retrying a dead one.
   onAuthError?: () => void
+  // Called after a fix is approved or resolved manually (not on Hold). The
+  // public demo uses it to show its "what next" CTA (gap-table #11).
+  onFixApproved?: () => void
 }
 
 type FilterTab = 'all' | IncidentStatus
@@ -77,7 +80,7 @@ function hasActiveSearchFilters(f: SearchFilters): boolean {
   return !!(f.resource_name || f.severity || f.agent_id || f.date_from || f.date_to || f.assignedToMe)
 }
 
-export function IncidentConsole({ token, onAuthError }: IncidentConsoleProps) {
+export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentConsoleProps) {
   // Public demo session (/demo). Bulk actions, assignment, the "Assigned to
   // me" filter and the connections lookup all need a real workspace member,
   // and the API rejects a demo token for every one of them, so the demo
@@ -182,6 +185,7 @@ export function IncidentConsole({ token, onAuthError }: IncidentConsoleProps) {
   }
 
   function handleApproved(incidentId: string, optionId: string) {
+    if (optionId !== 'hold') onFixApproved?.()
     setIncidents(prev =>
       prev.map(i =>
         i.incident_id === incidentId
@@ -197,6 +201,7 @@ export function IncidentConsole({ token, onAuthError }: IncidentConsoleProps) {
   }
 
   function handleResolvedManually(incidentId: string, resolutionNote: string | null) {
+    onFixApproved?.()
     setIncidents(prev =>
       prev.map(i =>
         i.incident_id === incidentId
