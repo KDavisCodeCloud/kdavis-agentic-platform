@@ -26,12 +26,16 @@ Security rules:
 import logging
 import re
 import secrets
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
 from api.middleware.rate_limiter import limiter
+from core.funnel_events import (
+    clean_ref, clean_utm, clean_visitor_id, record_workspace_server_event,
+)
 from security.encryption import encrypt
 
 log = logging.getLogger(__name__)
@@ -60,6 +64,15 @@ class CreateWorkspaceRequest(BaseModel):
         description="Must be true -- the signup checkbox's state now actually reaches the backend "
         "(previously collected client-side and discarded). See migration 028.",
     )
+    # Migration 060 attribution, all optional: the outreach ?ref= code and
+    # UTM tags the visitor arrived with, plus their per-tab visitor id so
+    # the signup joins the demo events from the same tab. Validated (and
+    # silently dropped if malformed) by core.funnel_events.
+    ref: Optional[str] = Field(None, max_length=64)
+    utm_source: Optional[str] = Field(None, max_length=200)
+    utm_medium: Optional[str] = Field(None, max_length=200)
+    utm_campaign: Optional[str] = Field(None, max_length=200)
+    visitor_id: Optional[str] = Field(None, max_length=64)
 
     @field_validator("contact_email")
     @classmethod
@@ -122,14 +135,24 @@ async def create_workspace(
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO workspaces (company_name, workspace_token, contact_email, tos_accepted_at)
-            VALUES ($1, $2, $3, NOW())
+            INSERT INTO workspaces (
+                company_name, workspace_token, contact_email, tos_accepted_at,
+                signup_ref, signup_utm_source, signup_utm_medium, signup_utm_campaign, signup_visitor_id
+            )
+            VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8)
             RETURNING id
             """,
             body.company_name,
             token_hash,
             body.contact_email,
+            clean_ref(body.ref),
+            clean_utm(body.utm_source),
+            clean_utm(body.utm_medium),
+            clean_utm(body.utm_campaign),
+            clean_visitor_id(body.visitor_id),
         )
+
+    await record_workspace_server_event(request.app.state.db_pool, "signup_completed", row["id"])
 
     log.info(
         "[Workspaces] Created workspace=%s company=%s contact=%s",

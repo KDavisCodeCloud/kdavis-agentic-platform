@@ -54,6 +54,7 @@ from agents.agent_10_dependency_patch.workflow import DependencyPatchWorkflow
 from agents.agent_11_resource_health.workflow import ResourceHealthWorkflow
 from core.audit import write_audit_event
 from core.demo_sandbox import demo_scope_clause
+from core.funnel_events import record_demo_server_event
 from core.cloud_errors import CloudPermissionError
 from core.hitl import HITLGate
 from core.workspace_credentials import (
@@ -392,6 +393,13 @@ async def approve_incident(
             status="success",
             incident_id=incident_id,
         )
+        # Migration 060 funnel: a public-demo approval is a conversion step.
+        # Best-effort; never fails the approval.
+        if workspace.get("is_demo_session"):
+            await record_demo_server_event(
+                db, "fix_approved", workspace["demo_session_id"],
+                {"agent_id": row["agent_id"], "option_id": selected_id},
+            )
         return ApprovalResponse(
             incident_id=incident_id,
             status="executed",
@@ -676,6 +684,11 @@ async def resolve_incident_manually(
         )
     except Exception as exc:
         log.warning("[IncidentsRoute] Failed to schedule resolution ticketing for %s: %s", incident_id, exc)
+
+    if workspace.get("is_demo_session"):
+        await record_demo_server_event(
+            db, "fix_resolved_manually", workspace["demo_session_id"], {"agent_id": row["agent_id"]},
+        )
 
     return ManualResolutionResponse(
         incident_id=incident_id,

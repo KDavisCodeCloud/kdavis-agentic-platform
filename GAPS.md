@@ -1664,3 +1664,38 @@ Recommend a dedicated session: audit each occurrence's target column
 type, confirm real vs. legitimate, fix the real ones, then widen the
 static guard test to cover the whole codebase once it won't produce
 false positives on legitimate `text` columns.
+
+### 34. Outreach ref links: the mse-api half is not built yet (2026-11-14)
+
+The Cloud Decoded side of per-lead attribution is live as of migration 060
+(`core/funnel_events.py`, `api/routes/funnel_events.py`): a `?ref=` code on
+any theclouddecoded.com link is captured, carried onto the demo session and
+the signup, and every funnel step (demo opened, incident viewed, fix
+approved/resolved, signup clicked, signup, checkout, subscribed) is
+recorded against it. Nothing generates those links yet.
+
+Remaining work, in mse-api (`microsaas-engine`, default branch `main`):
+1. Give every outreach lead a stable ref code (4-64 chars, `[A-Za-z0-9_-]`,
+   e.g. a short id derived from the lead UUID) and put
+   `https://theclouddecoded.com/demo?ref=<code>` into the copy the Outreach
+   tab produces for Cloud Decoded leads.
+2. Show demo activity on the lead card. The CEO dashboard can call
+   `GET /api/v1/internal/funnel/refs/{ref}` on the Cloud Decoded API
+   directly with the admin's Supabase session (same `get_internal_user`
+   auth the other internal routes use); no new secret is needed.
+3. Optionally surface `GET /api/v1/internal/funnel/summary?days=30` as a
+   funnel panel.
+
+### 35. Four sanitizer / agent_01 tests already fail on `master` (found 2026-11-14)
+
+Found while running the full suite for migration 060, confirmed failing on
+the committed HEAD in a clean worktree, so not caused by that change:
+- `tests/test_security.py::TestAWSSecretKey::test_aws_secret_access_key_redacted`
+- `tests/test_security.py::TestAWSSecretKey::test_short_value_not_matched`
+- `tests/test_security.py::TestAzureClientSecret::test_azure_client_secret_redacted`
+- `tests/test_agent01_local.py::test_diagnose_node_returns_three_options`
+
+The first three are DataSanitizationShield redaction cases (AWS secret
+keys, Azure client secrets), which the platform rules treat as
+non-negotiable. Not investigated: needs its own session to find whether
+the patterns or the tests drifted.

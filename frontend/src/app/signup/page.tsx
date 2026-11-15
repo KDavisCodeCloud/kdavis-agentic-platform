@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createWorkspace, ApiError } from '@/lib/api'
+import { getAttribution, getVisitorId } from '@/lib/attribution'
 
 // Real /signup route, recreating signup.dc.html's 2-column layout and its
 // "Create account -> Add payment method -> Connect your stack" progress
@@ -48,7 +49,10 @@ export default function SignupPage() {
     setSubmitting(true)
     setError('')
     try {
-      const result = await createWorkspace(companyName.trim(), contactEmail.trim(), agreed)
+      const result = await createWorkspace(companyName.trim(), contactEmail.trim(), agreed, {
+        ...getAttribution(),
+        visitor_id: getVisitorId(),
+      })
       sessionStorage.setItem('pending_workspace_token', result.workspace_token)
       router.push('/checkout')
     } catch (err) {

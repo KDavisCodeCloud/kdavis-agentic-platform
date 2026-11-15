@@ -35,6 +35,7 @@ from pydantic import BaseModel
 
 from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment, get_workspace_any_status
 from core.compliance import WorkspaceComplianceGuard
+from core.funnel_events import record_workspace_server_event
 from core.email import EmailError, downgrade_deactivation_html, payment_failed_dunning_html, send_email, welcome_email_html
 from core.email_enrollment import enroll_by_email, exit_all_by_email, exit_by_email, get_subscriber_id_by_email
 from core.member_deactivation import deactivate_member_row
@@ -269,6 +270,7 @@ async def create_checkout_session(
         )
 
     log.info("[Billing] Checkout session created — workspace=%s tier=%s", workspace_id[:8], tier)
+    await record_workspace_server_event(request.app.state.db_pool, "checkout_started", workspace_id, {"tier": tier})
     return CheckoutResponse(checkout_url=session.url, tier=tier)
 
 
@@ -440,6 +442,7 @@ async def _handle_checkout_completed(db_pool, session: dict) -> None:
 
     await _send_welcome_email(db_pool, workspace_id)
     await _enroll_onboarding_email_sequence(db_pool, workspace_id)
+    await record_workspace_server_event(db_pool, "subscribed", workspace_id, {"tier": tier}, once=True)
 
 
 async def _enroll_onboarding_email_sequence(db_pool, workspace_id: str) -> None:

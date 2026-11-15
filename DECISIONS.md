@@ -296,3 +296,37 @@ one visitor approving everything emptied the console for everyone for up to
 - **Proved before deploy** against a throwaway Postgres 16 with the
   production migration chain: 059 applied through `db/migrate.py`, then an
   18-check end-to-end isolation run against the real route code.
+
+## 2026-11-14 — First-party funnel events and outreach ref attribution (migration 060)
+
+Gap-table #12/#13. Owner chose "disclose + attribute": outreach links may
+carry a `?ref=` code, and activity from them is recorded against it.
+
+- **No third-party analytics, no cookies.** One table, `cd_funnel_events`,
+  written through `core/funnel_events.py`. The project's own spec already
+  called for self-hosted tracking (`leads/capture/pixel.js`, never wired).
+- **Client vs server events.** Browsers may only send `demo_opened`,
+  `incident_viewed` and `signup_clicked` (`POST /api/v1/events`,
+  rate-limited). Conversion steps (`fix_approved`, `fix_resolved_manually`,
+  `signup_completed`, `checkout_started`, `subscribed`) are written by the
+  API where they happen, so they cannot be forged. `subscribed` is recorded
+  once per workspace because Stripe retries webhooks.
+- **Identity.** Anonymous visitors get a random per-tab id (sessionStorage).
+  The ref plus UTM tags persist in localStorage for 90 days and are stripped
+  from the address bar after capture, so a shared URL doesn't credit
+  someone else's visit to the lead. The ref rides on `demo_sessions` and
+  `workspaces.signup_ref`, so server events inherit it.
+- **Names.** The audit's `trial_clicked` is `signup_clicked` (there is no
+  trial), and `diff_viewed` is `incident_viewed` until diffs exist (#7).
+- **Privacy page updated** (effective 2026-11-14). It discloses visitor
+  activity, the reference links and 13-month retention, and drops a
+  country-level-location claim that was never true.
+- **Retention.** `prune_funnel_events` deletes rows older than 395 days,
+  from the daily retention loop. It is a separate function so
+  `core/retention.py`'s per-tier contract is unchanged.
+- **Read side.** `GET /internal/funnel/refs/{ref}` and
+  `/internal/funnel/summary`, admin-only via `get_internal_user`. The
+  mse-api half (generating ref links, the lead card) is GAPS.md #34.
+- **Proved** on the throwaway Postgres 16: 060 applied through
+  `db/migrate.py` with the production jsonb codec, then 20/20 end-to-end
+  checks of a full ref journey against the real route code.

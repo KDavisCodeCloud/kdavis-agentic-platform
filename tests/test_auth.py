@@ -458,7 +458,8 @@ class TestGetWorkspaceOrMemberOrDemo:
         from datetime import datetime, timedelta, timezone
 
         workspace_id = uuid4()
-        session_row = {"workspace_id": workspace_id, "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)}
+        # id: resolve_demo_session returns it as demo_session_id (migration 059).
+        session_row = {"id": uuid4(), "workspace_id": workspace_id, "expires_at": datetime.now(timezone.utc) + timedelta(hours=1)}
         workspace_row = _workspace_row("active")
         request = _make_demo_request("cd_demo_abc123", fetchrow_side_effect=[session_row, workspace_row])
 

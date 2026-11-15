@@ -120,8 +120,16 @@ export interface DemoSession {
 
 // Unauthenticated -- deliberately does not go through request() (there is
 // no token yet to send).
-export async function startDemoSession(): Promise<DemoSession> {
-  const res = await fetch(`${API_URL}/api/v1/demo`)
+// attribution (migration 060): the visitor's ?ref= / utm_* (see
+// lib/attribution.ts), stored on the demo session so approvals inside the
+// demo are credited to the outreach link that opened it.
+export async function startDemoSession(
+  attribution: { ref?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string } = {},
+): Promise<DemoSession> {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(attribution)) if (v) qs.set(k, v)
+  const query = qs.toString()
+  const res = await fetch(`${API_URL}/api/v1/demo${query ? `?${query}` : ''}`)
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }))
     throw new ApiError(res.status, body.detail ?? `HTTP ${res.status}`)
@@ -703,7 +711,13 @@ export async function testMCPConnection(
 
 // ── Workspaces ─────────────────────────────────────────────────────────
 
-export async function createWorkspace(companyName: string, contactEmail: string, tosAccepted: boolean): Promise<{
+export async function createWorkspace(
+  companyName: string,
+  contactEmail: string,
+  tosAccepted: boolean,
+  // Migration 060: outreach ref / UTM / per-tab visitor id, all optional.
+  attribution: { ref?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string; visitor_id?: string } = {},
+): Promise<{
   id: string
   workspace_token: string
   warning: string
@@ -711,7 +725,7 @@ export async function createWorkspace(companyName: string, contactEmail: string,
   const res = await fetch(`${API_URL}/api/v1/workspaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company_name: companyName, contact_email: contactEmail, tos_accepted: tosAccepted }),
+    body: JSON.stringify({ company_name: companyName, contact_email: contactEmail, tos_accepted: tosAccepted, ...attribution }),
   })
 
   if (!res.ok) {

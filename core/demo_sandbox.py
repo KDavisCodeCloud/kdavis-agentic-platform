@@ -282,7 +282,7 @@ async def run_demo_reset(pool) -> None:
     )
 
 
-async def create_demo_session(pool) -> tuple[str, datetime]:
+async def create_demo_session(pool, attribution: Optional[dict] = None) -> tuple[str, datetime]:
     """
     GET /demo's entry point. Always creates a NEW session/token for the
     visitor (never reuses another visitor's token) in the one demo
@@ -290,7 +290,14 @@ async def create_demo_session(pool) -> tuple[str, datetime]:
     incidents (migration 059). The session row and its incidents are
     written in one transaction, so a visitor never gets a token whose
     console is empty. No other visitor's incidents are read or touched.
+
+    attribution (migration 060): optional ref/utm_* from the visitor's
+    ?ref= / UTM link, validated by core.funnel_events and stored on the
+    session so server-recorded demo events inherit them.
     """
+    from core.funnel_events import clean_ref, clean_utm  # noqa: PLC0415 -- keeps this module's import graph unchanged
+
+    attribution = attribution or {}
     async with pool.acquire() as conn:
         async with conn.transaction():
             workspace_id = await get_or_create_demo_workspace(conn)
@@ -299,11 +306,18 @@ async def create_demo_session(pool) -> tuple[str, datetime]:
             expires_at = datetime.now(timezone.utc) + DEMO_SESSION_TTL
             session_id = await conn.fetchval(
                 """
-                INSERT INTO demo_sessions (workspace_id, session_token_hash, expires_at)
-                VALUES ($1, $2, $3)
+                INSERT INTO demo_sessions (
+                    workspace_id, session_token_hash, expires_at,
+                    ref, utm_source, utm_medium, utm_campaign
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 RETURNING id
                 """,
                 workspace_id, hash_demo_token(raw_token), expires_at,
+                clean_ref(attribution.get("ref")),
+                clean_utm(attribution.get("utm_source")),
+                clean_utm(attribution.get("utm_medium")),
+                clean_utm(attribution.get("utm_campaign")),
             )
             await insert_demo_incidents(conn, workspace_id, wipe_first=False, demo_session_id=session_id)
 

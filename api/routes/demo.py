@@ -26,8 +26,9 @@ incidents and comments cascade away with them.
 """
 
 import logging
+from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from api.middleware.rate_limiter import limiter
@@ -45,7 +46,17 @@ class DemoSessionResponse(BaseModel):
 
 @router.get("", response_model=DemoSessionResponse)
 @limiter.limit("10/minute")
-async def start_demo_session(request: Request) -> DemoSessionResponse:
-    demo_token, expires_at = await create_demo_session(request.app.state.db_pool)
+async def start_demo_session(
+    request: Request,
+    ref: Optional[str] = Query(None, max_length=64),
+    utm_source: Optional[str] = Query(None, max_length=200),
+    utm_medium: Optional[str] = Query(None, max_length=200),
+    utm_campaign: Optional[str] = Query(None, max_length=200),
+) -> DemoSessionResponse:
+    # Migration 060: an outreach ?ref= / UTM link is carried onto the session
+    # (validated in create_demo_session) so approvals inside the demo are
+    # attributed to it. Disclosed on /privacy.
+    attribution = {"ref": ref, "utm_source": utm_source, "utm_medium": utm_medium, "utm_campaign": utm_campaign}
+    demo_token, expires_at = await create_demo_session(request.app.state.db_pool, attribution)
     log.info("[Demo] New demo session minted, expires_at=%s", expires_at.isoformat())
     return DemoSessionResponse(demo_token=demo_token, expires_at=expires_at.isoformat())

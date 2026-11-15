@@ -85,7 +85,9 @@ class TestCreateWorkspace:
         assert result.workspace_token.startswith("cd_ws_")
         assert "not be shown again" in result.warning
 
-        sql, company_name, token_hash, contact_email = conn.fetchrow.await_args.args
+        # [0]: the INSERT. A later fetchrow is the best-effort signup_completed
+        # funnel event (migration 060); [:4] skips the optional signup_* attribution args.
+        sql, company_name, token_hash, contact_email = conn.fetchrow.await_args_list[0].args[:4]
         assert "INSERT INTO workspaces" in sql
         assert "tos_accepted_at" in sql
         assert company_name == "Acme Engineering"
@@ -129,7 +131,7 @@ class TestCreateWorkspace:
             request,
         )
 
-        _, _, _, contact_email = conn.fetchrow.await_args.args
+        _, _, _, contact_email = conn.fetchrow.await_args_list[0].args[:4]
         assert contact_email == "ops@acme.com"
 
 

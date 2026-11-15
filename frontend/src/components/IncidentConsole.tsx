@@ -7,6 +7,7 @@ import { PipelineTracker } from './PipelineTracker'
 import { RemediationCard } from './RemediationCard'
 import { Button } from '@/components/ui/button'
 import { listIncidents, bulkIncidentAction, getConnectionsStatus, isDemoSessionToken, ApiError } from '@/lib/api'
+import { trackEvent } from '@/lib/attribution'
 import { cn } from '@/lib/utils'
 import type { Incident, IncidentStatus, IncidentFilters, ConnectionsStatus } from '@/lib/types'
 
@@ -170,6 +171,15 @@ export function IncidentConsole({ token, onAuthError }: IncidentConsoleProps) {
     if (isDemo) return
     getConnectionsStatus(token).then(setConnections).catch(() => setConnections(null))
   }, [token, isDemo])
+
+  // Demo funnel: which incidents a visitor actually opens. Stands in for
+  // the audit's diff_viewed until diffs exist (gap-table #7).
+  function handleSelect(incident: Incident) {
+    if (isDemo && incident.incident_id !== selectedRef.current?.incident_id) {
+      trackEvent('incident_viewed', { demoToken: token, properties: { agent_id: incident.agent_id ?? '' } })
+    }
+    setSelected(incident)
+  }
 
   function handleApproved(incidentId: string, optionId: string) {
     setIncidents(prev =>
@@ -466,7 +476,7 @@ export function IncidentConsole({ token, onAuthError }: IncidentConsoleProps) {
           ) : (
             <PipelineTracker
               incidents={incidents}
-              onSelect={setSelected}
+              onSelect={handleSelect}
               selectedId={selected?.incident_id ?? null}
               checkedIds={checkedIds}
               onToggleCheck={isDemo ? undefined : toggleCheck}

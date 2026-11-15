@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 }
 
-const EFFECTIVE_DATE = 'September 14, 2026'
+const EFFECTIVE_DATE = 'November 14, 2026'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -57,7 +57,20 @@ export default function PrivacyPage() {
                 service-account token, depending on which connectors you choose to configure.
               </li>
               <li><strong>Usage and audit data:</strong> agent run history, HITL approval decisions, and audit log entries generated as you use the Service.</li>
-              <li><strong>Anonymous visitor data:</strong> country-level location and referrer/UTM data from marketing page visits — no cookies, no individual tracking.</li>
+              <li>
+                <strong>Visitor activity:</strong> the page you arrive on, referrer and UTM campaign tags, and what you
+                do in the public demo (opening it, viewing sample incidents, approving sample fixes, clicking through
+                to sign up) — recorded against a random identifier that lasts only as long as your browser tab. No
+                cookies and no third-party analytics.
+              </li>
+              <li>
+                <strong>Reference links:</strong> links we send you directly — for example in a LinkedIn or email
+                message — may carry a <code>ref</code> code that identifies that conversation. If you open one, we
+                record the activity above, and whether you later sign up or subscribe, against that code so we know
+                which conversations led where. The code is kept in your browser&apos;s local storage for up to 90
+                days; clearing this site&apos;s data removes it, and visiting theclouddecoded.com directly never
+                sets one.
+              </li>
             </ul>
           </Section>
 
@@ -101,7 +114,8 @@ export default function PrivacyPage() {
               <a href="mailto:privacy@theclouddecoded.com" style={{ color: '#9fc2ff' }}>privacy@theclouddecoded.com</a>{' '}
               once your subscription is cancelled — we will confirm once your credentials and contact information
               have been purged. Billing and audit records may be retained after deletion where required for legal,
-              accounting, or security-audit purposes.
+              accounting, or security-audit purposes. Visitor-activity and reference-link records are deleted after
+              13 months.
             </p>
           </Section>
 

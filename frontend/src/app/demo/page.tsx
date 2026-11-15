@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Zap, Sparkles } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
 import { startDemoSession, ApiError } from '@/lib/api'
+import { captureAttributionFromUrl, getAttribution, trackEvent } from '@/lib/attribution'
 
 // Phase 6 public demo sandbox. GET /api/v1/demo mints a scoped,
 // approver-level, 24h session with its OWN copy of the 8 synthetic
@@ -28,11 +29,17 @@ export default function DemoPage() {
 
   const mintSession = useCallback(() => {
     setLoading(true)
-    startDemoSession()
+    // Before minting: React runs this page's effects before the root
+    // layout's AttributionCapture, so capture ?ref= / utm_* here or the
+    // first visit from an outreach link would mint an unattributed session.
+    captureAttributionFromUrl()
+    startDemoSession(getAttribution())
       .then(session => {
         sessionStorage.setItem(_STORAGE_KEY, session.demo_token)
         setToken(session.demo_token)
         setExpiresAt(session.expires_at)
+        // Counted once per new demo session, not on every reload.
+        trackEvent('demo_opened', { demoToken: session.demo_token })
       })
       .catch((e: unknown) => {
         if (e instanceof ApiError && e.status === 429) {

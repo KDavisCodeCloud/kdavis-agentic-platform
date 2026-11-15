@@ -74,6 +74,7 @@ from api.routes import policies
 from api.routes import email_public
 from api.routes import internal_email_campaigns
 from api.routes import demo
+from api.routes import funnel_events
 from core.checkpointer_lock import LockedAsyncPostgresSaver
 from core.error_tracking import init_sentry
 from core.json_logging import configure_logging
@@ -334,6 +335,7 @@ _RETENTION_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 async def _retention_loop(pool) -> None:
+    from core.funnel_events import prune_funnel_events
     from core.retention import run_retention_cleanup
 
     while True:
@@ -343,6 +345,14 @@ async def _retention_loop(pool) -> None:
             raise
         except Exception:
             log.exception("[Retention] Cleanup pass failed — will retry next cycle")
+        # Separate try: a funnel-prune failure must not mask, or be masked
+        # by, the incident/audit retention pass above.
+        try:
+            await prune_funnel_events(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[FunnelEvents] Retention pass failed — will retry next cycle")
         await asyncio.sleep(_RETENTION_INTERVAL_SECONDS)
 
 
@@ -608,6 +618,7 @@ app.include_router(llm_usage.router,        prefix="/api/v1")
 app.include_router(email_public.router,     prefix="/api/v1")
 app.include_router(internal_email_campaigns.router, prefix="/api/v1")
 app.include_router(demo.router,             prefix="/api/v1")
+app.include_router(funnel_events.router,    prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────
