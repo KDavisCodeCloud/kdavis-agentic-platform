@@ -236,6 +236,9 @@ async def test_ingest_node_azure_devops_payload(mock_db, workspace_id, mock_rout
 
 async def test_diagnose_node_returns_three_options(mock_db, workspace_id, mock_router):
     """_diagnose_node calls the router and parses 3 remediation options."""
+    # This file's own diagnosis fixture (45s). It was defined but never wired
+    # in, so the shared conftest one (90s) answered instead (GAPS #35, 2026-11-14).
+    mock_router.complete.return_value = MOCK_LLM_DIAGNOSIS
     wf = _make_workflow(mock_db, workspace_id, mock_router)
 
     # Provide the pre-filled state _ingest_node would produce

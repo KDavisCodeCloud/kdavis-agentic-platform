@@ -91,14 +91,17 @@ class TestAWSSecretKey:
         result = s.sanitize(text)
         assert "AWS_SECRET_ACCESS_KEY=" in result.sanitized_text
 
-    def test_short_value_not_matched(self, s):
-        # 39 chars — one short of the 40-char requirement
-        short_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEK"
+    def test_short_value_not_labelled_aws_but_still_redacted(self, s):
+        # 39 chars: one short of a real AWS secret, so the AWS-specific
+        # pattern must not claim it -- but a secret-looking value under a
+        # secret-key name must never leak. (This test used to assert the
+        # value survived verbatim, and its fixture was actually 38 chars;
+        # GAPS #35, 2026-11-14.)
+        short_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKE"
         assert len(short_secret) == 39
-        text = f"AWS_SECRET_ACCESS_KEY={short_secret}"
-        result = s.sanitize(text)
-        # Should not match since value is 39 chars, not 40
-        assert short_secret in result.sanitized_text
+        result = s.sanitize(f"AWS_SECRET_ACCESS_KEY={short_secret}")
+        assert "aws_secret_key" not in result.patterns_triggered
+        assert short_secret not in result.sanitized_text
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -234,7 +237,9 @@ class TestDotenvAssignment:
         text = "STRIPE_SECRET_KEY=sk_live_abcdefghijklmnopqrstuvwx"
         result = s.sanitize(text)
         assert "sk_live_abcdefghijklmnopqrstuvwx" not in result.sanitized_text
-        assert "REDACTED:ENV_SECRET" in result.sanitized_text
+        # Labelled by the specific Stripe pattern since GAPS #35 (2026-11-14);
+        # the generic ENV_SECRET rule no longer re-labels an already-redacted value.
+        assert "REDACTED:STRIPE_KEY" in result.sanitized_text
 
     def test_github_token_redacted(self, s):
         text = "GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwxyz"
@@ -277,11 +282,14 @@ class TestAPIKeyHeader:
         result = s.sanitize(text)
         assert self.API_KEY not in result.sanitized_text
 
-    def test_short_api_key_not_redacted(self, s):
-        # Value under 20 chars should not match
+    def test_short_api_key_not_claimed_by_header_pattern_but_still_redacted(self, s):
+        # Under 20 chars: the header pattern doesn't claim it, but some
+        # services issue short keys, and a value under an api-key name must
+        # never leak. (Previously asserted it survived; GAPS #35, 2026-11-14.)
         text = "x-api-key: shortkey"
         result = s.sanitize(text)
-        assert "shortkey" in result.sanitized_text
+        assert "generic_api_key_header" not in result.patterns_triggered
+        assert "shortkey" not in result.sanitized_text
 
 
 # ──────────────────────────────────────────────────────────────────────────────

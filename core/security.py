@@ -19,27 +19,83 @@ log = logging.getLogger(__name__)
 
 # Each pattern: (name, compiled_regex, replacement_template)
 # All patterns use raw strings with correct \s+ (not /s+)
+#
+# Hardened 2026-11-14 (GAPS #35). A probe of realistic cloud-log / CLI shapes
+# found 13 of 18 leaking: every value-matching pattern only understood
+# NAME=value, so JSON ("SecretAccessKey": "..."), `aws sts` output,
+# `az ad sp create-for-rbac` output, k8s Secret data, connection strings and
+# well-known token formats all passed through untouched. Two rules now:
+#   - `_KV_PREFIX` patterns keep the key and any quote/colon formatting and
+#     replace only the value, so JSON stays valid-looking and the operator can
+#     still see WHICH credential was involved.
+#   - `(?!\[REDACTED)` on every value means a later, more generic pattern
+#     never re-labels a value an earlier, specific one already redacted.
+_NOT_REDACTED = r"(?!\[REDACTED)"
+# Optional quote, the key, optional quote, = or :, optional quote.
+_KV_PREFIX = r"""(["']?{key}["']?\s*[=:]\s*["']?)""" + _NOT_REDACTED
+
+# A key that ENDS in one of these words holds a secret: aws_secret_access_key,
+# SecretAccessKey, SessionToken, client_secret, clientSecret, AccountKey,
+# DB_PASSWORD, password. Ending, not containing: secretName / tokenUrl /
+# passwordPolicy are names, not secrets, and are needed to diagnose
+# "secret not found"-style incidents.
+_SECRET_KEY_WORDS = (
+    # Not "pwd": the shell's PWD=/current/dir is a path, not a password.
+    r"password|passwd|secret|token|credentials?|private[_-]?key|"
+    r"api[_-]?key|access[_-]?key|account[_-]?key|secret[_-]?key|auth[_-]?key"
+)
+_SECRET_KEY_NAME = r"[A-Za-z0-9_.\-]*(?:" + _SECRET_KEY_WORDS + r")"
+SECRET_KEY_NAME_RE = re.compile(r"(?i)^" + _SECRET_KEY_NAME + r"$")
+
 _CREDENTIAL_PATTERNS = [
     (
         "aws_access_key",
-        re.compile(r"(?<![A-Z0-9])(AKIA[A-Z0-9]{16})(?![A-Z0-9])"),
+        # AKIA = long-term key id; ASIA = temporary (STS) key id.
+        re.compile(r"(?<![A-Z0-9])((?:AKIA|ASIA)[A-Z0-9]{16})(?![A-Z0-9])"),
         "[REDACTED:AWS_ACCESS_KEY]",
     ),
     (
         "aws_secret_key",
-        # 40-char base64-ish string following common env var names
+        # 40-char base64-ish value after an AWS secret-key name, in env, YAML
+        # or JSON form (aws_secret_access_key, SecretAccessKey, ...).
         re.compile(
-            r"(?i)(aws_secret_access_key|aws_secret_key)\s*[=:]\s*['\"]?([A-Za-z0-9/+]{40})['\"]?"
+            r"(?i)" + _KV_PREFIX.format(key=r"(?:aws_secret_access_key|aws_secret_key|secret_?access_?key)")
+            + r"([A-Za-z0-9/+]{40})(?![A-Za-z0-9/+])"
         ),
-        r"\1=[REDACTED:AWS_SECRET_KEY]",
+        r"\1[REDACTED:AWS_SECRET_KEY]",
+    ),
+    (
+        "aws_session_token",
+        re.compile(
+            r"(?i)" + _KV_PREFIX.format(key=r"(?:aws_session_token|aws_security_token|session_?token)")
+            + r"([A-Za-z0-9/+=]{40,})"
+        ),
+        r"\1[REDACTED:AWS_SESSION_TOKEN]",
     ),
     (
         "azure_client_secret",
-        # Azure client secrets: 34–40 chars, tilde-prefixed or following env var name
+        # Azure client secrets, 30-64 chars (current ones are 40 with a '~'),
+        # after AZURE_CLIENT_SECRET / client_secret / clientSecret.
         re.compile(
-            r"(?i)(azure_client_secret|client_secret)\s*[=:]\s*['\"]?([A-Za-z0-9~._\-]{34,40})['\"]?"
+            r"(?i)" + _KV_PREFIX.format(key=r"(?:azure_client_secret|client[_-]?secret)")
+            + r"([A-Za-z0-9~._\-]{30,64})(?![A-Za-z0-9~._\-])"
         ),
-        r"\1=[REDACTED:AZURE_CLIENT_SECRET]",
+        r"\1[REDACTED:AZURE_CLIENT_SECRET]",
+    ),
+    (
+        "github_token",
+        re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{50,255})\b"),
+        "[REDACTED:GITHUB_TOKEN]",
+    ),
+    (
+        "slack_token",
+        re.compile(r"\b(xox[abposr]-[A-Za-z0-9-]{10,})\b"),
+        "[REDACTED:SLACK_TOKEN]",
+    ),
+    (
+        "stripe_key",
+        re.compile(r"\b((?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,})\b"),
+        "[REDACTED:STRIPE_KEY]",
     ),
     (
         "bearer_token",
@@ -66,15 +122,26 @@ _CREDENTIAL_PATTERNS = [
         "dotenv_assignment",
         # Matches KEY=value lines that look like secrets (contain key/secret/token/password/pass)
         re.compile(
-            r"(?im)^([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|PASS|CREDENTIAL)[A-Z_]*)\s*=\s*['\"]?(.+?)['\"]?\s*$"
+            r"(?im)^([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|PASS|CREDENTIAL)[A-Z_]*)\s*=\s*['\"]?"
+            + _NOT_REDACTED + r"(.+?)['\"]?\s*$"
         ),
         r"\1=[REDACTED:ENV_SECRET]",
     ),
     (
         "generic_api_key_header",
         # x-api-key: <value> or api-key: <value> in headers
-        re.compile(r"(?i)(x-api-key|api[-_]key)\s*[=:]\s*['\"]?([A-Za-z0-9\-._~]{20,})['\"]?"),
+        re.compile(r"(?i)(x-api-key|api[-_]key)\s*[=:]\s*['\"]?" + _NOT_REDACTED + r"([A-Za-z0-9\-._~]{20,})['\"]?"),
         r"\1=[REDACTED:API_KEY]",
+    ),
+    (
+        "secret_key_value",
+        # Last, catch-all: any key ENDING in a secret word, in env, YAML, JSON,
+        # query-string or connection-string form (password=..., "password":
+        # "...", AccountKey=...;, data:\n  password: <base64>). Value runs to
+        # whitespace, quote, comma or semicolon; 6+ chars so "password: ''"
+        # and "token: null"-style noise stays readable.
+        re.compile(r"(?i)(?<![A-Za-z0-9_.\-])" + _KV_PREFIX.format(key=_SECRET_KEY_NAME) + r"([^\s\"',;]{6,})"),
+        r"\1[REDACTED:SECRET_VALUE]",
     ),
 ]
 
@@ -135,10 +202,18 @@ class DataSanitizationShield:
         )
 
     def sanitize_dict(self, data: dict, context: str = "") -> dict:
-        """Recursively sanitize string values in a dict (e.g., webhook payloads)."""
+        """Recursively sanitize string values in a dict (e.g., webhook payloads).
+
+        A string under a secret-looking KEY ({"password": "x"},
+        {"SecretAccessKey": "..."}) is redacted outright: scanned on its own,
+        the value has no key next to it for any text pattern to recognise.
+        """
         sanitized = {}
         for k, v in data.items():
-            if isinstance(v, str):
+            if isinstance(v, str) and isinstance(k, str) and v and SECRET_KEY_NAME_RE.match(k):
+                sanitized[k] = "[REDACTED:SECRET_VALUE]"
+                log.info("[SHIELD] Redacted dict value under secret key" + (f" in context={context}" if context else ""))
+            elif isinstance(v, str):
                 sanitized[k] = self.sanitize(v, context=context).sanitized_text
             elif isinstance(v, dict):
                 sanitized[k] = self.sanitize_dict(v, context=context)
