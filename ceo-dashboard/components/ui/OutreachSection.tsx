@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { BuyerResearchLane } from "@/components/ui/BuyerResearchLane";
+import { DemoActivity, type DemoActivityData } from "@/components/ui/DemoActivity";
 import {
   ConflictNote,
   ProductBadge,
@@ -72,6 +73,9 @@ type Card = {
   // the approve endpoint refuses on the same rule.
   company_conflicts?: CompanyConflict[];
   conflict_block_reason?: string | null;
+  // GAPS #34: the ?ref= code on this lead's Cloud Decoded demo link,
+  // computed by mse-api. null when the sequence has no demo link.
+  demo_ref?: string | null;
 };
 
 // An email sequence MKT-O5 is still working through (2026-11-09).
@@ -87,6 +91,7 @@ type Conversation = {
   contact: { name: string | null; title: string | null; email: string | null; linkedin_url: string | null };
   stage: string;
   lost_reason: string | null;
+  demo_ref?: string | null;
 };
 
 type Summary = {
@@ -215,6 +220,9 @@ export function OutreachSection({ mode = "prospects" }: { mode?: "prospects" | "
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [inFlight, setInFlight] = useState<InFlight[]>([]);
   const [inFlightError, setInFlightError] = useState<string | null>(null);
+  // null = not loaded / failed to load: cards then show no demo line at all,
+  // rather than a false "not opened yet".
+  const [demoActivity, setDemoActivity] = useState<Record<string, DemoActivityData> | null>(null);
   const [funnel, setFunnel] = useState<Funnel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -250,6 +258,23 @@ export function OutreachSection({ mode = "prospects" }: { mode?: "prospects" | "
       setInFlight(f.sequences ?? []);
       setInFlightError((f as { error?: string }).error ?? null);
       setError(null);
+
+      // Demo activity only for contacts who have been sent their link
+      // (ready-to-paste, in flight, conversations) -- drafts haven't gone out.
+      // Its own failure: the lanes above have already rendered.
+      const refs = [...(r.ready ?? []), ...(f.sequences ?? []), ...(c.conversations ?? [])]
+        .map((x: { demo_ref?: string | null }) => x.demo_ref)
+        .filter((x): x is string => Boolean(x));
+      if (refs.length === 0) {
+        setDemoActivity({});
+      } else {
+        call(`/api/demo-activity?refs=${encodeURIComponent([...new Set(refs)].join(","))}`)
+          .then((a: { activity?: Record<string, DemoActivityData> }) => setDemoActivity(a.activity ?? {}))
+          .catch((e: unknown) => {
+            console.error("[Outreach] demo activity failed to load", e);
+            setDemoActivity(null);
+          });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load the outreach lanes");
     }
@@ -556,6 +581,9 @@ export function OutreachSection({ mode = "prospects" }: { mode?: "prospects" | "
                     </a>
                   )}
                 </div>
+                <div className="mb-2">
+                  <DemoActivity demoRef={r.demo_ref} activity={demoActivity?.[r.demo_ref ?? ""]} known={demoActivity !== null} />
+                </div>
                 {Object.entries(r.touches).map(([k, v]) => (
                   <div key={k} className="flex gap-2 items-start mb-2 min-w-0">
                     <div className="flex-1 min-w-0 text-[12px] p-2 rounded-[8px]"
@@ -659,6 +687,9 @@ export function OutreachSection({ mode = "prospects" }: { mode?: "prospects" | "
                   {labels[st]}
                 </button>
               ))}
+            </div>
+            <div className="basis-full min-w-0">
+              <DemoActivity demoRef={c.demo_ref} activity={demoActivity?.[c.demo_ref ?? ""]} known={demoActivity !== null} />
             </div>
           </div>
         ))}
@@ -994,6 +1025,9 @@ export function OutreachSection({ mode = "prospects" }: { mode?: "prospects" | "
                   >
                     {busy === q.sequence_id ? "marking…" : "mark replied"}
                   </button>
+                  <div className="basis-full min-w-0">
+                    <DemoActivity demoRef={q.demo_ref} activity={demoActivity?.[q.demo_ref ?? ""]} known={demoActivity !== null} />
+                  </div>
                 </div>
               );
             })}

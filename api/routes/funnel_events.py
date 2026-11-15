@@ -13,7 +13,7 @@ GET  /internal/funnel/summary     admin (Supabase session). Event counts
                                   utm_campaign.
 GET  /internal/funnel/refs/{ref}  admin. Everything one outreach reference
                                   code led to: timeline, step counts, and
-                                  the workspace it signed up as, if any.
+                                  the tier it paid for, if any.
                                   This is what the CEO dashboard's lead card
                                   reads (mse-api follow-up, GAPS.md).
 """
@@ -135,33 +135,24 @@ async def funnel_for_ref(
             """,
             PRODUCT_ID, ref,
         )
-        workspace = await conn.fetchrow(
-            """
-            SELECT id, company_name, product_tier, stripe_subscription_status, created_at
-            FROM workspaces WHERE signup_ref = $1
-            ORDER BY created_at ASC LIMIT 1
-            """,
-            ref,
-        )
     steps = {name: 0 for name in sorted(ALL_EVENTS)}
+    paid_tier = None
     for row in rows:
         steps[row["event_name"]] = steps.get(row["event_name"], 0) + 1
+        if row["event_name"] == "subscribed":
+            paid_tier = (row["properties"] or {}).get("tier")
+    # Deliberately no workspaces lookup: api/middleware/internal_auth.py's
+    # rule is that an internal (owner) route never reads the workspaces /
+    # incidents tables. The server-recorded signup_completed / subscribed
+    # events already say whether this ref signed up and what it pays for.
     return {
         "ref": ref,
         "first_seen": rows[0]["created_at"].isoformat() if rows else None,
         "last_seen": rows[-1]["created_at"].isoformat() if rows else None,
         "steps": steps,
         "demo_sessions": len({r["demo_session_id"] for r in rows if r["demo_session_id"]}),
-        "workspace": (
-            {
-                "id": str(workspace["id"]),
-                "company_name": workspace["company_name"],
-                "tier": workspace["product_tier"],
-                "subscription_status": workspace["stripe_subscription_status"],
-                "signed_up_at": workspace["created_at"].isoformat() if workspace["created_at"] else None,
-            }
-            if workspace else None
-        ),
+        "signed_up": steps["signup_completed"] > 0,
+        "paid_tier": paid_tier,
         "timeline": [
             {
                 "event": r["event_name"],

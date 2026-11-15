@@ -157,6 +157,16 @@ class TestInternalRoutesRequireAdmin:
         for route in internal:
             assert get_internal_user in [d.call for d in route.dependant.dependencies], route.path
 
+    def test_internal_routes_never_read_workspaces_or_incidents(self):
+        """api/middleware/internal_auth.py: an internal route must never read
+        the customer workspaces / incidents tables."""
+        import inspect
+        from api.routes import funnel_events as mod
+
+        for fn in (mod.funnel_summary, mod.funnel_for_ref):
+            src = inspect.getsource(fn)
+            assert "FROM workspaces" not in src and "FROM incidents" not in src, fn.__name__
+
     def test_public_event_route_has_no_internal_dependency(self):
         from api.middleware.internal_auth import get_internal_user
         from api.routes.funnel_events import router
