@@ -49,7 +49,9 @@ jobs:
         id: changed
         run: |
           git fetch origin "${{ github.base_ref }}" --depth=1
-          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD -- '*.py' '*.ts' '*.tsx')
+          # .py only: the analyzer is ast-based Python. --diff-filter=d drops
+          # deleted files (nothing on disk to review).
+          CHANGED=$(git diff --name-only --diff-filter=d "origin/${{ github.base_ref }}"...HEAD -- '*.py')
           echo "files<<EOF" >> "$GITHUB_OUTPUT"
           echo "$CHANGED" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
@@ -60,13 +62,15 @@ jobs:
         env:
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PRODUCT_ID: platform
         run: |
           echo "$CHANGED_FILES" > changed_files.txt
+          # --baseline-ref: block only on issues this PR introduces. Findings
+          # that already exist on the base branch are reported as
+          # non-blocking, or every PR touching an older file stays red.
           python -m agents.internal.code_quality_agent \
-            --files-list changed_files.txt \
+            --paths-file changed_files.txt \
+            --baseline-ref "origin/${{ github.base_ref }}" \
             --pr-number "$PR_NUMBER" \
-            --product-id "$PRODUCT_ID" \
             --report-out quality_report.json
 
       - name: Post report comment on PR

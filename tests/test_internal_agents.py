@@ -324,6 +324,19 @@ class TestReleaseNotesAgentDispatch:
         assert len(result["what_changed"]) == 3
         assert result["version"]
 
+    async def test_merge_commit_without_files_is_its_own_entry(self):
+        """A merge commit lists no files; it must not swallow the next commit (PR-merge CI checkout)."""
+        import subprocess
+        app, conn = _make_app_with_db()
+        log_out = "\x1eMerge abc into def\n\x1efeat: one\n\na.py\nb.py\n\x1efix: two\n\nc.py"
+        fake = [subprocess.CompletedProcess([], 0, stdout=log_out, stderr=""),
+                subprocess.CompletedProcess([], 0, stdout="abc1234\n", stderr="")]
+        with patch("api.routes.internal_agents.subprocess.run", side_effect=fake):
+            await internal_agents._execute_internal_agent(
+                app, str(uuid4()), "release_notes_agent", {"commit_count": 3})
+        result = json.loads(conn.execute.await_args.args[1])
+        assert len(result["what_changed"]) == 3
+
     async def test_invalid_commit_count_writes_failed(self):
         app, conn = _make_app_with_db()
         await internal_agents._execute_internal_agent(

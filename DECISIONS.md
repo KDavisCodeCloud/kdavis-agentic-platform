@@ -357,3 +357,24 @@ carry a `?ref=` code, and activity from them is recorded against it.
   Reject now writes `audit_events` (it never did, for anyone).
 - **mse-api deploys are by SHA in both environments** (`serviceInstanceDeployV2`);
   a push to `main` deploys nothing. Staging first, then production.
+
+## 2026-11-17 — Code-quality gate fixed: blocks only on issues a PR introduces
+
+- **Why it was always red:** `code-quality-gate.yml` passed `--files-list`,
+  `--pr-number` and `--product-id`. `code_quality_agent.py` accepted none of
+  them, so argparse exited 2 on every PR. Kelvin: "A gate that's always red
+  trains everyone to ignore CI."
+- **Why fixing the args wasn't enough:** the analyzer reviews whole files, not
+  changed lines. The 44 files the lab fix PRs touch carry 1,394 findings,
+  almost all already on master, so the gate could still never pass.
+- **Decision:** with `--baseline-ref`, the gate reviews the same files at the
+  PR's base and blocks only on issues the PR introduces. Pre-existing ones are
+  still reported, as non-blocking and marked "pre-existing".
+  - Matching ignores line numbers.
+  - A DRY finding is identified by its own function, not its list of other
+    copies, which changes whenever any copy moves.
+- **Analyzer change:** a function that only returns literals and constructor
+  calls, never using its parameters (an option catalog), is not a DRY
+  violation. Normalizing literals away made every same-sized table hash alike.
+- **Weekly full sweep unchanged:** it still reports everything and never
+  fails.

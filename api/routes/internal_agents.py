@@ -525,7 +525,10 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
                 raise ValueError("payload.commit_count must be between 1 and 200")
 
             log_proc = subprocess.run(
-                ["git", "log", f"-{commit_count}", "--pretty=format:%s", "--name-only"],
+                # \x1e marks each commit's subject line: a merge commit lists no
+                # files, so splitting on blank lines ran its subject into the next
+                # commit's block (found by the first PR-merge CI checkout).
+                ["git", "log", f"-{commit_count}", "--pretty=format:\x1e%s", "--name-only"],
                 cwd=_REPO_ROOT, capture_output=True, text=True, check=True,
             )
             version_proc = subprocess.run(
@@ -534,7 +537,7 @@ async def _execute_internal_agent(app, run_id: str, agent_id: str, payload: dict
             )
             commit_messages: list[str] = []
             changed_files: set[str] = set()
-            for block in log_proc.stdout.strip().split("\n\n"):
+            for block in log_proc.stdout.split("\x1e"):
                 lines = [ln for ln in block.splitlines() if ln.strip()]
                 if not lines:
                     continue
