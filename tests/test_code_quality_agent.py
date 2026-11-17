@@ -198,3 +198,25 @@ def test_a_duplicate_group_changing_members_is_not_new():
     base = [Issue("a.py", 1, "dry", "_build_graph duplicates logic also found at b.py:1, c.py:1", BLOCKING)]
     head = [Issue("a.py", 1, "dry", "_build_graph duplicates logic also found at b.py:1", BLOCKING)]
     assert split_new_issues(head, base)[0] == []
+
+
+_TABLE = '''def option_catalog(context):
+    """Options."""
+    return catalog_dict(
+        Spec("opt_1", "{a}", "desc", "low", ("call_a",)),
+        Spec("opt_2", "{b}", "desc", "low", ("call_b",)),
+    )
+'''
+
+
+def test_literal_data_tables_are_not_dry_violations(tmp_path):
+    """Two option catalogs with the same number of rows are different data, not duplicated logic."""
+    a = _write(tmp_path, "a.py", _TABLE.format(a="Open a PR", b="Open an issue"))
+    b = _write(tmp_path, "b.py", _TABLE.format(a="Patch memory", b="Add an HPA"))
+    assert not [i for i in CodeQualityAgent().review([a, b]).issues if i.issue_type == "dry"]
+
+
+def test_a_table_that_uses_its_arguments_is_still_logic(tmp_path):
+    src = _TABLE.replace('"desc"', "context['x']").format(a="A", b="B")
+    a, b = _write(tmp_path, "a.py", src), _write(tmp_path, "b.py", src)
+    assert len([i for i in CodeQualityAgent().review([a, b]).issues if i.issue_type == "dry"]) == 2

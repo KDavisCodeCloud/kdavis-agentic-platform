@@ -323,11 +323,35 @@ def _normalized_hash(func: ast.AST) -> str:
     return hashlib.sha256(dumped.encode()).hexdigest()
 
 
+_DATA_NODES = (ast.Call, ast.Constant, ast.Name, ast.Load, ast.Tuple, ast.List, ast.Dict,
+               ast.keyword, ast.JoinedStr, ast.FormattedValue)
+
+
+def _is_data_table(func: ast.AST) -> bool:
+    """A function whose body (after any docstring) is one `return` of literals
+    and constructor calls, never touching its parameters -- e.g. an option
+    catalog. Normalizing literals away makes every same-sized table hash
+    alike, but there is no logic in it to extract, so it is not a DRY
+    violation (CLAUDE.md: "only logic duplication")."""
+    body = list(func.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Return) or body[0].value is None:
+        return False
+    params = {a.arg for a in ast.walk(func.args) if isinstance(a, ast.arg)}
+    for node in ast.walk(body[0].value):
+        if not isinstance(node, _DATA_NODES):
+            return False
+        if isinstance(node, ast.Name) and node.id in params:
+            return False
+    return True
+
+
 def check_dry_violations(parsed_files: list[ParsedFile]) -> list[Issue]:
     by_hash: dict[str, list[tuple[str, ast.AST]]] = {}
     for pf in parsed_files:
         for func in _top_level_functions(pf.tree):
-            if _function_span(func) < MIN_DUPLICATE_FUNCTION_LINES:
+            if _function_span(func) < MIN_DUPLICATE_FUNCTION_LINES or _is_data_table(func):
                 continue
             digest = _normalized_hash(func)
             by_hash.setdefault(digest, []).append((pf.path, func))
