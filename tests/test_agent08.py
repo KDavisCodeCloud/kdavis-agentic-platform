@@ -1222,13 +1222,13 @@ class TestExecuteOption:
         assert result["status"] == "ok"
         mock_apply.assert_called_once_with(k8s_context["corrected_content"], namespace="production")
 
-    async def test_opt2_with_terraform_calls_create_drift_pr(self, tools, tf_context):
-        expected = {"status": "pr_created", "pr_url": "https://github.com/acme/infra/pull/6", "pr_number": 6, "branch": "x"}
-        with patch.object(tools, "create_drift_pr", new=AsyncMock(return_value=expected)) as mock_pr:
+    async def test_opt2_is_not_available_for_terraform(self, tools, tf_context):
+        # G12: opt_2 used to be labeled "Apply correction directly" but opened a
+        # second PR for IaC sources. Only Kubernetes has a direct apply now.
+        with patch.object(tools, "create_drift_pr", new=AsyncMock()) as mock_pr:
             result = await tools.execute_option({"id": "opt_2"}, tf_context)
-        # Never runs terraform apply — always creates a PR for IaC sources
-        assert result["status"] == "pr_created"
-        mock_pr.assert_called_once()
+        assert result["status"] == "not_available"
+        mock_pr.assert_not_called()
 
     async def test_opt3_calls_create_drift_issue(self, tools, tf_context):
         expected = {"status": "issue_created", "issue_url": "https://github.com/acme/infra/issues/10", "issue_number": 10}
@@ -1237,9 +1237,9 @@ class TestExecuteOption:
         assert result["status"] == "issue_created"
         mock_issue.assert_called_once()
 
-    async def test_unknown_option_returns_not_implemented(self, tools, tf_context):
+    async def test_unknown_option_returns_not_available(self, tools, tf_context):
         result = await tools.execute_option({"id": "opt_99"}, tf_context)
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

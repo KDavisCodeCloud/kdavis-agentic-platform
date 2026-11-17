@@ -399,12 +399,12 @@ class TestExecuteOption:
         result = await tools.execute_option({"id": "opt_1"}, {"resource_id": "vm-1"})
         assert result["status"] == "skipped"
 
-    async def test_unknown_option_returns_not_implemented(self):
+    async def test_unknown_option_returns_not_available(self):
         tools = ResourceHealthTools(github_token="gh_real")
         result = await tools.execute_option(
             {"id": "opt_99"}, {"owner": "acme", "repo": "infra", "resource_id": "vm-1"},
         )
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

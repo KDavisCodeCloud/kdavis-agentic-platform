@@ -52,6 +52,8 @@ from botocore.exceptions import ClientError
 from core.repo_tools import RepoTools, get_repo_tools
 from core.workspace_credentials import build_kubeconfig
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GH_API               = "https://api.github.com"
@@ -743,6 +745,9 @@ class DriftTools:
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to correct drift manually"}
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
 
         drift_source  = context.get("drift_source", "generic")
         owner         = context.get("owner", "")
@@ -766,27 +771,10 @@ class DriftTools:
             )
 
         if option_id == "opt_2":
-            # Direct application — kubectl for K8s; PR fallback for IaC sources
-            if drift_source == "kubernetes":
-                manifest = context.get("corrected_content", "")
-                namespace = context.get("scope", context.get("namespace", "default"))
-                return await self.apply_k8s_manifest(manifest, namespace=namespace)
-
-            # For Terraform/CloudFormation: creating a PR is still the safe path
-            # (never run terraform apply or aws cloudformation deploy autonomously)
-            if not owner or not repo:
-                return {"status": "skipped", "reason": "repository not configured — cannot create correction PR"}
-
-            branch_name = f"drift-auto-fix/{resource_id.replace('/', '-').replace(':', '-')}"[:100]
-            return await self.create_drift_pr(
-                owner=owner,
-                repo=repo,
-                branch_name=branch_name,
-                file_path=context.get("file_path", f"infra/{resource_id}"),
-                corrected_content=context.get("corrected_content", ""),
-                pr_body=report_body,
-                pr_title=f"fix(drift-auto): restore {resource_id} to desired state",
-            )
+            # Only in the catalog for Kubernetes: the one source with a direct apply.
+            manifest = context.get("corrected_content", "")
+            namespace = context.get("scope", context.get("namespace", "default"))
+            return await self.apply_k8s_manifest(manifest, namespace=namespace)
 
         if option_id == "opt_3":
             # Create tracking issue only
@@ -916,3 +904,32 @@ def _find_overpermissive_nsg_rules(rules: list) -> list[str]:
                 )
             break  # first match at this port wins, regardless of allow/deny
     return findings
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """
+    What Agent 08 can actually do. Only Kubernetes drift has a direct apply;
+    for Terraform/CloudFormation/generic sources the fix is a PR or an issue
+    (Cloud Decoded never runs terraform apply).
+    """
+    specs = [
+        OptionSpec(
+            "opt_1", "Open a PR restoring the IaC file",
+            "Writes the corrected content to the IaC file on a new branch and opens a pull request. "
+            "Nothing changes in the cloud until the PR is merged and your pipeline applies it. "
+            "Review the full diff before merging.",
+            "low", ("create_drift_pr",),
+        ),
+    ]
+    if context.get("drift_source") == "kubernetes":
+        specs.append(OptionSpec(
+            "opt_2", "Apply the corrected manifest to the cluster",
+            "Runs kubectl apply with the corrected manifest against the live cluster now.",
+            "high", ("apply_k8s_manifest",),
+        ))
+    specs.append(OptionSpec(
+        "opt_3", "Open a drift issue",
+        "Creates a GitHub issue documenting the drift. Nothing is changed.",
+        "low", ("create_drift_issue",),
+    ))
+    return catalog_dict(*specs)

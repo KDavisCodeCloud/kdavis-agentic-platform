@@ -867,9 +867,9 @@ class TestExecuteOption:
         mock_pr.assert_not_called()
         assert result["issue_number"] == 12
 
-    async def test_unknown_option_returns_not_implemented(self, tools):
+    async def test_unknown_option_returns_not_available(self, tools):
         result = await tools.execute_option({"id": "opt_99"}, _make_context())
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

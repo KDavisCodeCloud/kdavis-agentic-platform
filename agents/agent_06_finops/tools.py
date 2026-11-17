@@ -35,6 +35,8 @@ from botocore.exceptions import ClientError
 
 from core.cloud_errors import classify_aws_client_error
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GH_API      = "https://api.github.com"
@@ -440,6 +442,10 @@ class FinOpsTools:
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to review cost optimizations manually"}
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
+
 
         if option_id == "opt_1":
             # Create GitHub cost report issue
@@ -521,3 +527,37 @@ def _gcp_headers(token: str) -> dict:
 def _format_currency(amount: float, currency: str = "USD") -> str:
     symbol = {"USD": "$", "EUR": "€", "GBP": "£"}.get(currency, currency + " ")
     return f"{symbol}{amount:,.2f}"
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 06 can actually do, per cloud. opt_2 acts only on the quick-win resources listed in the analysis."""
+    cloud = context.get("cloud_provider", "aws")
+    quick_wins = {
+        "aws": OptionSpec(
+            "opt_2", "Stop idle instances and clean up unattached resources",
+            "For the quick-win resources listed in this analysis only: stops the EC2 instances, deletes the "
+            "unattached EBS volumes and releases the unassociated Elastic IPs. Nothing is resized.",
+            "high", ("stop_ec2_instances", "delete_unattached_ebs_volumes", "release_elastic_ips"),
+        ),
+        "azure": OptionSpec(
+            "opt_2", "Deallocate idle VMs and delete unattached disks",
+            "For the quick-win resources listed in this analysis only: deallocates the VMs and deletes the "
+            "unattached managed disks. Nothing is resized.",
+            "high", ("deallocate_azure_vms", "delete_unattached_azure_disks"),
+        ),
+        "gcp": OptionSpec(
+            "opt_2", "Stop idle Compute Engine instances",
+            "For the quick-win instances listed in this analysis only: stops them. Nothing is resized.",
+            "high", ("stop_gce_instances",),
+        ),
+    }
+    quick_wins["google"] = quick_wins["gcp"]
+    return catalog_dict(
+        OptionSpec("opt_1", "Open a cost report issue",
+                   "Creates a GitHub issue with the full cost analysis and recommendations. No resource is changed.",
+                   "low", ("create_cost_report_issue",)),
+        *([quick_wins[cloud]] if cloud in quick_wins else []),
+        OptionSpec("opt_3", "Post the cost summary to Slack",
+                   "Sends the cost summary to the workspace's Slack webhook. No resource is changed.",
+                   "low", ("post_slack_alert",)),
+    )

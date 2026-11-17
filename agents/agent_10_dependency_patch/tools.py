@@ -41,6 +41,8 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GH_API             = "https://api.github.com"
@@ -306,6 +308,10 @@ class DependencyPatchTools:
                 "status":  "held",
                 "message": "Vulnerability report available in operator dashboard",
             }
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
+
 
         owner = context.get("owner", "")
         repo  = context.get("repo",  "")
@@ -526,3 +532,19 @@ def _gh_headers(token: str) -> dict:
         "Accept":             "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 10 can actually do."""
+    return catalog_dict(
+        OptionSpec("opt_1", "Open a patch PR",
+                   "Commits the manifest with the vulnerable dependencies bumped to fixed versions to a new "
+                   "branch and opens a pull request. Fails without a change if no patched manifest was generated.",
+                   "low", ("create_patch_pr",)),
+        OptionSpec("opt_2", "Open a vulnerability issue",
+                   "Creates a GitHub issue listing the vulnerabilities and fixed versions. No code is changed.",
+                   "low", ("create_vulnerability_issue",)),
+        OptionSpec("opt_3", "Open a patch PR and a vulnerability issue",
+                   "Does both: the patch PR (when a patched manifest was generated) and the tracking issue.",
+                   "low", ("create_patch_pr", "create_vulnerability_issue")),
+    )

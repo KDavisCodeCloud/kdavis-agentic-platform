@@ -282,8 +282,10 @@ async def approve_incident(
     Operator approves a remediation option.
     Resumes the paused LangGraph workflow with the selected option.
 
-    - selected_option_id: "opt_1" | "opt_2" | "opt_3" | "hold" | "custom"
-    - custom_solution_input: required when selected_option_id == "custom"
+    - selected_option_id: an option id stored on the incident, or "hold"
+    - "custom" is refused (G12): no agent can execute a free-text fix, so the
+      UI no longer offers it. "I'll handle this myself" (/resolve-manually) is the
+      honest path for fixes done outside the platform.
 
     Governance Rule 11: No fix executes without this endpoint being called.
     Membership plan, Phase C: a member session needs role 'admin' or
@@ -327,10 +329,13 @@ async def approve_incident(
     selected_id = body.selected_option_id
     custom_input = body.custom_solution_input
 
-    if selected_id == "custom" and not custom_input:
+    if selected_id == "custom":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="custom_solution_input is required when selected_option_id is 'custom'",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Custom solutions can't be executed: no agent runs a free-text fix. "
+                "Fix it yourself and record it with \"I'll handle this myself\" (POST /incidents/{id}/resolve-manually)."
+            ),
         )
 
     # Find the full option object from the stored JSONB
@@ -346,14 +351,6 @@ async def approve_incident(
             "description": "Operator chose to hold",
         }
         new_status = "held"
-    elif selected_id == "custom":
-        selected_option = {
-            "id": "custom",
-            "title": "Custom solution",
-            "description": custom_input,
-            "custom_input": custom_input,
-        }
-        new_status = "executing"
     else:
         selected_option = next((o for o in options if o["id"] == selected_id), None)
         if not selected_option:

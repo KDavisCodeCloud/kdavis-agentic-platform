@@ -38,6 +38,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
 from agents.agent_02_k8s_alert.tools import K8sTools
+from agents.agent_02_k8s_alert.tools import option_catalog
+from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 from core.severity import normalize_severity
 
@@ -389,6 +391,10 @@ class K8sAlertWorkflow(BaseAgent):
 
         await self.check_budget(estimated_tokens=3000, model="claude-sonnet-4-20250514")
 
+        # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
+        _catalog = option_catalog({})
+        user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
+
         response, estimated_tokens = self.call_llm(
             task_type="k8s_triage",
             messages=[{"role": "user", "content": user_message}],
@@ -402,7 +408,7 @@ class K8sAlertWorkflow(BaseAgent):
             return {"error": str(exc), "tokens_used": estimated_tokens}
 
         parsed_error = diagnosis.get("parsed_error", "Unknown K8s alert")
-        options = diagnosis.get("options", [])
+        options = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
         duration = diagnosis.get("estimated_duration_seconds", 120)
 
         required_fields = {"id", "title", "description", "impact", "docs_url"}

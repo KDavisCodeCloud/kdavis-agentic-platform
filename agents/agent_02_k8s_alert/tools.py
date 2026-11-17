@@ -24,6 +24,8 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 # Evidence text fed into the diagnose prompt (agents/agent_02_k8s_alert/
@@ -648,6 +650,10 @@ class K8sTools:
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to handle manually"}
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
+
 
         if option_id == "opt_1":
             # Increase memory limit
@@ -705,3 +711,18 @@ def _short_id() -> str:
 def _utc_now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 02 can actually do to the deployment (one Kubernetes API call per option)."""
+    return catalog_dict(
+        OptionSpec("opt_1", "Raise the container memory limit",
+                   "Patches the deployment's container memory limit (default 1Gi), which rolls its pods.",
+                   "medium", ("patch_deployment_memory",)),
+        OptionSpec("opt_2", "Add a HorizontalPodAutoscaler",
+                   "Creates or replaces an HPA that scales the deployment on memory utilization (2–10 replicas by default).",
+                   "medium", ("apply_hpa",)),
+        OptionSpec("opt_3", "Roll back to the previous revision",
+                   "Rolls the deployment back to its previous ReplicaSet revision.",
+                   "high", ("rollback_deployment",)),
+    )

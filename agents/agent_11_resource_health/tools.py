@@ -38,6 +38,8 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GH_API           = "https://api.github.com"
@@ -162,6 +164,10 @@ class ResourceHealthTools:
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to investigate/correct manually"}
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
+
 
         owner       = context.get("owner", "")
         repo        = context.get("repo", "")
@@ -189,3 +195,19 @@ class ResourceHealthTools:
             )
 
         return {"status": "not_implemented", "option_id": option_id}
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """
+    What Agent 11 can actually do. It has no live cloud actions: nothing is
+    scaled, restarted or reconfigured directly.
+    """
+    return catalog_dict(
+        OptionSpec("opt_1", "Open a PR with the proposed IaC change",
+                   "Writes the proposed change to the IaC file on a new branch and opens a pull request. "
+                   "Nothing changes in the cloud until the PR is merged and your pipeline applies it.",
+                   "low", ("create_alert_pr",)),
+        OptionSpec("opt_2", "Open an investigation issue",
+                   "Creates a GitHub issue with the alert, the diagnosis and investigation steps. Nothing is changed.",
+                   "low", ("create_alert_issue",)),
+    )

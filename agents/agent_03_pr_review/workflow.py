@@ -29,6 +29,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
 from agents.agent_03_pr_review.tools import PRReviewTools
+from agents.agent_03_pr_review.tools import option_catalog
+from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 
 log = logging.getLogger(__name__)
@@ -282,6 +284,10 @@ class PRReviewWorkflow(BaseAgent):
         # PR diffs can be large — budget for more tokens
         await self.check_budget(estimated_tokens=6000, model="claude-sonnet-4-20250514")
 
+        # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
+        _catalog = option_catalog({})
+        user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
+
         response, estimated_tokens = self.call_llm(
             task_type="code_review",
             messages=[{"role": "user", "content": user_message}],
@@ -296,7 +302,7 @@ class PRReviewWorkflow(BaseAgent):
 
         parsed_error = diagnosis.get("parsed_error", "PR review complete")
         review_body = diagnosis.get("review_body", parsed_error)
-        options = diagnosis.get("options", [])
+        options = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
         duration = diagnosis.get("estimated_duration_seconds", 10)
 
         required_fields = {"id", "title", "description", "impact", "docs_url"}

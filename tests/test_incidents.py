@@ -429,6 +429,24 @@ class TestApproveStatusTransitions:
             )
         assert exc.value.status_code == 400
 
+    async def test_custom_solution_is_refused_and_nothing_runs(self):
+        # G12: no agent can execute a free-text fix, so "custom" used to be
+        # approved and then do nothing. It's refused before any status change.
+        workspace_id = uuid4()
+        row = _incident_row("agent_01_cicd_triage", workspace_id)
+        request, conn = _make_request(row)
+
+        with pytest.raises(HTTPException) as exc:
+            await incidents.approve_incident(
+                str(row["id"]),
+                IncidentApproveRequest(selected_option_id="custom", custom_solution_input="rerun it"),
+                request,
+                workspace={"id": workspace_id},
+            )
+        assert exc.value.status_code == 400
+        assert "resolve-manually" in exc.value.detail
+        conn.execute.assert_not_awaited()
+
     async def test_already_approved_incident_raises_409(self):
         workspace_id = uuid4()
         row = _incident_row("agent_01_cicd_triage", workspace_id)

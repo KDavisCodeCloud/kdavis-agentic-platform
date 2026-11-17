@@ -35,7 +35,8 @@ from langgraph.types import interrupt, Command
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
-from agents.agent_07_runbook.tools import RunbookTools
+from agents.agent_07_runbook.tools import RunbookTools, option_catalog
+from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 
 log = logging.getLogger(__name__)
@@ -43,26 +44,6 @@ log = logging.getLogger(__name__)
 _MAX_RUNBOOK_CHARS  = 6_000
 _MAX_INCIDENT_CHARS = 3_000
 _MAX_STEPS          = 50
-
-# The only options Agent 07 offers. Runbook execution (the old opt_1) was
-# removed 2026-11-18: its steps ran on Cloud Decoded's shared API host.
-_OPTIONS = (
-    {
-        "id": "opt_2",
-        "title": "File the runbook plan as a GitHub issue",
-        "description": "Opens an issue listing the planned steps for your team to run. No step is executed.",
-        "impact": "NONE — documentation only",
-        "docs_url": "https://docs.github.com/en/issues",
-    },
-    {
-        "id": "hold",
-        "title": "Hold — run it manually",
-        "description": "Take no action; run the runbook yourself using this plan as a guide.",
-        "impact": "NONE — no action taken",
-        "docs_url": "",
-    },
-)
-
 
 # ──────────────────────────────────────────────
 # State schema
@@ -281,6 +262,10 @@ class RunbookWorkflow(BaseAgent):
 
         await self.check_budget(estimated_tokens=4000, model="claude-sonnet-4-20250514")
 
+        # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
+        _catalog = option_catalog({})
+        user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
+
         response, estimated_tokens = self.call_llm(
             task_type="runbook_automation",
             messages=[{"role": "user", "content": user_message}],
@@ -297,9 +282,11 @@ class RunbookWorkflow(BaseAgent):
         execution_plan   = diagnosis.get("execution_plan", state["runbook_steps_raw"])
         plan_summary     = diagnosis.get("plan_summary", "")
         skipped_steps    = diagnosis.get("skipped_steps", [])
-        # The LLM's own options are ignored: runbook execution is disabled
-        # (see tools.py), so the card only ever offers what can actually run.
-        options          = list(_OPTIONS)
+        # Runbook execution was removed (tools.py), so filing the plan is
+        # always offered, whatever the LLM proposed; an LLM "run it" option
+        # has no catalog entry and is dropped.
+        diagnosis["options"] = [*(diagnosis.get("options") or []), {"id": "opt_2"}]
+        options          = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
         duration         = diagnosis.get("estimated_duration_seconds", 60)
 
         # Enforce step cap
@@ -451,7 +438,7 @@ class RunbookWorkflow(BaseAgent):
                     "UPDATE incidents SET execution_status = 'held' WHERE id = $1",
                     __import__("uuid").UUID(incident_id),
                 )
-            elif status in ("refused", "failed", "not_implemented", "skipped"):
+            elif status in ("not_available", "failed", "not_implemented", "skipped"):
                 await self.hitl.mark_failed(
                     incident_id,
                     reason=exec_result.get("reason") or f"option {status}",

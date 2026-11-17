@@ -29,6 +29,9 @@ export interface RemediationOption {
   description: string
   impact: ImpactLevel
   docs_url: string
+  // What the agent's analysis says about this action (G12). Title/description/
+  // impact describe exactly what runs and come from the backend option catalog.
+  rationale?: string
   diff?: string | null
   blast_radius?: BlastRadius | null
   execution_log?: string[] | null

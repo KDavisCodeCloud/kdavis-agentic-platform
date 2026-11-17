@@ -788,9 +788,9 @@ class TestExecuteOption:
         assert result["status"] == "slack_sent"
         mock_slack.assert_called_once_with(aws_context["slack_message"])
 
-    async def test_unknown_option_returns_not_implemented(self, tools, aws_context):
+    async def test_unknown_option_returns_not_available(self, tools, aws_context):
         result = await tools.execute_option({"id": "opt_99"}, aws_context)
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
         assert result["option_id"] == "opt_99"
 
 

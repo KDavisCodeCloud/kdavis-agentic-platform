@@ -34,6 +34,8 @@ from typing import Optional
 
 import httpx
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GH_API              = "https://api.github.com"
@@ -231,6 +233,10 @@ class OnboardingTools:
                 "status": "held",
                 "message": "Synthesized response is available in the operator dashboard",
             }
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
+
 
         owner = context.get("owner", "")
         repo  = context.get("repo",  "")
@@ -274,3 +280,15 @@ def _gh_headers(token: str) -> dict:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 09 can actually do with the synthesized answer."""
+    return catalog_dict(
+        OptionSpec("opt_1", "Save the answer as a GitHub issue",
+                   "Creates a knowledge issue in the repository containing the synthesized answer.",
+                   "low", ("create_knowledge_issue",)),
+        OptionSpec("opt_2", "Post the answer to Slack",
+                   "Sends the synthesized answer (first 3,000 characters) to the workspace's Slack webhook.",
+                   "low", ("post_slack_message",)),
+    )
