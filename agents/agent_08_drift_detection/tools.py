@@ -52,6 +52,7 @@ from botocore.exceptions import ClientError
 from core.repo_tools import RepoTools, get_repo_tools
 from core.workspace_credentials import build_kubeconfig
 
+from core.pr_branch import pr_branch_name
 from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
@@ -760,7 +761,7 @@ class DriftTools:
             if not owner or not repo:
                 return {"status": "skipped", "reason": "repository not configured — cannot create PR"}
 
-            branch_name = f"drift-correction/{resource_id.replace('/', '-').replace(':', '-')}"[:100]
+            branch_name = pr_branch_name("drift", context.get("incident_id"))
             return await self.create_drift_pr(
                 owner=owner,
                 repo=repo,

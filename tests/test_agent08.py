@@ -1179,6 +1179,7 @@ class TestExecuteOption:
     @pytest.fixture
     def tf_context(self):
         return {
+            "incident_id": "11111111-1111-1111-1111-111111111111",
             "drift_source":      "terraform",
             "resource_id":       "sg-abc123",
             "resource_type":     "aws_security_group",

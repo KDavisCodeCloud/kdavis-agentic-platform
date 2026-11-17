@@ -24,6 +24,7 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.pr_branch import pr_branch_name
 from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
@@ -607,6 +608,7 @@ class K8sTools:
         commit_message: str,
         pr_title: str,
         pr_body: str,
+        incident_id: str,
         base_branch: str = "main",
     ) -> dict:
         """
@@ -619,7 +621,7 @@ class K8sTools:
         """
         repo_tools = self._repo_tools()
 
-        branch_name = f"cloud-decoded/k8s-fix-{_short_id()}"
+        branch_name = pr_branch_name("k8s-fix", incident_id)
         await repo_tools.create_branch(owner, repo, branch_name, base_branch)
         await repo_tools.push_commit(owner, repo, branch_name, {file_path: new_content}, commit_message)
         pr = await repo_tools.create_pr(owner, repo, branch_name, pr_title, pr_body, base=base_branch)
@@ -702,10 +704,6 @@ def _halve_memory(mem: str) -> str:
         pass
     return mem  # fallback: leave unchanged
 
-
-def _short_id() -> str:
-    import uuid
-    return str(uuid.uuid4())[:8]
 
 
 def _utc_now_iso() -> str:

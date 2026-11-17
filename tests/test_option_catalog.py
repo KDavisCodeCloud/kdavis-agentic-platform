@@ -115,7 +115,8 @@ async def test_option_runs_exactly_the_calls_its_label_describes(pkg, cls_name, 
     spec = catalog[option_id]
     tools, mocks = _mocked_tools(pkg, cls_name)
 
-    result = await tools.execute_option({"id": option_id, "title": "LLM-written text that must not matter"}, dict(ctx))
+    ctx = {**ctx, "incident_id": "11111111-1111-1111-1111-111111111111"}  # every workflow passes it (G17)
+    result = await tools.execute_option({"id": option_id, "title": "LLM-written text that must not matter"}, ctx)
 
     called = {name for name, m in mocks.items() if m.await_count}
     assert called == set(spec.calls), (

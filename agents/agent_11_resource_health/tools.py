@@ -38,6 +38,7 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.pr_branch import pr_branch_name
 from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
@@ -178,7 +179,7 @@ class ResourceHealthTools:
             return {"status": "skipped", "reason": "repository not configured — cannot create PR/issue"}
 
         if option_id == "opt_1":
-            branch_name = f"resource-health/{resource_id.replace('/', '-').replace(':', '-')}"[:100]
+            branch_name = pr_branch_name("resource-health", context.get("incident_id"))
             return await self.create_alert_pr(
                 owner=owner, repo=repo, branch_name=branch_name,
                 file_path=context.get("file_path", f"infra/{resource_id}"),

@@ -37,6 +37,7 @@ import httpx
 from botocore.exceptions import ClientError
 
 from core.cloud_errors import classify_aws_client_error, raise_if_azure_permission_error
+from core.pr_branch import pr_branch_name
 from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
@@ -606,6 +607,7 @@ class IAMMinimizeTools:
         new_content: str,
         pr_title: str,
         pr_body: str,
+        branch_name: str,
         base_branch: str = "main",
     ) -> dict:
         """
@@ -630,7 +632,6 @@ class IAMMinimizeTools:
         base_sha = ref_resp.json()["object"]["sha"]
 
         # 2. Create feature branch
-        branch_name = f"cloud-decoded/iam-minimize-{_short_id()}"
         async with httpx.AsyncClient(timeout=30) as client:
             branch_resp = await client.post(
                 f"{_GH_API}/repos/{owner}/{repo}/git/refs",
@@ -741,6 +742,7 @@ class IAMMinimizeTools:
             new_content=context.get("minimized_policy_str", "{}"),
             pr_title=context.get("pr_title", "security(iam): apply minimized policy"),
             pr_body=context.get("pr_body", ""),
+            branch_name=pr_branch_name("iam-minimize", context.get("incident_id")),
             base_branch=context.get("base_branch", "main"),
         )
 
@@ -918,10 +920,6 @@ def _gcp_headers(token: str) -> dict:
         "Content-Type": "application/json",
     }
 
-
-def _short_id() -> str:
-    import uuid
-    return str(uuid.uuid4())[:8]
 
 
 def _summarize_permissions(policy_document: dict) -> list[str]:

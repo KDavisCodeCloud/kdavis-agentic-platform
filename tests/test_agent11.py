@@ -380,7 +380,8 @@ class TestExecuteOption:
         tools = ResourceHealthTools(github_token="gh_real")
         with patch.object(tools, "create_alert_pr", new=AsyncMock(return_value={"status": "pr_created"})) as mock_pr:
             result = await tools.execute_option(
-                {"id": "opt_1"}, {"owner": "acme", "repo": "infra", "resource_id": "vm-1"},
+                {"id": "opt_1"}, {"owner": "acme", "repo": "infra", "resource_id": "vm-1",
+                                  "incident_id": "11111111-1111-1111-1111-111111111111"},
             )
         mock_pr.assert_awaited_once()
         assert result["status"] == "pr_created"
