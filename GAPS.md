@@ -1710,3 +1710,26 @@ The first three are DataSanitizationShield redaction cases (AWS secret
 keys, Azure client secrets), which the platform rules treat as
 non-negotiable. Not investigated: needs its own session to find whether
 the patterns or the tests drifted.
+
+### 36. Agent 08 cannot see insecure IaC — drift detection only compares IaC to live (G9, 2026-11-17) — DEFERRED, post-launch design item
+
+Found by the Break-It Lab (`KDavisCodeCloud/cloud-decoded-lab`, results.md,
+baseline commit 365ea2b, scenario `a2_badiac`). A security group with
+`22/tcp` from `0.0.0.0/0` written into the Terraform itself was deployed by
+the pipeline, then sent to Agent 08: "No drift detected — resource matches
+desired state". This is correct for a drift detector: desired equals live.
+Nothing in the product, though, evaluates the desired state itself, so
+bad IaC that ships through the customer's own pipeline is invisible to
+Cloud Decoded.
+
+Decision (Kelvin, 2026-11-16): deferred to post-launch as a design item, not
+a bug fix. It needs a policy layer over the desired state (CIS/IaC
+misconfiguration rules, or reuse of the compliance satellite's checks),
+with its own severity model and its own fix path (a PR that changes the
+IaC, not a drift correction).
+
+Related, fixed in the same fix session: G15 — the "No drift detected" run
+used to still open a `pending_approval` incident with fix options. Also
+post-launch: G18 — Agent 08 reports best-practice opinions (soft delete,
+public network access) as "critical drift" when they aren't in the desired
+state; reclassify them as recommendations with their own severity.
