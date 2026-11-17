@@ -68,15 +68,22 @@ project. See `DECISIONS.md` for the retirement decision.
 
 ## code-quality-gate.yml
 
-**Trigger:** any PR opened or updated targeting `main`
+**Trigger:** any PR opened or updated targeting `master`
 
 **What it does:**
-1. Checks out the PR branch, diffs changed `.py`/`.ts`/`.tsx` files only (fast)
-2. Runs `code_quality_agent` against just those changed files
-3. Posts the full report as a PR comment
-4. **BLOCKING** issues (DRY violations, dead code): PR status fails,
-   cannot merge until fixed or overridden via a dashboard HITL card
-   with a documented reason
+1. Checks out the PR branch, diffs changed `.py` files only (the analyzer
+   is Python-only; deleted files are skipped)
+2. Runs `code_quality_agent` against just those changed files, and again
+   against the same files as they are on `master`
+3. Posts the report as a PR comment (cut to fit GitHub's comment limit;
+   the full report is in the run's job summary)
+4. **BLOCKING** issues (DRY violations, dead code) **that this PR
+   introduces**: PR status fails, cannot merge until fixed or overridden
+   via a dashboard HITL card with a documented reason. A blocking issue
+   that already exists on `master` is reported as non-blocking and marked
+   "pre-existing" -- the analyzer reviews whole files, so without this
+   every PR touching an older file would stay red. Line numbers are
+   ignored when matching, so code moving doesn't make an old issue "new".
 5. **NON-BLOCKING** issues (bloat, readability, dependency bloat,
    inconsistency): PR passes, issues are written to the `tech_debt`
    Supabase table for the weekly digest

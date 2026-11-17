@@ -448,7 +448,92 @@ class CodeQualityAgent:
 
 
 # ──────────────────────────────────────────────
+# PR baseline — a PR is blocked only by issues it introduces
+# ──────────────────────────────────────────────
+# The analyzer reviews whole files, so a PR that touches one line of a file
+# with an old DRY or dead-code finding would otherwise inherit that finding
+# and stay red forever (2026-11-17: 1,394 findings across the 44 files the
+# lab fix PRs touched, almost all pre-existing). The PR gate reviews the same
+# paths at the base ref too and only blocks on what is new; pre-existing
+# findings are still reported, as non-blocking tech debt.
+
+_NUMBER = re.compile(r"\d+")
+
+
+def _fingerprint(issue: Issue) -> tuple[str, str, str]:
+    """Identity of an issue across commits: line numbers and counts shift
+    when unrelated code moves, so every number is dropped. A DRY finding is
+    keyed by its own function only, not by the list of other copies: that
+    list changes whenever any copy elsewhere changes, which would make a
+    long-standing duplicate look new."""
+    description = issue.description
+    if issue.issue_type == "dry":
+        description = description.split(" duplicates logic", 1)[0]
+    return (issue.file, issue.issue_type, _NUMBER.sub("#", description))
+
+
+def split_new_issues(head: list[Issue], base: list[Issue]) -> tuple[list[Issue], list[Issue]]:
+    """Returns (new, pre_existing). Multiset match: if base had one copy of an
+    issue and head has two, one of head's is new."""
+    remaining: dict[tuple[str, str, str], int] = {}
+    for issue in base:
+        key = _fingerprint(issue)
+        remaining[key] = remaining.get(key, 0) + 1
+    new, pre_existing = [], []
+    for issue in head:
+        key = _fingerprint(issue)
+        if remaining.get(key, 0) > 0:
+            remaining[key] -= 1
+            pre_existing.append(issue)
+        else:
+            new.append(issue)
+    return new, pre_existing
+
+
+def review_at_ref(paths: list[str], ref: str, repo_root: Path) -> list[Issue]:
+    """Reviews `paths` (repo-relative) as they were at git `ref`. A path that
+    didn't exist at `ref` is skipped, so all of its issues count as new."""
+    import os
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        present: list[str] = []
+        for rel in paths:
+            shown = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=repo_root,
+                                   capture_output=True)
+            if shown.returncode != 0:
+                continue
+            target = Path(tmp) / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(shown.stdout)
+            present.append(rel)
+        # Review with the same relative paths as head so fingerprints line up.
+        cwd = os.getcwd()
+        os.chdir(tmp)
+        try:
+            return CodeQualityAgent().review([Path(p) for p in present]).issues
+        finally:
+            os.chdir(cwd)
+
+
+def gate_report(paths: list[str], baseline_ref: str | None, repo_root: Path) -> CodeQualityReport:
+    """The PR gate's report. With a baseline, pre-existing issues are
+    downgraded to NON_BLOCKING and say so; new issues keep their severity."""
+    report = CodeQualityAgent().review([Path(p) for p in paths])
+    if not baseline_ref:
+        return report
+    _new, pre_existing = split_new_issues(report.issues, review_at_ref(paths, baseline_ref, repo_root))
+    for issue in pre_existing:
+        if issue.severity == BLOCKING:
+            issue.severity = NON_BLOCKING
+            issue.description = f"(pre-existing on {baseline_ref}) {issue.description}"
+    return report
+
+
+# ──────────────────────────────────────────────
 # CLI — backs the "Full codebase sweep" step in .github/workflows/weekly-sweep.yml
+# and the PR gate in .github/workflows/code-quality-gate.yml
 # ──────────────────────────────────────────────
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -482,6 +567,17 @@ def _discover_py_files(root: Path) -> list[Path]:
     return sorted(found)
 
 
+_COMMENT_LIMIT = 60_000  # GitHub rejects issue comments over 65,536 chars
+
+
+def _comment_body(text_report: str) -> str:
+    """PR comment text, cut to fit GitHub's comment limit; the full report
+    stays in the job summary and the JSON report."""
+    if len(text_report) > _COMMENT_LIMIT:
+        text_report = text_report[:_COMMENT_LIMIT] + "\n… truncated — full report is in the workflow run's job summary."
+    return f"```\n{text_report}\n```"
+
+
 if __name__ == "__main__":
     import argparse
     import json
@@ -491,21 +587,28 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run code_quality_agent")
     parser.add_argument("--full-sweep", action="store_true", help="Review every .py file in the repo")
     parser.add_argument("--paths", nargs="*", help="Specific files to review instead of a full sweep")
+    parser.add_argument("--paths-file", help="File listing paths to review, one per line (PR gate)")
+    parser.add_argument("--baseline-ref", help="Git ref to compare against: only issues new since "
+                                               "this ref block (PR gate passes the PR's base)")
+    parser.add_argument("--pr-number", default="-", help="PR number for the report header")
     parser.add_argument("--report-out", required=True, help="Path to write the JSON report")
     args = parser.parse_args()
 
     if args.full_sweep:
-        target_paths = _discover_py_files(REPO_ROOT)
-    elif args.paths:
-        target_paths = [Path(p) for p in args.paths]
+        report = CodeQualityAgent().review(_discover_py_files(REPO_ROOT))
+    elif args.paths or args.paths_file:
+        listed = list(args.paths or [])
+        if args.paths_file:
+            listed += [ln.strip() for ln in Path(args.paths_file).read_text().splitlines() if ln.strip()]
+        report = gate_report([p for p in listed if p.endswith(".py")], args.baseline_ref, Path.cwd())
     else:
-        parser.error("either --full-sweep or --paths is required")
+        parser.error("one of --full-sweep, --paths or --paths-file is required")
 
-    report = CodeQualityAgent().review(target_paths)
-    text_report = report.to_report_text()
+    text_report = report.to_report_text(pr_number=args.pr_number)
     print(text_report)
 
     Path(args.report_out).write_text(json.dumps({
+        "markdown_summary": _comment_body(text_report),
         "files_reviewed": report.files_reviewed,
         "blocking_count": len(report.blocking),
         "non_blocking_count": len(report.non_blocking),
