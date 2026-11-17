@@ -25,6 +25,15 @@ export const MANUALLY_RESOLVABLE_STATUSES: readonly IncidentStatus[] = ['pending
 
 export type ImpactLevel = 'low' | 'medium' | 'high'
 
+// Settings → Repositories (G13): where a resource's IaC lives. match_prefix
+// null = the workspace default; otherwise resources whose ID starts with it.
+export interface RepoMapping {
+  match_prefix: string | null
+  repository: string
+  base_branch: string
+  iac_path: string
+}
+
 // Gap-table #7-#9 (db.models.BlastRadius). All optional: agents that don't
 // produce them yet keep rendering exactly as before.
 export interface BlastRadius {

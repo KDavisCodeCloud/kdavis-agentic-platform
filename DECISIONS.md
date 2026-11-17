@@ -550,3 +550,69 @@ apply options.
 - **Added to item 3:** a GitHub App `pull_request` webhook. When the fix PR
   merges, the incident moves to "Fix merged — awaiting verification". Item 4's
   verification then closes it as `verified` or `verification_failed`.
+
+## 2026-11-17 — Fix session item 3: PR fixes work (G13, G16, G17, GitHub App)
+
+- **G17, branch names:** every fix PR uses `core/pr_branch.py`'s
+  `cloud-decoded/<kind>/<incident-uuid>`. No incident ID raises instead of
+  inventing a suffix. Fixes the Z2/Z4 409 collision, and lets the merge
+  webhook find the incident from the head branch.
+- **GitHub App linking** (Kelvin: never auto-link):
+  - The manifest now sets `setup_url` (the existing signed-state callback)
+    and `setup_on_update`. The registered App must be updated by hand in
+    GitHub.
+  - An `installation` webhook for an unclaimed installation is recorded in
+    `github_app_unclaimed_installations` (migration 062), never linked: the
+    payload can't prove which workspace started the install.
+  - An uninstall unlinks the workspace.
+  - The callback refuses an installation already held by another workspace;
+    the signed state proves the claimant's workspace, not ownership of
+    `installation_id`.
+  - Open item: full ownership proof needs "Request user authorization
+    (OAuth) during installation" so the callback can check the user's
+    installations.
+- **Merged fix PR → `fix_merged`** ("Fix merged — awaiting verification"):
+  - Set by the `pull_request` closed event on both the App and the
+    per-workspace webhooks.
+  - Only for a fix branch naming an incident in the installation's own
+    workspace, and only from `proposed`. Sets no `resolved_at`, is not a
+    downstream resolution, and can be resolved manually.
+  - Closed unmerged is audited only.
+  - Item 4's verification closes it as verified or verification_failed.
+- **G13, repo mapping** (migration 063, `core/repo_mapping.py`,
+  Settings → Repositories). The repo comes from the alert payload, else the
+  longest matching resource-ID prefix rule (case-insensitive), else the
+  workspace default.
+  - No tag rules: alert payloads carry no tags.
+  - Admin-only `PUT /workspace/repo-mappings`, audited.
+- **G16, one-block IaC PRs:** `core/hcl_edit.py` (a deterministic splice
+  that understands strings, comments and heredocs) plus `core/iac_fix.py`,
+  shared by agents 08 and 11.
+  - **Diagnose:** reads the real `.tf` file and shows it sanitized to the
+    LLM, which returns one address and block. The exact diff goes on opt_1.
+    JSON, multiple blocks, a rename, or a redaction placeholder means no PR
+    option, and the card says why.
+  - **Execute:** the block is re-checked against the current file (refused
+    if it changed since review), then terraform fmt + validate run, then the
+    PR is opened. Any failure → incident `failed` with the reason, no PR.
+  - **Agent 08:** PRs only for Terraform; CloudFormation, ARM and generic
+    sources get the issue only.
+  - **Agent 11:** used to commit `payload["corrected_content"]` (never sent)
+    over the whole file.
+- **Terraform gate runs in an isolated service** (Kelvin's choice):
+  `services/terraform_runner`.
+  - Why: `terraform init` executes the provider binaries the customer's code
+    declares, and the API process holds every tenant's decrypted
+    credentials.
+  - The runner has no database and no customer credentials; providers are
+    restricted to `registry.terraform.io/hashicorp/*`; it uses
+    `-backend=false`, a fresh temp dir and hard timeouts.
+  - The client (`core/terraform_gate.py`) fails closed when
+    `TERRAFORM_RUNNER_URL`/`TOKEN` are unset.
+  - Verified against real terraform 1.14.8 locally: a valid edit passes;
+    the lab's JSON fails with "Argument or block definition required"; an
+    unknown argument fails validate; a third-party provider fails init.
+  - **Not deployed.** It needs its own Railway service, staging first.
+- **Found, not fixed (outside scope):** `api/routes/policies.py` is imported
+  in `api/main.py` but never mounted, so Settings → Policies (execution
+  policy, exemptions, "Exempt this resource") 404s.

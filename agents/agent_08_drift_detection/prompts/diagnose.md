@@ -21,7 +21,9 @@ Return ONLY valid JSON. No markdown. No preamble.
     }
   ],
   "drift_severity": "CRITICAL",
-  "corrected_content": "...(full corrected IaC/manifest content that reproduces the desired state)...",
+  "corrected_content": "...(Kubernetes manifest / non-Terraform corrected content; \"\" for Terraform)...",
+  "terraform_address": "aws_security_group.web",
+  "corrected_block": "resource \"aws_security_group\" \"web\" { ...that one block, corrected... }",
   "options": [
     {
       "id": "opt_1",
@@ -82,7 +84,7 @@ Overall `drift_severity` = **highest severity** among all drift_items.
 
 - `corrected_content` must reproduce the **desired state** — not the actual state.
 - For Kubernetes: output a complete YAML manifest. Preserve all `metadata.labels` and `metadata.annotations` from the desired state.
-- For Terraform: output the corrected `.tf` file content only (not tfstate).
+- For Terraform: never output a whole file, and never JSON. When the user message includes an "IaC file" section, set `terraform_address` to the one resource in that file that defines the drifted resource and `corrected_block` to that resource's complete block in HCL with only the drifted attributes restored -- same type and name, every other line kept as written. Cloud Decoded splices that one block into the file; anything else is refused. Without an IaC file section, or if no resource in it matches, set both to `""` and leave `corrected_content` empty.
 - For CloudFormation: output the corrected template JSON/YAML.
 - For ARM/Bicep: output the corrected template content only.
 - For Azure App Service content/config drift: output the corrected `app_settings` JSON block (not a full IaC file) — the operator applies this via the App Service Configuration API or their own IaC, not a file overwrite. Never invent file contents for a missing file you weren't given — flag it as a drift item and let the operator supply or restore it.

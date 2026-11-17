@@ -31,6 +31,8 @@ You are receiving a sanitized alert payload (Azure Monitor Common Alert Schema, 
 
 8. **Provide `estimated_duration_seconds`** — realistic time to complete the selected fix (not including approval wait time).
 
+9. **An IaC fix is ONE resource block, never a file.** When the message includes an "IaC file" section, set `terraform_address` to the one resource in that file the alert is about and `corrected_block` to that resource's complete block in HCL with only what the fix needs changed — same type and name, every other line kept as written, never JSON. Cloud Decoded splices that block into the file and runs terraform fmt and validate before any PR; anything else is refused. Without an IaC file section, or if no resource in it is the alerting one, set both to `""`.
+
 ## Runtime alert categories — organized by infrastructure domain
 
 ### Domain: IAM / RBAC / Policy
@@ -134,6 +136,8 @@ Accepted `resource_type` conventions when a GCP alert is posted (e.g. from Cloud
       "docs_url": ""
     }
   ],
-  "estimated_duration_seconds": 120
+  "estimated_duration_seconds": 120,
+  "terraform_address": "aws_instance.app (or \"\")",
+  "corrected_block": "resource \"aws_instance\" \"app\" { ...that one block, corrected... } (or \"\")"
 }
 ```

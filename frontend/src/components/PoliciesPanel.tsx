@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ShieldAlert, ShieldOff, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { RepoMappingsSection } from '@/components/RepoMappingsSection'
 import {
   getConnectionsStatus, getExecutionPolicy, setExecutionPolicy,
   listResourceExemptions, revokeResourceExemption,
@@ -199,6 +200,8 @@ export function PoliciesPanel({ token }: PoliciesPanelProps) {
             </div>
           )}
         </div>
+
+        <RepoMappingsSection token={token} />
       </div>
     </div>
   )

@@ -71,6 +71,9 @@ AGENTS = [
     ]),
     ("agent_08_drift_detection", "DriftTools", [
         {"drift_source": "terraform", "owner": "o", "repo": "r", "resource_id": "sg-1", "corrected_content": "x"},
+        # G16: the PR option exists only with a reviewed one-block change from diagnose
+        {"drift_source": "terraform", "owner": "o", "repo": "r", "resource_id": "sg-1",
+         "iac_proposal": {"address": "aws_security_group.web", "file_path": "main.tf"}},
         {"drift_source": "kubernetes", "owner": "o", "repo": "r", "resource_id": "deploy/web",
          "corrected_content": "kind: Deployment", "scope": "ns"},
     ]),
@@ -83,6 +86,8 @@ AGENTS = [
     ]),
     ("agent_11_resource_health", "ResourceHealthTools", [
         {"owner": "o", "repo": "r", "resource_id": "i-1", "report_body": "b", "corrected_content": "x"},
+        {"owner": "o", "repo": "r", "resource_id": "i-1", "report_body": "b",
+         "iac_proposal": {"address": "aws_instance.app", "file_path": "main.tf"}},
     ]),
 ]
 

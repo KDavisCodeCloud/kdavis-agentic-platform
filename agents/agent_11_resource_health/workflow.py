@@ -61,6 +61,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_11_resource_health.tools import ResourceHealthTools
 from agents.agent_11_resource_health.tools import option_catalog
+from core.hcl_edit import HclEditError
+from core.iac_fix import attach_diff, iac_prompt_block, load_iac_file, prepare_proposal
 from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 from core.severity import normalize_severity
@@ -99,6 +101,12 @@ class ResourceHealthState(TypedDict):
     metric_name: Optional[str]
     metric_current_value: Optional[float]
     metric_threshold: Optional[float]
+
+    # G13/G16 (item 3): where this resource's IaC lives, and the reviewed
+    # one-block change for the PR option (core/iac_fix.py).
+    iac_repository: Optional[str]   # "owner/repo" from the alert or Settings → Repositories
+    iac_proposal: Optional[dict]
+    iac_note: Optional[str]         # why there's no PR option, shown on the card
 
     # Set True only when _dedup_check_node finds a real existing open
     # incident to collapse against. _route_after_dedup reads this, NOT
@@ -777,8 +785,19 @@ class ResourceHealthWorkflow(BaseAgent):
 
         await self.check_budget(estimated_tokens=3000, model="claude-sonnet-4-20250514")
 
+        # G13 (lab A1/Z1): alerts carry no repo, so resolve it through
+        # Settings → Repositories, then show the LLM the real .tf file (G16).
+        iac_target, iac_text, iac_note = await load_iac_file(
+            self.db, self.workspace_id, self._tools._repo_tools, state["resource_id"],
+            state.get("webhook_payload") or {},
+        )
+        if iac_text is not None:
+            user_message = f"{user_message}\n\n{iac_prompt_block(iac_target, iac_text, self.agent_id)}"
+        iac_fields = {"iac_repository": iac_target.repository if iac_target else None,
+                      "iac_proposal": None, "iac_note": iac_note}
+
         # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
-        _catalog = option_catalog({})
+        _catalog = option_catalog({"iac_file_available": iac_text is not None})
         user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
 
         try:
@@ -814,6 +833,7 @@ class ResourceHealthWorkflow(BaseAgent):
                 }],
                 "estimated_duration_seconds": None,
                 "tokens_used": state.get("tokens_used", 0),
+                **iac_fields,
             }
 
         try:
@@ -823,7 +843,18 @@ class ResourceHealthWorkflow(BaseAgent):
             return {"error": str(exc), "tokens_used": estimated_tokens}
 
         parsed_error = diagnosis.get("parsed_error", "Unknown resource health alert")
-        options = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
+        if iac_text is not None:
+            try:
+                iac_fields["iac_proposal"] = prepare_proposal(
+                    iac_target, iac_text, diagnosis.get("terraform_address", ""),
+                    diagnosis.get("corrected_block", ""),
+                ).to_dict()
+            except HclEditError as exc:
+                iac_fields["iac_note"] = f"No PR option: {exc}"
+        # Bind against what can actually run now: opt_1 only with a reviewed change.
+        _catalog = option_catalog({"iac_proposal": iac_fields["iac_proposal"]})
+        options = attach_diff(bind_options(diagnosis.get("options", []), _catalog, self.agent_id),
+                              iac_fields["iac_proposal"])
         duration = diagnosis.get("estimated_duration_seconds", 120)
 
         required_fields = {"id", "title", "description", "impact", "docs_url"}
@@ -839,6 +870,7 @@ class ResourceHealthWorkflow(BaseAgent):
             "remediation_options": options,
             "estimated_duration_seconds": duration,
             "tokens_used": state.get("tokens_used", 0) + estimated_tokens,
+            **iac_fields,
         }
 
     async def _hitl_gate_node(self, state: ResourceHealthState) -> dict:
@@ -857,11 +889,14 @@ class ResourceHealthWorkflow(BaseAgent):
             )
             return {"incident_id": incident_id}
 
+        raw_log = state["log_excerpt"]
+        if state.get("iac_note"):
+            raw_log = f"{raw_log}\n\n{state['iac_note']}"
         incident_id = await self.hitl.create_incident(
             incident_id=state["incident_id"],
             workspace_id=self.workspace_id,
             agent_id=self.agent_id,
-            raw_log=state["log_excerpt"],
+            raw_log=raw_log,
             parsed_error=state["parsed_error"],
             remediation_options=state["remediation_options"],
             cloud_provider=state["cloud_provider"],
@@ -911,13 +946,12 @@ class ResourceHealthWorkflow(BaseAgent):
             incident_id=state.get("incident_id"),
         )
 
-        payload = state["webhook_payload"]
+        owner, _, repo = (state.get("iac_repository") or "").partition("/")
         context = {
             "resource_id": state["resource_id"],
-            "owner": payload.get("owner", ""),
-            "repo": payload.get("repo", ""),
-            "file_path": payload.get("file_path", f"infra/{state['resource_id']}"),
-            "corrected_content": payload.get("corrected_content", ""),
+            "owner": owner,
+            "repo": repo,
+            "iac_proposal": state.get("iac_proposal"),
             "report_body": state.get("parsed_error", ""),
             "issue_title": f"Resource health alert: {state['alert_name']} ({state['resource_id']})",
         }

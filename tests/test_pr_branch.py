@@ -7,7 +7,7 @@ truncated to 100 chars, so they collided and Z4's commit failed 409.
 """
 import re
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -58,7 +58,8 @@ async def test_lab_z2_z4_same_resource_group_get_different_branches():
         with patch.object(tools, "create_drift_pr", new=AsyncMock(return_value={"status": "pr_created"})) as pr:
             await tools.execute_option({"id": "opt_1"}, {
                 "drift_source": "terraform", "resource_id": resource, "owner": "o", "repo": "r",
-                "file_path": "azure/main.tf", "corrected_content": "x", "incident_id": incident_id,
+                "iac_proposal": {"address": "azurerm_network_security_group.lab", "file_path": "azure/main.tf"},
+                "incident_id": incident_id,
             })
         branches.append(pr.await_args.kwargs["branch_name"])
     assert branches == [f"cloud-decoded/drift/{Z2}", f"cloud-decoded/drift/{Z4}"]
@@ -70,7 +71,8 @@ async def test_fix_pr_without_incident_id_opens_nothing():
     tools = DriftTools(github_token="gh")
     with patch.object(tools, "create_drift_pr", new=AsyncMock()) as pr, pytest.raises(ValueError):
         await tools.execute_option({"id": "opt_1"}, {
-            "drift_source": "terraform", "resource_id": "sg-1", "owner": "o", "repo": "r", "corrected_content": "x",
+            "drift_source": "terraform", "resource_id": "sg-1", "owner": "o", "repo": "r",
+            "iac_proposal": {"address": "aws_security_group.web", "file_path": "main.tf"},
         })
     pr.assert_not_awaited()
 
@@ -81,7 +83,8 @@ async def test_fix_pr_without_incident_id_opens_nothing():
     ("agent_05_iam_minimizer", "IAMMinimizeTools", "opt_2",
      {"cloud_provider": "aws", "owner": "o", "repo": "r"}, "iam-minimize"),
     ("agent_11_resource_health", "ResourceHealthTools", "opt_1",
-     {"owner": "o", "repo": "r", "resource_id": "vm"}, "resource-health"),
+     {"owner": "o", "repo": "r", "resource_id": "vm",
+      "iac_proposal": {"address": "aws_instance.vm", "file_path": "main.tf"}}, "resource-health"),
 ])
 async def test_each_agents_pr_branch_carries_the_incident(pkg, cls, option_id, ctx, kind):
     import importlib

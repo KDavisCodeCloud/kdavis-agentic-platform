@@ -301,32 +301,34 @@ class TestResourceHealthWorkflowCredentialWiring:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestCreateAlertPr:
-    async def test_delegates_to_repo_tools(self):
+    # G16: the PR changes only the reviewed resource block, via
+    # core.iac_fix.open_fix_pr (covered in tests/test_iac_fix.py). It used to
+    # commit payload["corrected_content"] over the whole file -- and no real
+    # alert carries one.
+
+    @pytest.fixture
+    def proposal(self):
+        from core.iac_fix import prepare_proposal
+        from core.repo_mapping import RepoTarget
+        from tests.test_hcl_edit import FIXED_SG, STACK
+        return prepare_proposal(RepoTarget("acme", "infra", "main", "aws/main.tf", "default"),
+                                STACK, "aws_security_group.web", FIXED_SG).to_dict()
+
+    async def test_opens_the_reviewed_change_after_the_gate(self, proposal):
+        from core.terraform_gate import GateResult
+        from tests.test_iac_fix import _repo
         tools = ResourceHealthTools(github_token="gh_real")
-        fake_repo_tools = AsyncMock()
-        fake_repo_tools.create_branch = AsyncMock()
-        fake_repo_tools.push_commit = AsyncMock()
-        fake_repo_tools.create_pr = AsyncMock(return_value={"pr_url": "https://github.com/acme/infra/pull/9", "pr_number": 9})
+        rt = _repo()
+        with patch.object(tools, "_repo_tools", return_value=rt), \
+             patch("core.iac_fix.check_terraform", new=AsyncMock(return_value=GateResult(True))):
+            result = await tools.create_alert_pr(proposal, "cloud-decoded/resource-health/x", "fix")
+        assert result["status"] == "pr_created" and result["pr_number"] == 9
+        assert list(rt.push_commit.await_args.args[3]) == ["aws/main.tf"]
 
-        with patch.object(tools, "_repo_tools", return_value=fake_repo_tools):
-            result = await tools.create_alert_pr(
-                owner="acme", repo="infra", branch_name="resource-health/acme-prod-vm",
-                file_path="terraform/vm.tf", corrected_content="...", pr_body="fix",
-            )
-
-        fake_repo_tools.create_branch.assert_awaited_once()
-        fake_repo_tools.push_commit.assert_awaited_once()
-        fake_repo_tools.create_pr.assert_awaited_once()
-        assert result["status"] == "pr_created"
-        assert result["pr_number"] == 9
-
-    async def test_raises_no_repo_credential_error_when_unconfigured(self):
+    async def test_raises_no_repo_credential_error_when_unconfigured(self, proposal):
         tools = ResourceHealthTools()  # no github_token, no azure_devops_token
         with pytest.raises(NoRepoCredentialError):
-            await tools.create_alert_pr(
-                owner="acme", repo="infra", branch_name="b", file_path="f.tf",
-                corrected_content="...", pr_body="fix",
-            )
+            await tools.create_alert_pr(proposal, "b", "fix")
 
 
 class TestCreateAlertIssue:
@@ -381,6 +383,7 @@ class TestExecuteOption:
         with patch.object(tools, "create_alert_pr", new=AsyncMock(return_value={"status": "pr_created"})) as mock_pr:
             result = await tools.execute_option(
                 {"id": "opt_1"}, {"owner": "acme", "repo": "infra", "resource_id": "vm-1",
+                                  "iac_proposal": {"address": "aws_instance.vm", "file_path": "main.tf"},
                                   "incident_id": "11111111-1111-1111-1111-111111111111"},
             )
         mock_pr.assert_awaited_once()
@@ -395,10 +398,16 @@ class TestExecuteOption:
         mock_issue.assert_awaited_once()
         assert result["status"] == "issue_created"
 
-    async def test_missing_repo_returns_skipped(self):
+    async def test_issue_without_a_repo_is_skipped_with_where_to_fix_it(self):
         tools = ResourceHealthTools(github_token="gh_real")
-        result = await tools.execute_option({"id": "opt_1"}, {"resource_id": "vm-1"})
-        assert result["status"] == "skipped"
+        result = await tools.execute_option({"id": "opt_2"}, {"resource_id": "vm-1"})
+        assert result["status"] == "skipped" and "Settings → Repositories" in result["reason"]
+
+    async def test_pr_without_a_reviewed_change_is_not_available(self):
+        """Lab A1/Z1: there used to be a PR option with nothing to commit."""
+        tools = ResourceHealthTools(github_token="gh_real")
+        result = await tools.execute_option({"id": "opt_1"}, {"owner": "acme", "repo": "infra", "resource_id": "vm"})
+        assert result["status"] == "not_available"
 
     async def test_unknown_option_returns_not_available(self):
         tools = ResourceHealthTools(github_token="gh_real")

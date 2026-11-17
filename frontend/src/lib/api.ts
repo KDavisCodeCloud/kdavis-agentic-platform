@@ -10,7 +10,7 @@ import type {
   IncidentFilters, WorkspaceMembersResponse, WorkspaceMember, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
   ExhaustedRetriesResponse, SetTokenExpiryResult, RequireMfaResult,
   SetupChecklist, ConnectionTestResult, LlmUsage,
-  ExecutionPolicy, ResourceExemption, IncidentAuditEntry,
+  ExecutionPolicy, ResourceExemption, IncidentAuditEntry, RepoMapping,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -370,6 +370,23 @@ export async function listResourceExemptions(token: string): Promise<ResourceExe
 export async function revokeResourceExemption(token: string, exemptionId: string): Promise<ResourceExemption> {
   if (MOCK_MODE) throw new ApiError(404, 'Not available in demo mode')
   return request<ResourceExemption>(`/workspace/policies/exemptions/${exemptionId}`, token, { method: 'DELETE' })
+}
+
+// ── Repository mappings (G13, migration 063) ──────────────────────────
+
+export async function listRepoMappings(token: string): Promise<RepoMapping[]> {
+  if (MOCK_MODE) return []
+  const res = await request<{ mappings: RepoMapping[] }>('/workspace/repo-mappings', token)
+  return res.mappings
+}
+
+export async function saveRepoMappings(token: string, mappings: RepoMapping[]): Promise<RepoMapping[]> {
+  if (MOCK_MODE) return mappings
+  const res = await request<{ mappings: RepoMapping[] }>('/workspace/repo-mappings', token, {
+    method: 'PUT',
+    body: JSON.stringify({ mappings }),
+  })
+  return res.mappings
 }
 
 // ── Agents ─────────────────────────────────────────────────────────────

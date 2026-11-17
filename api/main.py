@@ -71,6 +71,7 @@ from api.routes import github_app_admin
 from api.routes import setup_checklist
 from api.routes import llm_usage
 from api.routes import policies
+from api.routes import repo_mappings
 from api.routes import email_public
 from api.routes import internal_email_campaigns
 from api.routes import demo
@@ -620,6 +621,7 @@ app.include_router(internal_email_campaigns.router, prefix="/api/v1")
 app.include_router(demo.router,             prefix="/api/v1")
 app.include_router(funnel_events.router,    prefix="/api/v1")
 app.include_router(policies.router,         prefix="/api/v1")
+app.include_router(repo_mappings.router,    prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────

@@ -38,6 +38,7 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.iac_fix import IacProposal, iac_pr_option, open_fix_pr
 from core.pr_branch import pr_branch_name
 from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
@@ -76,39 +77,22 @@ class ResourceHealthTools:
             azure_devops_org=self.azure_devops_org,
         )
 
-    async def create_alert_pr(
-        self,
-        owner: str,
-        repo: str,
-        branch_name: str,
-        file_path: str,
-        corrected_content: str,
-        pr_body: str,
-        base_branch: str = "main",
-        pr_title: Optional[str] = None,
-    ) -> dict:
-        """Open a PR with the proposed IaC fix, against whichever provider
-        this workspace has connected. Same 5-step flow as Agent 08's
-        create_drift_pr, deliberately not shared as a base-class method --
-        each agent's tools.py stays self-contained in this codebase."""
-        repo_tools = self._repo_tools()
-
-        await repo_tools.create_branch(owner, repo, branch_name, base_branch)
-        await repo_tools.push_commit(
-            owner, repo, branch_name,
-            {file_path: corrected_content},
-            f"fix(resource-health): {file_path} [Cloud Decoded Agent 11]",
+    async def create_alert_pr(self, proposal: Optional[dict], branch_name: str, pr_body: str) -> dict:
+        """Open a PR changing only the reviewed resource block (G16), after the
+        re-check and terraform fmt + validate in core/iac_fix.py. It used to
+        commit the alert payload's `corrected_content` over the whole file,
+        and no real alert carries one -- so it would have committed an empty file."""
+        iac = IacProposal.from_dict(proposal)
+        address = iac.address if iac else "resource"
+        result = await open_fix_pr(
+            self._repo_tools(), iac, branch_name,
+            pr_title=f"fix(resource-health): change {address}",
+            pr_body=pr_body,
+            commit_message=f"fix(resource-health): change {address} [Cloud Decoded Agent 11]",
         )
-        title = pr_title or f"fix(resource-health): address alert in {file_path}"
-        pr = await repo_tools.create_pr(owner, repo, branch_name, title, pr_body, base=base_branch)
-
-        log.info("[ResourceHealthTools] Remediation PR created: %s", pr.get("pr_url"))
-        return {
-            "status": "pr_created",
-            "pr_url": pr.get("pr_url", ""),
-            "pr_number": pr.get("pr_number"),
-            "branch": branch_name,
-        }
+        log.info("[ResourceHealthTools] alert PR for %s: %s %s", address, result["status"],
+                 result.get("pr_url") or result.get("reason", ""))
+        return result
 
     async def create_alert_issue(
         self,
@@ -175,17 +159,17 @@ class ResourceHealthTools:
         resource_id = context.get("resource_id", "resource")
         report_body = context.get("report_body", "")
 
-        if not owner or not repo:
-            return {"status": "skipped", "reason": "repository not configured — cannot create PR/issue"}
-
         if option_id == "opt_1":
-            branch_name = pr_branch_name("resource-health", context.get("incident_id"))
+            # Only in the catalog when diagnose produced a reviewed one-block change (G16).
             return await self.create_alert_pr(
-                owner=owner, repo=repo, branch_name=branch_name,
-                file_path=context.get("file_path", f"infra/{resource_id}"),
-                corrected_content=context.get("corrected_content", ""),
+                proposal=context.get("iac_proposal"),
+                branch_name=pr_branch_name("resource-health", context.get("incident_id")),
                 pr_body=report_body,
             )
+
+        if not owner or not repo:
+            return {"status": "skipped",
+                    "reason": "no repository for this resource -- map one in Settings → Repositories"}
 
         if option_id == "opt_2":
             return await self.create_alert_issue(
@@ -203,11 +187,11 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
     What Agent 11 can actually do. It has no live cloud actions: nothing is
     scaled, restarted or reconfigured directly.
     """
+    # G16/G13: a PR only for a one-block change diagnose computed against the
+    # resource's real .tf file (repo from the alert or Settings → Repositories).
+    specs = iac_pr_option(context, "create_alert_pr")
     return catalog_dict(
-        OptionSpec("opt_1", "Open a PR with the proposed IaC change",
-                   "Writes the proposed change to the IaC file on a new branch and opens a pull request. "
-                   "Nothing changes in the cloud until the PR is merged and your pipeline applies it.",
-                   "low", ("create_alert_pr",), proposal=True),
+        *specs,
         OptionSpec("opt_2", "Open an investigation issue",
                    "Creates a GitHub issue with the alert, the diagnosis and investigation steps. Nothing is changed.",
                    "low", ("create_alert_issue",), proposal=True),
