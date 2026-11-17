@@ -52,17 +52,17 @@ def _test_private_key_pem() -> str:
 
 class TestBuildManifest:
     def test_includes_fine_grained_permissions_not_broader(self):
-        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh")
+        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh", "https://x.com/setup")
         assert manifest["default_permissions"] == {
             "contents": "write", "pull_requests": "write", "metadata": "read",
         }
 
     def test_is_not_public(self):
-        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh")
+        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh", "https://x.com/setup")
         assert manifest["public"] is False
 
     def test_hook_url_set_from_webhook_url_arg(self):
-        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh")
+        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh", "https://x.com/setup")
         assert manifest["hook_attributes"]["url"] == "https://x.com/wh"
 
 
@@ -179,3 +179,24 @@ class TestWorkspaceState:
     def test_verify_rejects_garbage_input(self):
         with patch.dict("os.environ", {"ENCRYPTION_KEY": "test-key"}):
             assert verify_workspace_state("not-a-real-state") is None
+
+
+def test_manifest_sets_setup_url_so_install_redirects_back():
+    """Lab run 2: no Setup URL, so GitHub never redirected and the workspace stayed unlinked."""
+    manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh",
+                              "https://x.com/setup")
+    assert manifest["setup_url"] == "https://x.com/setup"
+    assert manifest["setup_on_update"] is True
+
+
+async def test_register_route_points_setup_url_at_the_install_callback(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    from api.routes import github_app_admin
+
+    conn = AsyncMock(); conn.fetchrow = AsyncMock(return_value=None)
+    ctx = AsyncMock(); ctx.__aenter__ = AsyncMock(return_value=conn); ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock(); pool.acquire = MagicMock(return_value=ctx)
+    monkeypatch.setenv("API_BASE_URL", "https://api.example.com")
+    out = await github_app_admin.register_github_app(SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool))), admin={})
+    assert out["manifest"]["setup_url"] == "https://api.example.com/api/v1/workspace/credentials/github-app/callback"

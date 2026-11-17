@@ -38,6 +38,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from api.middleware.rate_limiter import limiter, _webhook_tier_limit
+from core.github_app_events import handle_fix_pr_closed, handle_installation_event
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 from core.error_tracking import capture_exception
 from core.execution_semaphore import bounded_execution
@@ -188,6 +189,12 @@ async def github_webhook(
         background_tasks.add_task(_run_cicd_triage, request.app, workspace, payload, "github", ingestion_log_id=log_id)
         return {"status": "accepted", "message": "CI/CD triage initiated"}
 
+    # ── pull_request closed → a merged Cloud Decoded fix PR moves its incident
+    #    to fix_merged (core/github_app_events.py) ──
+    if event == "pull_request" and action == "closed":
+        async with db.acquire() as conn:
+            return await handle_fix_pr_closed(conn, workspace["id"], payload)
+
     # ── pull_request opened/updated → Agent 03 (PR Review) ──
     if event == "pull_request":
         if action not in ("opened", "synchronize", "reopened"):
@@ -315,6 +322,10 @@ async def github_app_webhook(request: Request, background_tasks: BackgroundTasks
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload")
 
+    if event == "installation":
+        async with db.acquire() as conn:
+            return await handle_installation_event(conn, payload)
+
     installation_id = str(payload.get("installation", {}).get("id", ""))
     if not installation_id:
         return {"status": "ignored", "reason": "no installation.id in payload"}
@@ -342,6 +353,10 @@ async def github_app_webhook(request: Request, background_tasks: BackgroundTasks
             }
         background_tasks.add_task(_run_cicd_triage, request.app, workspace, payload, "github")
         return {"status": "accepted", "message": "CI/CD triage initiated"}
+
+    if event == "pull_request" and action == "closed":
+        async with db.acquire() as conn:
+            return await handle_fix_pr_closed(conn, workspace["id"], payload)
 
     if event == "pull_request":
         if action not in ("opened", "synchronize", "reopened"):

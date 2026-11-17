@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck, GitPullRequest } from 'lucide-react'
+import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck, GitPullRequest, GitMerge } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
@@ -39,6 +39,7 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
     executing:         3,
     executed:          4,
     proposed:          3, // a PR/issue was opened; the live fix (merge) hasn't happened -- G1
+    fix_merged:        4, // merged; the last step (verified live) is still pending -- item 4
     held:              2, // stopped at HITL gate — steps 3-4 stay waiting
     failed:            3,
     budget_exceeded:   2,
@@ -130,6 +131,9 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
           {incident.status === 'proposed' && (
             <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           )}
+          {incident.status === 'fix_merged' && (
+            <GitMerge className="h-3.5 w-3.5 shrink-0 text-blue-300" />
+          )}
           {incident.status === 'resolved_manually' && (
             <UserCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
           )}
@@ -197,6 +201,7 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
             executing:         'Executing',
             executed:          'Executed',
             proposed:          'Fix Proposed',
+            fix_merged:        'Fix Merged — Awaiting Verification',
             held:              'Held',
             failed:            'Failed',
             budget_exceeded:   'Budget Exceeded',
@@ -222,7 +227,7 @@ export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, o
   const active   = incidents.filter(i => i.status === 'executing')
   // A proposed fix is open work in the customer's repo, not a resolution:
   // its own section, selectable for bulk resolve (MANUALLY_RESOLVABLE_STATUSES).
-  const fixInProgress = incidents.filter(i => i.status === 'proposed')
+  const fixInProgress = incidents.filter(i => i.status === 'proposed' || i.status === 'fix_merged')
   const resolved = incidents.filter(i => ['executed', 'resolved_manually', 'held', 'failed', 'budget_exceeded', 'rejected'].includes(i.status))
 
   if (incidents.length === 0) {

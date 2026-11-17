@@ -22,6 +22,7 @@ _FERNET_KEY = Fernet.generate_key().decode()
 def _make_request(fetchrow_return=None) -> tuple:
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=fetchrow_return)
+    conn.fetchval = AsyncMock(return_value=None)
     conn.execute = AsyncMock(return_value=None)
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)
@@ -79,10 +80,30 @@ class TestGithubAppInstallCallback:
             )
         assert result.status_code in (302, 307)
         assert result.headers["location"].endswith("/dashboard?connected=github")
-        conn.execute.assert_awaited_once()
-        args = conn.execute.await_args.args
-        assert "inst-123" in args
-        assert workspace_id in args
+        link, clear_unclaimed = conn.execute.await_args_list
+        assert "UPDATE workspaces" in link.args[0]
+        assert "inst-123" in link.args and workspace_id in link.args
+        assert "github_app_unclaimed_installations" in clear_unclaimed.args[0]
+
+    async def test_refuses_installation_held_by_another_workspace(self):
+        """A valid state proves the claimant's workspace, not that it owns installation_id."""
+        request, conn = _make_request()
+        conn.fetchval = AsyncMock(return_value=uuid4())  # linked elsewhere
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            state = wc_routes.sign_workspace_state(str(uuid4()))
+            with pytest.raises(HTTPException) as exc:
+                await wc_routes.github_app_install_callback(request, installation_id="inst-123", state=state)
+        assert exc.value.status_code == 409
+        conn.execute.assert_not_awaited()
+
+    async def test_relinking_own_installation_is_allowed(self):
+        workspace_id = str(uuid4())
+        request, conn = _make_request()
+        conn.fetchval = AsyncMock(return_value=workspace_id)
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            state = wc_routes.sign_workspace_state(workspace_id)
+            result = await wc_routes.github_app_install_callback(request, installation_id="inst-123", state=state)
+        assert result.status_code in (302, 307)
 
     async def test_rejects_invalid_state(self):
         request, conn = _make_request()

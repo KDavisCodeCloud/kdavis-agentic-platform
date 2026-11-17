@@ -480,11 +480,26 @@ async def github_app_install_callback(request: Request, installation_id: str, st
         raise HTTPException(status_code=400, detail="Invalid or expired state -- restart the install flow")
 
     async with request.app.state.db_pool.acquire() as conn:
+        # The signed state proves which workspace started the flow, not who
+        # owns installation_id (it's a plain query param). Never move an
+        # installation another workspace already holds -- that would hand
+        # this workspace tokens for someone else's repos.
+        holder = await conn.fetchval(
+            "SELECT id FROM workspaces WHERE github_app_installation_id = $1", installation_id,
+        )
+        if holder and str(holder) != str(workspace_id):
+            log.warning("[WorkspaceCredentials] refused GitHub App claim: installation=%s already linked to "
+                        "another workspace (claimant=%s)", installation_id, workspace_id)
+            raise HTTPException(status_code=409, detail="This GitHub App installation is linked to another workspace")
+
         await conn.execute(
             "UPDATE workspaces SET github_app_installation_id = $1, github_app_installed_at = NOW() "
             "WHERE id = $2",
             installation_id,
             workspace_id,
+        )
+        await conn.execute(
+            "DELETE FROM github_app_unclaimed_installations WHERE installation_id = $1", installation_id,
         )
 
     log.info("[WorkspaceCredentials] GitHub App installed workspace=%s installation=%s", workspace_id, installation_id)

@@ -65,7 +65,8 @@ class GitHubAppError(Exception):
     token minting fails -- wraps GitHub's own error response."""
 
 
-def build_manifest(app_name: str, homepage_url: str, callback_url: str, webhook_url: str) -> dict:
+def build_manifest(app_name: str, homepage_url: str, callback_url: str, webhook_url: str,
+                   setup_url: str) -> dict:
     """
     The manifest GitHub creates the App from. `state` (CSRF-style, ties the
     redirect back to this registration attempt) is passed separately as a
@@ -75,6 +76,12 @@ def build_manifest(app_name: str, homepage_url: str, callback_url: str, webhook_
         "name": app_name,
         "url": homepage_url,
         "redirect_url": callback_url,
+        # Where GitHub sends the customer's browser after install, with
+        # installation_id + our signed state. Without it (lab run 2) the
+        # callback never fired and the workspace stayed unlinked.
+        # setup_on_update: also redirect when they change repo access later.
+        "setup_url": setup_url,
+        "setup_on_update": True,
         "hook_attributes": {"url": webhook_url},
         "public": False,
         "default_permissions": _APP_PERMISSIONS,
