@@ -42,7 +42,7 @@ via the HITL dashboard. No remediation executes without operator approval.
 11. If selected == "hold": status → "held", workflow ends
     If selected == option: execute corresponding tool from tools.py
       ↓
-12. HITLGate.mark_executed() → status → "executed"
+12. HITLGate.record_execution() → status → "executed" / "proposed" / "failed" (core/execution_outcome.py)
       ↓
 13. Audit log entry written
 ```

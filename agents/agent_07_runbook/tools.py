@@ -139,5 +139,5 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
     return catalog_dict(
         OptionSpec("opt_2", "File the runbook plan as an issue (don't run it)",
                    "Creates a GitHub issue listing the planned steps for your team to run. Nothing is executed.",
-                   "low", ("create_runbook_issue",)),
+                   "low", ("create_runbook_issue",), proposal=True),
     )

@@ -781,7 +781,7 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
         OptionSpec(
             "opt_2", "Open a PR with the minimized policy",
             "Commits the minimized policy document to a new branch and opens a pull request. No live change.",
-            "low", ("create_policy_pr",),
+            "low", ("create_policy_pr",), proposal=True,
         ),
     )
 

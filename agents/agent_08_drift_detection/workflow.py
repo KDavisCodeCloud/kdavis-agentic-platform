@@ -199,6 +199,7 @@ class DriftWorkflow(BaseAgent):
 
         graph.add_node("ingest",             self._ingest_node)
         graph.add_node("exempted_complete",  self._exempted_complete_node)
+        graph.add_node("no_drift_complete",  self._no_drift_complete_node)
         graph.add_node("diagnose",           self._diagnose_node)
         graph.add_node("hitl_gate",          self._hitl_gate_node)
         graph.add_node("execute",            self._execute_node)
@@ -210,7 +211,11 @@ class DriftWorkflow(BaseAgent):
             {"exempted": "exempted_complete", "normal": "diagnose"},
         )
         graph.add_edge("exempted_complete", END)
-        graph.add_edge("diagnose",  "hitl_gate")
+        graph.add_conditional_edges(
+            "diagnose", self._route_after_diagnose,
+            {"no_drift": "no_drift_complete", "drift": "hitl_gate"},
+        )
+        graph.add_edge("no_drift_complete", END)
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
         graph.add_edge("complete",  END)
@@ -369,6 +374,21 @@ class DriftWorkflow(BaseAgent):
         created (ingest returned before touching hitl_gate)."""
         return {}
 
+    def _route_after_diagnose(self, state: DriftState) -> str:
+        """G15: a check that found no drift ends here -- no incident, nothing to approve."""
+        if state.get("error"):
+            return "drift"  # hitl_gate records the failure
+        return "no_drift" if not (state.get("drift_items") or []) else "drift"
+
+    async def _no_drift_complete_node(self, state: DriftState) -> dict:
+        """Terminal node when the resource matches its desired state. Before
+        G15 (Break-It Lab A2) this still created a pending_approval incident
+        titled "No drift detected", with PR and apply options."""
+        self._write_audit("complete", "no_drift")
+        log.info("[Agent08] No drift on %s/%s — no incident created",
+                 state.get("drift_source"), state.get("resource_id"))
+        return {}
+
     async def _diagnose_node(self, state: DriftState) -> dict:
         """
         LLM compares desired vs actual state, identifies drift items,
@@ -413,6 +433,16 @@ class DriftWorkflow(BaseAgent):
         drift_summary     = diagnosis.get("drift_summary", "")
         corrected_content = diagnosis.get("corrected_content", "")
         options           = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
+
+        if not drift_items and str(drift_severity).upper() == "UNKNOWN":
+            # The prompt's answer when desired or actual state is missing: that is
+            # "couldn't check", not "no drift" -- record it as a failed check.
+            self._write_audit("diagnose", "could_not_compare", tokens_used=estimated_tokens)
+            return {
+                "error": "Drift check could not compare desired and actual state: "
+                         + (drift_summary or parsed_error or "no detail from the analysis"),
+                "tokens_used": state.get("tokens_used", 0) + estimated_tokens,
+            }
 
         required_fields = {"id", "title", "description", "impact", "docs_url"}
         for opt in options:
@@ -561,17 +591,13 @@ class DriftWorkflow(BaseAgent):
         return {"execution_result": result}
 
     async def _complete_node(self, state: DriftState) -> dict:
-        """Mark incident as executed and finalize audit trail."""
+        """Record what execution actually did (G1: core/execution_outcome.py) and finalize audit trail."""
         incident_id = state.get("incident_id")
         if incident_id:
             exec_result = state.get("execution_result") or {}
-            if exec_result.get("status") == "held":
-                await self.hitl._db.execute(
-                    "UPDATE incidents SET execution_status = 'held' WHERE id = $1",
-                    __import__("uuid").UUID(incident_id),
-                )
-            else:
-                await self.hitl.mark_executed(incident_id, tokens_used=0)
+            await self.hitl.record_execution(
+                incident_id, exec_result, state.get("selected_option"),
+            )
 
         self._write_audit("complete", "done", incident_id=incident_id)
         log.info("[Agent08] Workflow complete for incident %s", incident_id)

@@ -4,6 +4,8 @@ export type IncidentStatus =
   | 'pending_approval'
   | 'executing'
   | 'executed'
+  // G1 (Break-It Lab): a PR/issue was opened; nothing live changed yet.
+  | 'proposed'
   | 'held'
   | 'failed'
   | 'budget_exceeded'
@@ -84,7 +86,9 @@ export interface Incident {
   // Settings → Policies, Step 4 (migration 050) — graceful permission-
   // failure surfacing. Both null unless status === 'failed'.
   failure_reason?: string | null
-  failure_kind?: 'permission_denied' | 'execution_error' | null
+  // not_executed / partial_execution: G1 -- the approved option returned
+  // skipped / not_implemented / not_available, or only part of it ran.
+  failure_kind?: 'permission_denied' | 'execution_error' | 'not_executed' | 'partial_execution' | null
 }
 
 // 24-gap-closure Phase 2 — incident search/filter API. All optional;
@@ -195,11 +199,19 @@ export const STATUS_META: Record<
     dot:   'bg-blue-400 animate-pulse',
     bg:    'bg-blue-400/10 border-blue-400/30',
   },
+  // 'executed' = the approved action ran. Not a claim the live resource was
+  // re-checked (that is G4, post-fix verification).
   executed: {
-    label: 'Resolved',
+    label: 'Executed',
     color: 'text-emerald-400',
     dot:   'bg-emerald-400',
     bg:    'bg-emerald-400/10 border-emerald-400/30',
+  },
+  proposed: {
+    label: 'Fix Proposed',
+    color: 'text-blue-400',
+    dot:   'bg-blue-400',
+    bg:    'bg-blue-400/10 border-blue-400/30',
   },
   held: {
     label: 'Held',

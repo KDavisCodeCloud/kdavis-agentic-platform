@@ -918,7 +918,7 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
             "Writes the corrected content to the IaC file on a new branch and opens a pull request. "
             "Nothing changes in the cloud until the PR is merged and your pipeline applies it. "
             "Review the full diff before merging.",
-            "low", ("create_drift_pr",),
+            "low", ("create_drift_pr",), proposal=True,
         ),
     ]
     if context.get("drift_source") == "kubernetes":
@@ -930,6 +930,6 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
     specs.append(OptionSpec(
         "opt_3", "Open a drift issue",
         "Creates a GitHub issue documenting the drift. Nothing is changed.",
-        "low", ("create_drift_issue",),
+        "low", ("create_drift_issue",), proposal=True,
     ))
     return catalog_dict(*specs)

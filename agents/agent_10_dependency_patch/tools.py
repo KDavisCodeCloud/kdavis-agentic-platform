@@ -540,11 +540,11 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
         OptionSpec("opt_1", "Open a patch PR",
                    "Commits the manifest with the vulnerable dependencies bumped to fixed versions to a new "
                    "branch and opens a pull request. Fails without a change if no patched manifest was generated.",
-                   "low", ("create_patch_pr",)),
+                   "low", ("create_patch_pr",), proposal=True),
         OptionSpec("opt_2", "Open a vulnerability issue",
                    "Creates a GitHub issue listing the vulnerabilities and fixed versions. No code is changed.",
-                   "low", ("create_vulnerability_issue",)),
+                   "low", ("create_vulnerability_issue",), proposal=True),
         OptionSpec("opt_3", "Open a patch PR and a vulnerability issue",
                    "Does both: the patch PR (when a patched manifest was generated) and the tracking issue.",
-                   "low", ("create_patch_pr", "create_vulnerability_issue")),
+                   "low", ("create_patch_pr", "create_vulnerability_issue"), proposal=True),
     )

@@ -459,3 +459,44 @@ Evidence: Break-It Lab (`KDavisCodeCloud/cloud-decoded-lab`, results.md @ 365ea2
   `RemediationCard.tsx` adds "I'll handle this myself" to every incident
   regardless of agent, and `bind_options` always keeps Hold.
 - Option `impact` is now the catalog's low/medium/high, not LLM free text.
+
+## 2026-11-17 — Fix session item 2: honest execution status (G1) + no-drift creates no incident (G15)
+
+Baseline: Break-It Lab results.md @ 365ea2b. A1/Z1 returned `skipped` and the
+incident said **executed** with no failure_reason; A2/Z2 opened a PR, nothing
+changed live, and the incident said **executed**; A2's bad-IaC check said "No
+drift detected" and still created a `pending_approval` incident with PR and
+apply options.
+
+- **One rule for all 11 agents** (`core/execution_outcome.py`,
+  `HITLGate.record_execution`). Every `_complete_node` calls it; none decides
+  'executed' itself.
+  - held → `held`
+  - skipped / not_implemented / not_available / failed / error / no_change /
+    no status → `failed`, `failure_kind = not_executed`, with the tool's
+    reason in `failure_reason`
+  - a runbook `partial`, or a multi-call option where some part did nothing →
+    `failed`, `failure_kind = partial_execution`, naming the parts
+  - success of an option that only proposes a fix → **`proposed`** (new
+    status): nothing changed live; not counted as resolved, no `resolved_at`,
+    no ticketing "resolved" notification
+  - success of an option that is the change itself → `executed`
+- **`OptionSpec.proposal`** marks the proposal options (13: every PR/issue
+  option in Agents 04/05/07/08/10/11, Agent 06's report issue and Slack
+  alert). Agent 09's issue/Slack post is the deliverable, so it stays
+  `executed`. A test fails if a PR/issue-only option isn't flagged.
+- **'executed' now means "the approved action ran"**, not "resolved and
+  verified". The card said "The incident has been resolved and verified"; it
+  now says the live resource hasn't been re-checked. Verification is item 4
+  (G4). The status label "Resolved" is now "Executed".
+- **A `proposed` incident can be marked resolved** (`/resolve-manually` accepts
+  `pending_approval` or `proposed`). The card shows "Fix proposed — nothing
+  changed live yet" with a "Mark resolved" box for after the merge.
+- **G15:** Agent 08 routes diagnose → `no_drift_complete` when `drift_items` is
+  empty: no incident, an audit entry `complete:no_drift`. Same pattern as the
+  existing exempted-resource path. An empty result with severity `UNKNOWN`
+  (the prompt's answer when desired or actual state is missing) is "couldn't
+  check", not "no drift": it becomes a failed incident with the reason.
+- Not in this item: other agents' "nothing found" results (e.g. Agent 05 with
+  no over-permission) still create incidents; the lab found the problem only
+  on Agent 08.

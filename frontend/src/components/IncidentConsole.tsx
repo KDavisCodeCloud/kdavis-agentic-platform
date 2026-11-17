@@ -27,7 +27,8 @@ const FILTER_TABS: { id: FilterTab; label: string }[] = [
   { id: 'all',               label: 'All' },
   { id: 'pending_approval',  label: 'Needs Action' },
   { id: 'executing',         label: 'Running' },
-  { id: 'executed',          label: 'Resolved' },
+  { id: 'executed',          label: 'Executed' },
+  { id: 'proposed',          label: 'Fix Proposed' },
   { id: 'resolved_manually', label: 'Resolved Manually' },
   { id: 'failed',            label: 'Failed' },
 ]

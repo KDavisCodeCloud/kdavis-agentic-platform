@@ -647,10 +647,13 @@ async def resolve_incident_manually(
     if not row:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
-    if row["execution_status"] != "pending_approval":
+    # 'proposed' (G1): a PR/issue was opened and nothing changed live; the operator
+    # records the resolution here once they've merged or acted on it.
+    if row["execution_status"] not in ("pending_approval", "proposed"):
         raise HTTPException(
             status_code=409,
-            detail=f"Incident is '{row['execution_status']}' — only pending_approval incidents can be resolved manually",
+            detail=f"Incident is '{row['execution_status']}' — only pending_approval or proposed incidents "
+                   "can be resolved manually",
         )
 
     # Blank/whitespace-only input is "no note", not a stored empty string —
