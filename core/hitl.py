@@ -554,6 +554,7 @@ class HITLGate:
 
             incident_summary = {
                 "incident_id": incident_id,
+                "execution_status": STATUS_EXECUTED,
                 "agent_id": row.get("agent_id"),
                 "resource_name": row.get("resource_name"),
                 "resource_group": row.get("resource_group"),

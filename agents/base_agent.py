@@ -279,6 +279,7 @@ class BaseAgent(ABC):
         status: str,
         tokens_used: int = 0,
         incident_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> None:
         """
         Append an audit entry to knowledge/operator/llm-audit.md, AND fire
@@ -316,7 +317,44 @@ class BaseAgent(ABC):
             incident_id=incident_id,
             agent_id=self.agent_id,
             tokens_used=tokens_used,
+            metadata=metadata,
         )
+
+    # ──────────────────────────────────────────────
+    # Nothing found → no incident (Break-It Lab G15, generalized 2026-11-17)
+    # ──────────────────────────────────────────────
+    #
+    # A diagnose node that checked and found nothing to act on returns
+    # {"nothing_found": "<why>"}. The graph then routes diagnose →
+    # "nothing_found_complete" instead of hitl_gate: no incident, no approval
+    # card, one audit entry (action complete, status nothing_found, the reason
+    # in metadata). "Couldn't check" (missing input) is NOT nothing found --
+    # agents return {"error": ...} for that, which hitl_gate records as a
+    # failed incident.
+
+    NOTHING_FOUND_NODE = "nothing_found_complete"
+
+    def _route_after_diagnose(self, state) -> str:
+        if state.get("error"):
+            return "findings"
+        return "nothing_found" if state.get("nothing_found") else "findings"
+
+    def _add_diagnose_routing(self, graph) -> None:
+        """Wire diagnose → (nothing_found_complete | hitl_gate). Replaces the plain diagnose→hitl_gate edge."""
+        from langgraph.graph import END
+        graph.add_node(self.NOTHING_FOUND_NODE, self._nothing_found_complete_node)
+        graph.add_conditional_edges(
+            "diagnose", self._route_after_diagnose,
+            {"nothing_found": self.NOTHING_FOUND_NODE, "findings": "hitl_gate"},
+        )
+        graph.add_edge(self.NOTHING_FOUND_NODE, END)
+
+    async def _nothing_found_complete_node(self, state) -> dict:
+        reason = str(state.get("nothing_found") or "nothing to act on")
+        self._write_audit("complete", "nothing_found", tokens_used=state.get("tokens_used", 0) or 0,
+                          metadata={"reason": reason})
+        log.info("[%s] Nothing found — no incident created (%s)", self.agent_id, reason)
+        return {}
 
     # ──────────────────────────────────────────────
     # BYOK decryption

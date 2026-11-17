@@ -497,6 +497,40 @@ apply options.
   existing exempted-resource path. An empty result with severity `UNKNOWN`
   (the prompt's answer when desired or actual state is missing) is "couldn't
   check", not "no drift": it becomes a failed incident with the reason.
-- Not in this item: other agents' "nothing found" results (e.g. Agent 05 with
-  no over-permission) still create incidents; the lab found the problem only
-  on Agent 08.
+- **G15 generalized (Kelvin's review, 2026-11-17): any agent that finds
+  nothing creates no incident, only an audit entry.** A shared base-agent path
+  is used: diagnose returns `nothing_found: "<why>"` and the graph routes to
+  `nothing_found_complete`, which writes action `complete`, status
+  `nothing_found`, with the reason in metadata.
+  - **Agents that can find nothing:**
+    - **05 IAM:** nothing to remove, judged against a real access log. An empty
+      access log still becomes an incident, because usage can't be judged.
+    - **06 FinOps:** no savings, recommendations or idle resources.
+    - **08 Drift:** no drift items.
+    - **10 Dependencies:** OSV.dev checked every pinned dependency and none is
+      vulnerable. This is decided before the LLM call, so a clean scan costs
+      no tokens.
+  - **"Couldn't check" is a failed incident with the reason, never "nothing
+    found":**
+    - 06: no cost data.
+    - 08: severity UNKNOWN.
+    - 10: zero dependencies parsed, or any OSV query failed. The scan now
+      records checked, failed and unversioned counts; it used to skip
+      failures silently.
+  - **Agents left out on purpose:** 01, 02, 07, 09 and 11 are triggered by an
+    event that is itself the finding. 03 always has a verdict to post. 04 runs
+    on an operator's request. `tests/test_nothing_found.py` pins this list.
+- **"Fix Proposed" is not a resolution downstream.**
+  - `schedule_resolution_notification` (Jira, Linear, GitHub Issues,
+    ServiceNow, PagerDuty resolve) now refuses any status other than
+    `executed` or `resolved_manually`. Both callers pass the status
+    explicitly.
+  - No channel notification fires on the transition; those fire only when an
+    incident is created.
+  - MTTR: the product has no MTTR computation. The resolution end time is
+    `resolved_at` (migration 038), and a proposed incident never gets one.
+    When it is later resolved, that resolution goes downstream normally.
+  - Bulk resolve-manually still accepts only `pending_approval`.
+- **Added to item 3:** a GitHub App `pull_request` webhook. When the fix PR
+  merges, the incident moves to "Fix merged — awaiting verification". Item 4's
+  verification then closes it as `verified` or `verification_failed`.

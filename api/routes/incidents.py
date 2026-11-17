@@ -711,6 +711,7 @@ async def resolve_incident_manually(
             str(workspace["id"]),
             {
                 "incident_id": incident_id,
+                "execution_status": "resolved_manually",
                 "agent_id": row["agent_id"],
                 "resource_name": row.get("resource_name"),
                 "resource_group": row.get("resource_group"),

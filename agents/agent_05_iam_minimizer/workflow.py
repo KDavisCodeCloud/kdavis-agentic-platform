@@ -72,6 +72,7 @@ class IAMMinimizeState(TypedDict):
     permissions_kept: Optional[list[str]]     # actions that were retained
     risk_score: Optional[str]          # "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
     remediation_options: Optional[list]
+    nothing_found: Optional[str]   # G15: why there is nothing to approve (no incident is created)
     azure_removal_plan: Optional[list]  # G5: [{"id","role","scope"}] opt_1 would delete (Azure only)
     azure_removal_note: Optional[str]   # why no removal plan could be built, if so
     estimated_duration_seconds: Optional[int]
@@ -199,7 +200,7 @@ class IAMMinimizeWorkflow(BaseAgent):
 
         graph.add_edge(START,       "ingest")
         graph.add_edge("ingest",    "diagnose")
-        graph.add_edge("diagnose",  "hitl_gate")
+        self._add_diagnose_routing(graph)  # G15 generalized: nothing found → no incident (agents/base_agent.py)
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
         graph.add_edge("complete",  END)
@@ -276,6 +277,7 @@ class IAMMinimizeWorkflow(BaseAgent):
             "permissions_kept": None,
             "risk_score": None,
             "remediation_options": None,
+            "nothing_found": None,
             "azure_removal_plan": None,
             "azure_removal_note": None,
             "estimated_duration_seconds": None,
@@ -382,6 +384,12 @@ class IAMMinimizeWorkflow(BaseAgent):
             "remediation_options": options,
             "azure_removal_plan": removal_plan,
             "azure_removal_note": removal_note,
+            # G15: nothing to remove, with real usage data to judge by → no incident, audit entry only.
+            # An empty access log is "couldn't judge" (the prompt keeps the full policy), so it still
+            # becomes an incident.
+            "nothing_found": None if (
+                permissions_removed or removal_plan or not (state.get("access_log_summary") or "").strip()
+            ) else f"{principal_name}: every granted permission was used in the access log; nothing to remove",
             "estimated_duration_seconds": duration,
             "tokens_used": state.get("tokens_used", 0) + estimated_tokens,
         }
@@ -567,6 +575,7 @@ class IAMMinimizeWorkflow(BaseAgent):
             "permissions_kept": None,
             "risk_score": None,
             "remediation_options": None,
+            "nothing_found": None,
             "azure_removal_plan": None,
             "azure_removal_note": None,
             "estimated_duration_seconds": None,

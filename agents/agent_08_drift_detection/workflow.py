@@ -76,6 +76,7 @@ class DriftState(TypedDict):
     drift_summary: Optional[str]
     corrected_content: Optional[str]
     remediation_options: Optional[list]
+    nothing_found: Optional[str]   # G15: why there is nothing to approve (no incident is created)
     tokens_used: int
 
     # After HITL
@@ -199,7 +200,6 @@ class DriftWorkflow(BaseAgent):
 
         graph.add_node("ingest",             self._ingest_node)
         graph.add_node("exempted_complete",  self._exempted_complete_node)
-        graph.add_node("no_drift_complete",  self._no_drift_complete_node)
         graph.add_node("diagnose",           self._diagnose_node)
         graph.add_node("hitl_gate",          self._hitl_gate_node)
         graph.add_node("execute",            self._execute_node)
@@ -211,11 +211,7 @@ class DriftWorkflow(BaseAgent):
             {"exempted": "exempted_complete", "normal": "diagnose"},
         )
         graph.add_edge("exempted_complete", END)
-        graph.add_conditional_edges(
-            "diagnose", self._route_after_diagnose,
-            {"no_drift": "no_drift_complete", "drift": "hitl_gate"},
-        )
-        graph.add_edge("no_drift_complete", END)
+        self._add_diagnose_routing(graph)  # G15: no drift → no incident (agents/base_agent.py)
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
         graph.add_edge("complete",  END)
@@ -361,6 +357,7 @@ class DriftWorkflow(BaseAgent):
             "drift_summary":      None,
             "corrected_content":  None,
             "remediation_options": None,
+            "nothing_found": None,
             "selected_option":    None,
             "execution_result":   None,
             "error":              None,
@@ -372,21 +369,6 @@ class DriftWorkflow(BaseAgent):
     async def _exempted_complete_node(self, state: DriftState) -> dict:
         """Terminal node for an exempted resource -- no incident is ever
         created (ingest returned before touching hitl_gate)."""
-        return {}
-
-    def _route_after_diagnose(self, state: DriftState) -> str:
-        """G15: a check that found no drift ends here -- no incident, nothing to approve."""
-        if state.get("error"):
-            return "drift"  # hitl_gate records the failure
-        return "no_drift" if not (state.get("drift_items") or []) else "drift"
-
-    async def _no_drift_complete_node(self, state: DriftState) -> dict:
-        """Terminal node when the resource matches its desired state. Before
-        G15 (Break-It Lab A2) this still created a pending_approval incident
-        titled "No drift detected", with PR and apply options."""
-        self._write_audit("complete", "no_drift")
-        log.info("[Agent08] No drift on %s/%s — no incident created",
-                 state.get("drift_source"), state.get("resource_id"))
         return {}
 
     async def _diagnose_node(self, state: DriftState) -> dict:
@@ -463,6 +445,8 @@ class DriftWorkflow(BaseAgent):
             "drift_summary":     drift_summary,
             "corrected_content": corrected_content,
             "remediation_options": options,
+            # G15 (Break-It Lab A2): no drift items → no incident, audit entry only
+            "nothing_found":     None if drift_items else (parsed_error or "No drift detected"),
             "tokens_used":       state.get("tokens_used", 0) + estimated_tokens,
         }
 
@@ -643,6 +627,7 @@ class DriftWorkflow(BaseAgent):
             "drift_summary":     None,
             "corrected_content": None,
             "remediation_options": None,
+            "nothing_found": None,
             "tokens_used":       0,
             "selected_option":   None,
             "execution_result":  None,

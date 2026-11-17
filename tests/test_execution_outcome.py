@@ -205,9 +205,9 @@ async def test_lab_a2_no_drift_routes_past_the_hitl_gate(mock_db, workspace_id, 
     """A2 bad-IaC: 'No drift detected' at severity medium still became a pending_approval incident."""
     wf = _make("agent_08", mock_db, workspace_id, mock_router)
     state = await _diagnose(wf, workspace_id, _drift_llm([], "MEDIUM"))
-    assert wf._route_after_diagnose(state) == "no_drift"
+    assert wf._route_after_diagnose(state) == "nothing_found"
     with patch.object(wf.hitl, "create_incident", new=AsyncMock()) as create:
-        await wf._no_drift_complete_node(state)
+        await wf._nothing_found_complete_node(state)
     create.assert_not_called()
 
 
@@ -215,19 +215,11 @@ async def test_drift_found_still_goes_to_approval(mock_db, workspace_id, mock_ro
     wf = _make("agent_08", mock_db, workspace_id, mock_router)
     items = [{"key": "ingress.22", "desired_value": "closed", "actual_value": "0.0.0.0/0", "severity": "HIGH"}]
     state = await _diagnose(wf, workspace_id, _drift_llm(items, "HIGH"))
-    assert wf._route_after_diagnose(state) == "drift"
+    assert wf._route_after_diagnose(state) == "findings"
 
 
 async def test_could_not_compare_is_a_failed_check_not_no_drift(mock_db, workspace_id, mock_router):
     wf = _make("agent_08", mock_db, workspace_id, mock_router)
     state = await _diagnose(wf, workspace_id, _drift_llm([], "UNKNOWN", "Desired state was empty"))
     assert "could not compare" in state["error"] and "Desired state was empty" in state["error"]
-    assert wf._route_after_diagnose(state) == "drift"  # hitl_gate records it as a failed incident
-
-
-def test_agent08_graph_has_no_drift_branch():
-    import inspect
-    from agents.agent_08_drift_detection.workflow import DriftWorkflow
-    src = inspect.getsource(DriftWorkflow._build_graph)
-    assert '"no_drift": "no_drift_complete"' in src
-    assert 'graph.add_edge("diagnose",  "hitl_gate")' not in src
+    assert wf._route_after_diagnose(state) == "findings"  # hitl_gate records it as a failed incident

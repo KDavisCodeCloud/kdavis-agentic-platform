@@ -162,14 +162,19 @@ class DependencyPatchTools:
         packages: [{name, version}]
         Returns only packages that have vulnerabilities:
           [{package, version, vulnerabilities: [{id, summary, severity, aliases, fixed_in}]}]
-        Never raises — skips packages that fail and continues.
+        Never raises — skips packages that fail and continues. What was actually
+        checked is left in self.last_osv_scan ({"checked", "failed", "unversioned"})
+        so "0 vulnerable" is only read as "nothing found" when every query succeeded.
         """
         osv_ecosystem = _OSV_ECOSYSTEM_MAP.get(ecosystem.lower(), ecosystem)
         results = []
+        scan = {"checked": 0, "failed": 0, "unversioned": 0}
+        self.last_osv_scan = scan
 
         for pkg in packages[:_MAX_OSV_QUERIES]:
             version = pkg.get("version", "")
             if not version:
+                scan["unversioned"] += 1
                 continue
             try:
                 async with httpx.AsyncClient(timeout=15) as client:
@@ -185,6 +190,7 @@ class DependencyPatchTools:
                     )
             except httpx.RequestError as exc:
                 log.warning("[DependencyPatch] OSV query failed for %s: %s", pkg["name"], exc)
+                scan["failed"] += 1
                 continue
 
             if resp.status_code != 200:
@@ -192,8 +198,10 @@ class DependencyPatchTools:
                     "[DependencyPatch] OSV returned %d for %s@%s",
                     resp.status_code, pkg["name"], version,
                 )
+                scan["failed"] += 1
                 continue
 
+            scan["checked"] += 1
             vulns = resp.json().get("vulns", [])
             if vulns:
                 results.append({

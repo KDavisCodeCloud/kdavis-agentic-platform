@@ -71,6 +71,7 @@ class FinOpsState(TypedDict):
     quick_win_resources: Optional[dict] # idle resources safe to stop/delete
     estimated_monthly_savings: Optional[float]
     remediation_options: Optional[list]
+    nothing_found: Optional[str]   # G15: why there is nothing to approve (no incident is created)
     estimated_duration_seconds: Optional[int]
     tokens_used: int
 
@@ -217,7 +218,7 @@ class FinOpsWorkflow(BaseAgent):
 
         graph.add_edge(START,       "ingest")
         graph.add_edge("ingest",    "diagnose")
-        graph.add_edge("diagnose",  "hitl_gate")
+        self._add_diagnose_routing(graph)  # G15 generalized: nothing found → no incident (agents/base_agent.py)
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
         graph.add_edge("complete",  END)
@@ -278,6 +279,7 @@ class FinOpsWorkflow(BaseAgent):
             "quick_win_resources": None,
             "estimated_monthly_savings": None,
             "remediation_options": None,
+            "nothing_found": None,
             "estimated_duration_seconds": None,
             "selected_option": None,
             "execution_result": None,
@@ -292,6 +294,10 @@ class FinOpsWorkflow(BaseAgent):
         billing_period = state["billing_period"]
         total_spend    = state["total_spend"]
         currency       = state["currency"]
+
+        if not (state.get("cost_data_summary") or "").strip():
+            # "Couldn't check" is a failed incident, never "nothing found" (G15)
+            return {"error": f"No cost data for {cloud} {billing_period}; nothing was analyzed"}
 
         user_message = (
             f"FinOps Cost Optimization Request:\n\n"
@@ -349,6 +355,11 @@ class FinOpsWorkflow(BaseAgent):
             "quick_win_resources": quick_win_resources,
             "estimated_monthly_savings": estimated_monthly_savings,
             "remediation_options": options,
+            # G15: no savings, no recommendation, no idle resource → no incident, audit entry only
+            "nothing_found": None if (
+                estimated_monthly_savings > 0 or recommendations
+                or any(v for v in (quick_win_resources or {}).values() if isinstance(v, list))
+            ) else f"No savings found in {cloud} {billing_period} cost data",
             "estimated_duration_seconds": duration,
             "tokens_used": state.get("tokens_used", 0) + estimated_tokens,
         }
@@ -532,6 +543,7 @@ class FinOpsWorkflow(BaseAgent):
             "quick_win_resources": None,
             "estimated_monthly_savings": None,
             "remediation_options": None,
+            "nothing_found": None,
             "estimated_duration_seconds": None,
             "tokens_used": 0,
             "selected_option": None,

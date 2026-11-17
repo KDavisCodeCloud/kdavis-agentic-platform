@@ -86,6 +86,7 @@ class PatchState(TypedDict):
     vulnerable_packages:  Optional[list]   # [{package, current_version, fixed_version, severity, cve_ids, description}]
     patched_manifest:     Optional[str]    # full patched manifest content
     remediation_options:  Optional[list]
+    nothing_found:        Optional[str]    # G15: why there is nothing to approve (no incident is created)
 
     tokens_used:      int
     selected_option:  Optional[dict]
@@ -201,7 +202,7 @@ class DependencyPatchWorkflow(BaseAgent):
 
         graph.add_edge(START,       "ingest")
         graph.add_edge("ingest",    "diagnose")
-        graph.add_edge("diagnose",  "hitl_gate")
+        self._add_diagnose_routing(graph)  # G15 generalized: nothing found → no incident (agents/base_agent.py)
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
         graph.add_edge("complete",  END)
@@ -250,6 +251,7 @@ class DependencyPatchWorkflow(BaseAgent):
             "vulnerable_packages":   None,
             "patched_manifest":      None,
             "remediation_options":   None,
+            "nothing_found":   None,
             "selected_option":       None,
             "execution_result":      None,
             "error":                 None,
@@ -290,6 +292,27 @@ class DependencyPatchWorkflow(BaseAgent):
             "[Agent10] Scan complete: %d deps, %d vulnerable, %d critical, %d high",
             dependency_count, vulnerability_count, critical_count, high_count,
         )
+
+        # ── G15: a clean scan creates no incident (and costs no LLM call) ──
+        if not vulnerability_results:
+            scan = getattr(self._tools, "last_osv_scan", None) or {}
+            scanned = {
+                "manifest_content": manifest_content, "manifest_sha": manifest_sha,
+                "parsed_dependencies": parsed_deps, "dependency_count": dependency_count,
+                "vulnerability_results": [], "vulnerability_count": 0, "critical_count": 0, "high_count": 0,
+            }
+            if dependency_count == 0:
+                return {**scanned, "error": f"Could not read any dependencies from {state['manifest_path']} "
+                                            f"({state['ecosystem']}); nothing was checked"}
+            if scan.get("failed") or not scan.get("checked"):
+                return {**scanned, "error": (
+                    f"Vulnerability check incomplete: {scan.get('checked', 0)} of {dependency_count} dependencies "
+                    f"checked ({scan.get('failed', 0)} OSV.dev queries failed, "
+                    f"{scan.get('unversioned', 0)} without a pinned version)")}
+            return {**scanned, "nothing_found": (
+                f"No known vulnerabilities in {scan['checked']} dependencies of {state['manifest_path']}"
+                + (f" ({scan['unversioned']} without a pinned version were not checked)"
+                   if scan.get("unversioned") else ""))}
 
         # ── Build LLM context ──
         vuln_text = _format_osv_results_for_prompt(vulnerability_results[:_MAX_OSV_IN_PROMPT])
@@ -568,6 +591,7 @@ class DependencyPatchWorkflow(BaseAgent):
             "vulnerable_packages":   None,
             "patched_manifest":      None,
             "remediation_options":   None,
+            "nothing_found":   None,
             "selected_option":       None,
             "execution_result":      None,
             "error":                 None,
