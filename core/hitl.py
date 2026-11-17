@@ -33,6 +33,22 @@ STATUS_FAILED     = "failed"
 STATUS_BUDGET_EXC = "budget_exceeded"
 STATUS_PROPOSED   = "proposed"       # a PR/issue was opened; nothing live changed yet (G1)
 
+# Which statuses an operator can close out by hand. The single-incident and
+# bulk endpoints both ask these functions, so they can never disagree.
+# - Rejecting means "don't run this": only possible before anything ran.
+# - Manual resolution means "I fixed it myself": possible while approval is
+#   pending, or after a PR/issue was proposed (merged or acted on outside us).
+REJECTABLE_STATUSES = frozenset({STATUS_PENDING})
+MANUALLY_RESOLVABLE_STATUSES = frozenset({STATUS_PENDING, STATUS_PROPOSED})
+
+
+def rejection_allowed(status: str) -> bool:
+    return status in REJECTABLE_STATUSES
+
+
+def manual_resolution_allowed(status: str) -> bool:
+    return status in MANUALLY_RESOLVABLE_STATUSES
+
 
 class HITLGate:
     """

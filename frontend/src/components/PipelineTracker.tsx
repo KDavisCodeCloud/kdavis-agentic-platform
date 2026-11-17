@@ -5,15 +5,15 @@ import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck, GitPullReque
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
-import { SEVERITY_META } from '@/lib/types'
+import { SEVERITY_META, MANUALLY_RESOLVABLE_STATUSES } from '@/lib/types'
 
 interface PipelineTrackerProps {
   incidents: Incident[]
   onSelect: (incident: Incident) => void
   selectedId: string | null
-  // 24-gap-closure Phase 2 -- bulk select. Only pending_approval incidents
-  // are ever selectable (bulk dismiss/resolve-manually only apply to
-  // that status, same as the single-incident endpoints), so
+  // 24-gap-closure Phase 2 -- bulk select. Only statuses bulk
+  // resolve-manually accepts are selectable (MANUALLY_RESOLVABLE_STATUSES,
+  // the same rule as the single-incident endpoint), so
   // checkedIds/onToggleCheck are ignored entirely for any other row.
   checkedIds?: Set<string>
   onToggleCheck?: (incidentId: string) => void
@@ -108,7 +108,7 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
       {/* Top row */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          {isPending && onToggleCheck && (
+          {MANUALLY_RESOLVABLE_STATUSES.includes(incident.status) && onToggleCheck && (
             <input
               type="checkbox"
               checked={!!checked}

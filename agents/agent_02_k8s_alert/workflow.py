@@ -510,19 +510,9 @@ class K8sAlertWorkflow(BaseAgent):
 
         return {"execution_result": result}
 
-    async def _complete_node(self, state: K8sAlertState) -> dict:
-        """Record what execution actually did (G1: core/execution_outcome.py) and finalize audit trail."""
-        incident_id = state.get("incident_id")
-        if incident_id:
-            exec_result = state.get("execution_result") or {}
-            await self.hitl.record_execution(
-                incident_id, exec_result, state.get("selected_option"),
-                before_state=exec_result.get("before_state"),
-            )
-
-        self._write_audit("complete", "done", incident_id=incident_id)
-        log.info("[Agent02] Workflow complete for incident %s", incident_id)
-        return {}
+    def _before_state(self, exec_result: dict):
+        """Agent 02's patch/scale/rollback results carry the deployment spec as it was."""
+        return exec_result.get("before_state")
 
     # ──────────────────────────────────────────────
     # Public interface

@@ -15,6 +15,12 @@ export type IncidentStatus =
   // Phase 2 bulk-dismiss build needed to display its own result.
   | 'rejected'
 
+// Which statuses an operator can close out by hand -- mirrors core/hitl.py's
+// REJECTABLE_STATUSES / MANUALLY_RESOLVABLE_STATUSES (a test pins them equal).
+// Bulk select offers a checkbox for any status bulk resolve accepts.
+export const REJECTABLE_STATUSES: readonly IncidentStatus[] = ['pending_approval']
+export const MANUALLY_RESOLVABLE_STATUSES: readonly IncidentStatus[] = ['pending_approval', 'proposed']
+
 export type ImpactLevel = 'low' | 'medium' | 'high'
 
 // Gap-table #7-#9 (db.models.BlastRadius). All optional: agents that don't

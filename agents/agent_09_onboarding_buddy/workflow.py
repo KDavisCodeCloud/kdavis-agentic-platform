@@ -477,19 +477,6 @@ class OnboardingWorkflow(BaseAgent):
 
         return {"execution_result": result}
 
-    async def _complete_node(self, state: OnboardingState) -> dict:
-        """Record what execution actually did (G1: core/execution_outcome.py) and finalize audit trail."""
-        incident_id = state.get("incident_id")
-        if incident_id:
-            exec_result = state.get("execution_result") or {}
-            await self.hitl.record_execution(
-                incident_id, exec_result, state.get("selected_option"),
-            )
-
-        self._write_audit("complete", "done", incident_id=incident_id)
-        log.info("[Agent09] Workflow complete for incident %s", incident_id)
-        return {}
-
     # ──────────────────────────────────────────────
     # Private helpers
     # ──────────────────────────────────────────────

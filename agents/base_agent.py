@@ -357,6 +357,29 @@ class BaseAgent(ABC):
         return {}
 
     # ──────────────────────────────────────────────
+    # Complete node — shared by every agent's graph
+    # ──────────────────────────────────────────────
+
+    async def _complete_node(self, state) -> dict:
+        """Record what execution actually did (G1: core/execution_outcome.py) and finalize audit trail."""
+        incident_id = state.get("incident_id")
+        if incident_id:
+            exec_result = state.get("execution_result") or {}
+            await self.hitl.record_execution(
+                incident_id, exec_result, state.get("selected_option"),
+                before_state=self._before_state(exec_result),
+            )
+
+        self._write_audit("complete", "done", incident_id=incident_id)
+        log.info("[%s] Workflow complete for incident %s", self.agent_id, incident_id)
+        return {}
+
+    def _before_state(self, exec_result: dict) -> Optional[dict]:
+        """Snapshot taken before a live change, kept for rollback. Only agents
+        whose actions capture one (Agent 02) override this."""
+        return None
+
+    # ──────────────────────────────────────────────
     # BYOK decryption
     # ──────────────────────────────────────────────
 

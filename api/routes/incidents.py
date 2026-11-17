@@ -56,7 +56,7 @@ from core.audit import write_audit_event
 from core.demo_sandbox import demo_scope_clause
 from core.funnel_events import record_demo_server_event
 from core.cloud_errors import CloudPermissionError
-from core.hitl import HITLGate
+from core.hitl import HITLGate, MANUALLY_RESOLVABLE_STATUSES, manual_resolution_allowed, rejection_allowed
 from core.workspace_credentials import (
     build_agent_credentials, build_k8s_credentials, get_workspace_slack_webhook_url, resolve_k8s_context,
 )
@@ -565,7 +565,7 @@ async def reject_incident(
     if not row:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
-    if row["execution_status"] != "pending_approval":
+    if not rejection_allowed(row["execution_status"]):
         raise HTTPException(
             status_code=409,
             detail=f"Incident is '{row['execution_status']}' — only pending_approval incidents can be rejected",
@@ -649,11 +649,11 @@ async def resolve_incident_manually(
 
     # 'proposed' (G1): a PR/issue was opened and nothing changed live; the operator
     # records the resolution here once they've merged or acted on it.
-    if row["execution_status"] not in ("pending_approval", "proposed"):
+    if not manual_resolution_allowed(row["execution_status"]):
         raise HTTPException(
             status_code=409,
-            detail=f"Incident is '{row['execution_status']}' — only pending_approval or proposed incidents "
-                   "can be resolved manually",
+            detail=f"Incident is '{row['execution_status']}' — only "
+                   f"{' or '.join(sorted(MANUALLY_RESOLVABLE_STATUSES))} incidents can be resolved manually",
         )
 
     # Blank/whitespace-only input is "no note", not a stored empty string —
@@ -1141,8 +1141,11 @@ async def bulk_incident_action(
     incident_ids and writes ONE real audit_events row per incident (not
     one row for the whole batch) -- each incident's own history must show
     it was acted on, same as if it had been actioned individually. An
-    incident that doesn't belong to this workspace, doesn't exist, or
-    isn't 'pending_approval' is skipped with a per-item outcome rather
+    incident that doesn't belong to this workspace, doesn't exist, or is in
+    a status the action doesn't apply to (core/hitl.py's rejection_allowed /
+    manual_resolution_allowed -- the same rules the single-incident
+    endpoints use; outcome "not_pending" kept for API compatibility) is
+    skipped with a per-item outcome rather
     than failing the whole batch -- a bulk operation over a list that's
     gone stale by the time it's submitted should not lose partial progress.
     """
@@ -1176,7 +1179,8 @@ async def bulk_incident_action(
             if not row:
                 results.append(BulkIncidentActionResult(incident_id=raw_id, outcome="not_found"))
                 continue
-            if row["execution_status"] != "pending_approval":
+            allowed = rejection_allowed if body.action == "dismiss" else manual_resolution_allowed
+            if not allowed(row["execution_status"]):
                 results.append(BulkIncidentActionResult(incident_id=raw_id, outcome="not_pending"))
                 continue
 

@@ -241,7 +241,7 @@ class BulkIncidentActionRequest(BaseModel):
 
 class BulkIncidentActionResult(BaseModel):
     incident_id: str
-    outcome: str  # "applied" | "not_found" | "not_pending"
+    outcome: str  # "applied" | "not_found" | "not_pending" (status the action doesn't apply to)
 
 
 class BulkIncidentActionResponse(BaseModel):

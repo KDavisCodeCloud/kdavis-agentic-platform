@@ -530,7 +530,23 @@ apply options.
   - MTTR: the product has no MTTR computation. The resolution end time is
     `resolved_at` (migration 038), and a proposed incident never gets one.
     When it is later resolved, that resolution goes downstream normally.
-  - Bulk resolve-manually still accepts only `pending_approval`.
+- **Bulk and single actions share one status rule** (Kelvin, 2026-11-17).
+  - `core/hitl.py` holds `REJECTABLE_STATUSES` (`pending_approval`) and
+    `MANUALLY_RESOLVABLE_STATUSES` (`pending_approval`, `proposed`), behind
+    `rejection_allowed()` / `manual_resolution_allowed()`. The single reject,
+    single resolve-manually and bulk endpoints all call them.
+  - Bulk dismiss keeps reject's rule: a Fix Proposed incident already opened a
+    PR or issue, so there is nothing to reject. The UI disables Dismiss while
+    one is selected.
+  - The frontend mirrors both lists in `types.ts`; a test pins them equal to
+    the backend's, and another drives every status through the single and bulk
+    endpoints and asserts they accept the same set.
+  - Known gap, unchanged: bulk resolve doesn't fire resolution ticketing or
+    PagerDuty resolve; single resolve does.
+- **One `_complete_node` for all eleven agents**, in `BaseAgent`. Item 2 had
+  made ten copies identical, and the code-quality gate (fixed in
+  `fix/ci-code-quality-gate`) flagged the new duplication. Agent 02 overrides
+  `_before_state()` to keep its rollback snapshot.
 - **Added to item 3:** a GitHub App `pull_request` webhook. When the fix PR
   merges, the incident moves to "Fix merged — awaiting verification". Item 4's
   verification then closes it as `verified` or `verification_failed`.
