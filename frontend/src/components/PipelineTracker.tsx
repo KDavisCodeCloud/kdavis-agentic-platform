@@ -220,7 +220,10 @@ export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, o
 
   const pending  = incidents.filter(i => i.status === 'pending_approval')
   const active   = incidents.filter(i => i.status === 'executing')
-  const resolved = incidents.filter(i => ['executed', 'proposed', 'resolved_manually', 'held', 'failed', 'budget_exceeded', 'rejected'].includes(i.status))
+  // A proposed fix is open work in the customer's repo, not a resolution:
+  // its own section, selectable for bulk resolve (MANUALLY_RESOLVABLE_STATUSES).
+  const fixInProgress = incidents.filter(i => i.status === 'proposed')
+  const resolved = incidents.filter(i => ['executed', 'resolved_manually', 'held', 'failed', 'budget_exceeded', 'rejected'].includes(i.status))
 
   if (incidents.length === 0) {
     return (
@@ -272,6 +275,27 @@ export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, o
                 incident={inc}
                 isSelected={inc.incident_id === selectedId}
                 onClick={() => onSelect(inc)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {fixInProgress.length > 0 && (
+        <section>
+          <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-blue-400">
+            <GitPullRequest className="h-3 w-3" />
+            Fix in your repo ({fixInProgress.length})
+          </h3>
+          <div className="space-y-2">
+            {fixInProgress.map(inc => (
+              <IncidentRow
+                key={inc.incident_id}
+                incident={inc}
+                isSelected={inc.incident_id === selectedId}
+                onClick={() => onSelect(inc)}
+                checked={checkedIds?.has(inc.incident_id)}
+                onToggleCheck={onToggleCheck ? () => onToggleCheck(inc.incident_id) : undefined}
               />
             ))}
           </div>
