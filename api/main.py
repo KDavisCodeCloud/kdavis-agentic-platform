@@ -619,6 +619,7 @@ app.include_router(email_public.router,     prefix="/api/v1")
 app.include_router(internal_email_campaigns.router, prefix="/api/v1")
 app.include_router(demo.router,             prefix="/api/v1")
 app.include_router(funnel_events.router,    prefix="/api/v1")
+app.include_router(policies.router,         prefix="/api/v1")
 
 
 # ──────────────────────────────────────────────
