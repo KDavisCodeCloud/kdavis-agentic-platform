@@ -4,10 +4,9 @@ Tests for api/routes/workspaces.py — workspace creation + BYOK LLM key
 storage (GAPS.md gap #4: the onboarding wizard previously called neither).
 
 What this file validates:
-  - create_workspace: the hash written to the DB equals _hash_token() of the
-    raw token returned to the caller — this is the one invariant that must
-    hold for api.middleware.auth.get_workspace to ever find this workspace
-    again by that token.
+  - create_workspace (owner account at signup): the verified founder becomes
+    the workspace's admin member in the same transaction, and no workspace
+    token is returned — it's never a login.
   - create_workspace: missing company_name fails Pydantic validation (422
     at the FastAPI layer) before the handler ever runs.
   - create_workspace: missing/invalid contact_email fails Pydantic
@@ -36,7 +35,6 @@ from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from api.middleware.auth import _hash_token
 from api.middleware.rate_limiter import limiter
 from api.routes import workspaces
 
