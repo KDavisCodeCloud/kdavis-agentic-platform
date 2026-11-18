@@ -42,7 +42,6 @@ What this file validates:
     - Skips incident creation when state["error"] is set
 """
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
