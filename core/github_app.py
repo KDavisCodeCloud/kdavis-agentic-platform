@@ -49,12 +49,13 @@ _GH_API = "https://api.github.com"
 _MAX_HTTP_TIMEOUT = 30
 
 # Fine-grained, nothing broader than what agents 01/03/08 actually do today
-# (read IaC, comment on PRs, open remediation PRs). Update this if a new
+# (read IaC, comment on PRs, open remediation PRs and issues). Update this if a new
 # GitHub call is added to any agent, same discipline as
 # core/workspace_credentials.py's AWS _PERMISSIONS_POLICY_ACTIONS list.
 _APP_PERMISSIONS = {
     "contents": "write",
     "pull_requests": "write",
+    "issues": "write",  # the "Open an issue" options (lab run 3: A2/Z2 got 403 without it)
     "metadata": "read",
 }
 _APP_WEBHOOK_EVENTS = ["pull_request", "workflow_run"]

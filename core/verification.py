@@ -224,6 +224,7 @@ async def _verify_one(conn, row: dict, credentials_for) -> None:
             await _notify_resolved(conn, row)
     elif outcome.result == NOT_FIXED and past_deadline:
         await _close(conn, row, STATUS_VERIFICATION_FAILED, result)
+        await _notify_failed(conn, row, result)
     elif outcome.result == UNKNOWN and past_deadline:
         result["outcome"] = "unverifiable"
         await conn.execute(
@@ -268,6 +269,34 @@ async def _notify_resolved(conn, row: dict) -> None:
         **{k: v for k, v in full.items() if k != "resolved_at"},
         "resolved_at": full["resolved_at"].isoformat() if full.get("resolved_at") else None,
     })
+
+
+async def _notify_failed(conn, row: dict, result: dict) -> None:
+    """"Your fix didn't work" -- the most important alert this product sends.
+    Fans out to every notification channel (Slack / PagerDuty / email) and
+    reopens the resolution ticket if one was filed. Both are fire-and-forget
+    and never raise. Sent as severity 'critical' so no channel's severity floor
+    filters it out (the incident's own severity is unchanged)."""
+    import asyncio
+    from core.notifications import notify_incident_channels
+    from core.ticketing import reopen_resolution_ticket
+    full = await conn.fetchrow(
+        "SELECT parsed_error, resource_name, alert_name, severity FROM incidents WHERE id = $1", row["id"])
+    full = dict(full) if full else {}
+    workspace_id = str(row["workspace_id"])
+    summary = {
+        "incident_id": str(row["id"]), "agent_id": row["agent_id"], "execution_status": STATUS_VERIFICATION_FAILED,
+        "summary": f"The fix ran but the problem is still there: {result['detail']}. "
+                   f"Original issue: {(full.get('parsed_error') or '')[:300]}",
+        "detail": result["detail"], "severity": "critical", "incident_severity": full.get("severity"),
+        "resource_name": full.get("resource_name"), "alert_name": full.get("alert_name"),
+    }
+    for coro in (notify_incident_channels(workspace_id, summary), reopen_resolution_ticket(workspace_id, summary)):
+        try:
+            asyncio.create_task(coro)
+        except Exception as exc:  # no running loop: never let this block closing the incident
+            coro.close()
+            log.warning("[Verification] could not schedule fix-failed alert for %s: %s", row["id"], exc)
 
 
 def _uuid(value):

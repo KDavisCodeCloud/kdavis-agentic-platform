@@ -214,6 +214,12 @@ class IncidentResponse(BaseModel):
     # migration 064 (G4) -- the last post-fix verification check:
     # {outcome: fixed|not_fixed|unknown|unverifiable, detail, checked_at, attempt}
     verification_result: Optional[dict] = None
+    # migration 065 (G2): the earlier incident with the same regression_key, and
+    # whether that one was fixed (or said it was) -- i.e. this is a regression.
+    previous_incident_id: Optional[str] = None
+    is_regression: bool = False
+    # migration 056 / G3: when the alert source itself reported the condition cleared.
+    source_resolved_at: Optional[datetime] = None
 
 
 class IncidentAssignRequest(BaseModel):

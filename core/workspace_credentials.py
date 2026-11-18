@@ -98,6 +98,12 @@ _PERMISSIONS_POLICY_ACTIONS = [
     "s3:GetReplicationConfiguration",
     "ec2:DescribeSecurityGroups",
     "ec2:DescribeRouteTables",
+    # Item 4 live-state reads (core/live_state.py), all read-only. Lab run 3
+    # found the post-fix checks getting AccessDenied on a role set up exactly
+    # per these instructions -- verification then can only ever say "unknown".
+    "iam:GetPolicy",               # G4: Agent 05 reads the policy's live default version
+    "ec2:DescribeInstances",       # G14 + G4: Agent 06 reads instance power state
+    "cloudwatch:DescribeAlarms",   # G4: Agent 11 reads the alarm's state after a fix
 ]
 
 

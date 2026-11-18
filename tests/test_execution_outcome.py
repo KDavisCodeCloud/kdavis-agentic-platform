@@ -144,6 +144,19 @@ async def test_every_agent_marks_a_proposal_as_proposed(agent, mock_db, workspac
     executed.assert_not_called()
 
 
+@pytest.mark.parametrize("agent", AGENTS)
+async def test_upstream_failure_keeps_its_own_reason(agent, mock_db, workspace_id, mock_router):
+    """Lab run 3 (A4/Z5): an upstream error already created a failed incident with its
+    real reason; with no option ever selected, complete must not record an execution
+    over it (it used to write 'not executed: no option selected')."""
+    wf = _make(agent, mock_db, workspace_id, mock_router)
+    state = {"incident_id": "11111111-1111-1111-1111-111111111111", "selected_option": None,
+             "execution_result": None, "error": "No cost data or resource inventory"}
+    with patch.object(wf.hitl, "record_execution", new=AsyncMock()) as record:
+        await wf._complete_node(state)
+    record.assert_not_called()
+
+
 def test_every_catalog_pr_or_issue_option_is_a_proposal():
     """Static guard: an option whose only calls open a PR or issue must be flagged as a proposal,
     or it would end as 'executed' with nothing changed (lab A2/Z2)."""

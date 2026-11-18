@@ -214,7 +214,11 @@ class BaseAgent(ABC):
         """Parse JSON from LLM response, stripping markdown fences."""
         clean = response.strip().replace("```json", "").replace("```", "").strip()
         try:
-            return json.loads(clean)
+            # raw_decode: the first complete JSON value wins. LLMs sometimes add a note
+            # after the object (lab run 3, Z1: "Extra data: line 32"), which json.loads rejects.
+            start = min((i for i in (clean.find("{"), clean.find("[")) if i >= 0), default=0)
+            value, _end = json.JSONDecoder().raw_decode(clean, start)
+            return value
         except json.JSONDecodeError as exc:
             log.warning(
                 "[%s] Failed to parse LLM JSON in %s: %s — raw: %s",
@@ -364,7 +368,11 @@ class BaseAgent(ABC):
     async def _complete_node(self, state) -> dict:
         """Record what execution actually did (G1: core/execution_outcome.py) and finalize audit trail."""
         incident_id = state.get("incident_id")
-        if incident_id:
+        # No option was ever selected (an upstream error already created a failed
+        # incident with its real reason, or nothing was approved): there is no
+        # execution to record, and recording one would overwrite that reason with
+        # "not executed" (lab run 3, A4/Z5).
+        if incident_id and state.get("selected_option"):
             exec_result = state.get("execution_result") or {}
             status = await self.hitl.record_execution(
                 incident_id, exec_result, state.get("selected_option"),

@@ -37,6 +37,7 @@ from agents.agent_06_finops.tools import FinOpsTools, _format_currency
 from agents.agent_06_finops.tools import option_catalog
 from core.live_state import AWS_STOPPED, AZURE_DEALLOCATED, LiveStateError, aws_instance_states, azure_vm_power_states
 from core.option_catalog import bind_options, catalog_prompt_block
+from core.regression import compute_key
 from core.security import shield
 
 log = logging.getLogger(__name__)
@@ -88,6 +89,17 @@ class FinOpsState(TypedDict):
 # ──────────────────────────────────────────────
 # Prompt loader
 # ──────────────────────────────────────────────
+
+def _has_input(text) -> bool:
+    """True when a normalized input carries something to analyze (not blank or an empty JSON value)."""
+    return (text or "").strip() not in ("", "{}", "[]", "null")
+
+
+def _quick_win_ids(state) -> list:
+    """The instances/VMs this incident recommends stopping (G2 regression key)."""
+    wins = state.get("quick_win_resources") or {}
+    return list(wins.get("instance_ids") or []) + list(wins.get("vm_names") or [])
+
 
 def _load_diagnose_prompt() -> str:
     path = Path(__file__).parent / "prompts" / "diagnose.md"
@@ -296,9 +308,11 @@ class FinOpsWorkflow(BaseAgent):
         total_spend    = state["total_spend"]
         currency       = state["currency"]
 
-        if not (state.get("cost_data_summary") or "").strip():
-            # "Couldn't check" is a failed incident, never "nothing found" (G15)
-            return {"error": f"No cost data for {cloud} {billing_period}; nothing was analyzed"}
+        if not _has_input(state.get("cost_data_summary")) and not _has_input(state.get("resource_inventory")):
+            # "Couldn't check" is a failed incident, never "nothing found" (G15). Either input
+            # is enough: idle resources are analyzable without spend data (lab run 3, A4/Z5 --
+            # the cost data was empty because the cost-allocation tag wasn't active yet).
+            return {"error": f"No cost data or resource inventory for {cloud} {billing_period}; nothing was analyzed"}
 
         user_message = (
             f"FinOps Cost Optimization Request:\n\n"
@@ -435,6 +449,7 @@ class FinOpsWorkflow(BaseAgent):
             cloud_provider=state["cloud_provider"],
             tokens_used=state.get("tokens_used", 0),
             estimated_duration_seconds=state.get("estimated_duration_seconds"),
+            regression_key=compute_key(state["cloud_provider"], _quick_win_ids(state)),
         )
 
         await self.record_token_usage(

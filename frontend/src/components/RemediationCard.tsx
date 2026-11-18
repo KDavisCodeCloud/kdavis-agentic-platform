@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send, ShieldOff, GitPullRequest, GitMerge } from 'lucide-react'
 import { VerificationNote } from '@/components/VerificationNote'
+import { IncidentHistoryNote, RegressionBadge } from '@/components/IncidentHistory'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -529,8 +530,11 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                 {SEVERITY_META[incident.severity].label}
               </span>
             )}
+            <RegressionBadge incident={incident} />
           </div>
         )}
+
+        <IncidentHistoryNote incident={incident} />
 
         {onAssigned && (
           <div className="mb-2">

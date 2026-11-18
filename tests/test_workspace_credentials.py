@@ -257,13 +257,16 @@ class TestBuildPermissionsPolicy:
             "s3:GetBucketPolicy",
             "ec2:DescribeSecurityGroups",
             "ec2:DescribeRouteTables",
+            # item 4 live-state reads (lab run 3: AccessDenied without them)
+            "iam:GetPolicy",
+            "ec2:DescribeInstances",
+            "cloudwatch:DescribeAlarms",
         ):
             assert required in actions
         for unused in (
             "cloudformation:DescribeStacks",
             "eks:DescribeCluster",
             "eks:ListClusters",
-            "ec2:DescribeInstances",
             "ec2:DescribeVolumes",
             "ec2:DescribeAddresses",
         ):

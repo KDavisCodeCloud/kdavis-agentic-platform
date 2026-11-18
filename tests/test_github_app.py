@@ -54,7 +54,7 @@ class TestBuildManifest:
     def test_includes_fine_grained_permissions_not_broader(self):
         manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh", "https://x.com/setup")
         assert manifest["default_permissions"] == {
-            "contents": "write", "pull_requests": "write", "metadata": "read",
+            "contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read",
         }
 
     def test_is_not_public(self):

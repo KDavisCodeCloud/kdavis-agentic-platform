@@ -1185,6 +1185,7 @@ class TestK8sCompleteNode:
         incident_id = str(uuid4())
         state = _base_k8s_state(workspace_id)
         state["incident_id"] = incident_id
+        state["selected_option"] = {"id": "opt_1"}  # what was executed
         state["execution_result"] = {
             "status": "patched",
             "before_state": {"memory_limit": "512Mi"},
@@ -1209,6 +1210,7 @@ class TestK8sCompleteNode:
         incident_id = str(uuid4())
         state = _base_k8s_state(workspace_id)
         state["incident_id"] = incident_id
+        state["selected_option"] = {"id": "opt_1"}  # what was executed
         state["execution_result"] = {"status": "applied"}  # no before_state key
 
         mock_db.fetchrow.return_value = {

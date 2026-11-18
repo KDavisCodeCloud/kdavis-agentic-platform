@@ -261,21 +261,25 @@ async def _linear_label_id(client: httpx.AsyncClient, headers: dict, team_id: st
     return data["issueLabelCreate"]["issueLabel"]["id"]
 
 
-async def _linear_done_state_id(client: httpx.AsyncClient, headers: dict, team_id: str) -> Optional[str]:
-    """Finds this team's workflow state with type == 'completed' (Linear's
-    canonical "Done" bucket -- a team's actual state name can be
-    localized/customized, but the `type` enum is stable). Returns None if
-    the team somehow has no completed-type state (unusual, not fatal --
-    the issue still gets created via create_linear_ticket, just without
-    an explicit stateId, so it lands in the team's default state)."""
+async def _linear_state_id(client: httpx.AsyncClient, headers: dict, team_id: str, state_type: str) -> Optional[str]:
+    """Finds this team's first workflow state of a given type ('completed' is
+    Linear's canonical "Done" bucket, 'unstarted' its "Todo" -- a team's state
+    names can be customized, but the `type` enum is stable). None if the team
+    has no state of that type (unusual, not fatal)."""
     data = await _linear_graphql(
         client, headers,
-        "query($teamId: String!) { team(id: $teamId) { states(filter: {type: {eq: \"completed\"}}) "
+        "query($teamId: String!, $type: String!) { team(id: $teamId) { states(filter: {type: {eq: $type}}) "
         "{ nodes { id } } } }",
-        {"teamId": team_id},
+        {"teamId": team_id, "type": state_type},
     )
     nodes = data["team"]["states"]["nodes"]
     return nodes[0]["id"] if nodes else None
+
+
+async def _linear_done_state_id(client: httpx.AsyncClient, headers: dict, team_id: str) -> Optional[str]:
+    """The team's 'completed' state: create_linear_ticket files the issue as Done.
+    None lands it in the team's default state instead."""
+    return await _linear_state_id(client, headers, team_id, "completed")
 
 
 async def create_linear_ticket(config: dict, incident_summary: dict, resolved_by: Optional[str]) -> dict:
@@ -650,3 +654,170 @@ def schedule_resolution_notification(workspace_id: str, incident_summary: dict, 
             "[Ticketing] Failed to schedule resolution ticketing for workspace=%s: %s", workspace_id, exc,
             extra={"workspace_id": workspace_id},
         )
+
+
+# ── Reopen on "your fix didn't work" (item 5) ────────────────────────────
+#
+# A resolution ticket is filed when an incident resolves (above). If post-fix
+# verification (core/verification.py) later finds the problem still there,
+# the ticket must not stay closed: verification_failed reopens it with a
+# comment saying why. The ticket is the one recorded by this incident's
+# successful `ticket_created` audit event; no ticket, nothing to reopen.
+
+def _reopen_comment(incident_summary: dict) -> str:
+    return ("Reopened by Cloud Decoded: the fix did not work. After it ran, Cloud Decoded "
+            f"re-read the live resource and the problem is still there ({incident_summary.get('detail') or 'see incident'}).\n"
+            f"Incident: {_incident_url(incident_summary.get('incident_id'))}")
+
+
+async def reopen_jira_ticket(config: dict, key: str, incident_summary: dict) -> None:
+    """Comment, then move the issue out of a Done-category status. Jira
+    transition ids are per-workflow, so this picks the first available
+    transition into an 'indeterminate' (in progress) or 'new' category."""
+    base = config["instance_url"].rstrip("/")
+    headers = {"Authorization": f"Bearer {config['api_token']}", "Accept": "application/json",
+               "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        r = await client.post(f"{base}/rest/api/3/issue/{key}/comment", headers=headers,
+                              json={"body": _jira_description_adf(_reopen_comment(incident_summary))})
+        r.raise_for_status()
+        r = await client.get(f"{base}/rest/api/3/issue/{key}", headers=headers, params={"fields": "status"})
+        r.raise_for_status()
+        if r.json()["fields"]["status"]["statusCategory"]["key"] != "done":
+            return  # never closed (Jira tickets are filed open) -- the comment is the reopen
+        r = await client.get(f"{base}/rest/api/3/issue/{key}/transitions", headers=headers)
+        r.raise_for_status()
+        target = next((t for t in r.json().get("transitions", [])
+                       if (t.get("to") or {}).get("statusCategory", {}).get("key") in ("indeterminate", "new")), None)
+        if target is None:
+            raise RuntimeError(f"Jira issue {key} has no transition out of Done")
+        r = await client.post(f"{base}/rest/api/3/issue/{key}/transitions", headers=headers,
+                              json={"transition": {"id": target["id"]}})
+        r.raise_for_status()
+
+
+async def reopen_linear_ticket(config: dict, identifier: str, incident_summary: dict) -> None:
+    headers = _linear_headers(config["api_key"])
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        data = await _linear_graphql(client, headers, "query($id: String!) { issue(id: $id) { id team { id } } }",
+                                     {"id": identifier})
+        issue_id, team_id = data["issue"]["id"], data["issue"]["team"]["id"]
+        await _linear_graphql(client, headers,
+                              "mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+                              {"input": {"issueId": issue_id, "body": _reopen_comment(incident_summary)}})
+        state_id = (await _linear_state_id(client, headers, team_id, "unstarted")
+                    or await _linear_state_id(client, headers, team_id, "started"))
+        if state_id is None:
+            raise RuntimeError(f"Linear team {team_id} has no open (unstarted/started) state to reopen into")
+        await _linear_graphql(client, headers,
+                              "mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }",
+                              {"id": issue_id, "input": {"stateId": state_id}})
+
+
+async def reopen_github_issue(conn, workspace_id: str, config: dict, number: str, incident_summary: dict) -> None:
+    owner, repo = config["repo"].split("/", 1)
+    token = (await build_agent_credentials(conn, workspace_id)).get("github_token")
+    if not token:
+        raise RuntimeError("No GitHub credentials configured for this workspace -- install the GitHub App first")
+    url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/issues/{number}"
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        r = await client.post(f"{url}/comments", headers=_github_headers(token),
+                              json={"body": _reopen_comment(incident_summary)})
+        r.raise_for_status()
+        r = await client.patch(url, headers=_github_headers(token), json={"state": "open"})
+        r.raise_for_status()
+
+
+async def reopen_servicenow_ticket(config: dict, number: str, incident_summary: dict) -> None:
+    """Same state caveat as create_servicenow_ticket: change_request states are
+    instance-specific choice values, so this sends the literal "open" the way
+    creation sends "closed". The work note is always written."""
+    base = config["instance_url"].rstrip("/")
+    auth = (config["username"], config["password"])
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+        r = await client.get(f"{base}/api/now/table/change_request", auth=auth, headers=headers,
+                             params={"sysparm_query": f"number={number}", "sysparm_fields": "sys_id", "sysparm_limit": "1"})
+        r.raise_for_status()
+        found = r.json().get("result") or []
+        if not found:
+            raise RuntimeError(f"ServiceNow change_request {number} not found")
+        r = await client.patch(f"{base}/api/now/table/change_request/{found[0]['sys_id']}", auth=auth, headers=headers,
+                               json={"work_notes": _reopen_comment(incident_summary), "state": "open"})
+        r.raise_for_status()
+
+
+async def _dispatch_reopen(channel_type: str, config: dict, external_id: str, incident_summary: dict,
+                           conn=None, workspace_id: Optional[str] = None) -> None:
+    if channel_type == "jira":
+        return await reopen_jira_ticket(config, external_id, incident_summary)
+    if channel_type == "linear":
+        return await reopen_linear_ticket(config, external_id, incident_summary)
+    if channel_type == "github_issues":
+        return await reopen_github_issue(conn, workspace_id, config, external_id, incident_summary)
+    if channel_type == "servicenow":
+        return await reopen_servicenow_ticket(config, external_id, incident_summary)
+    raise ValueError(f"No reopen sender registered for channel_type={channel_type!r}")
+
+
+async def _resolution_ticket(conn, incident_id: str) -> Optional[dict]:
+    """The ticket this incident's resolution filed: {provider, external_id}, or None."""
+    from uuid import UUID
+    row = await conn.fetchrow(
+        "SELECT metadata FROM audit_events WHERE incident_id = $1 AND action = 'ticket_created' "
+        "AND status = 'success' AND metadata->>'provider' = ANY($2::text[]) AND metadata->>'external_id' <> '' "
+        "ORDER BY created_at DESC LIMIT 1",
+        UUID(str(incident_id)), list(TICKETING_CHANNEL_TYPES),
+    )
+    if row is None:
+        return None
+    meta = row["metadata"]
+    meta = json.loads(meta) if isinstance(meta, str) else dict(meta)
+    return {"provider": meta["provider"], "external_id": meta["external_id"]}
+
+
+async def reopen_resolution_ticket(workspace_id: str, incident_summary: dict) -> None:
+    """Best-effort, never raises (same shape as notify_resolution). Reopens the
+    ticket this incident's resolution filed, if there is one; a failure is
+    audited and queued for retry."""
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        log.warning("[Ticketing] DATABASE_URL not set — skipping ticket reopen", extra={"workspace_id": workspace_id})
+        return
+    try:
+        conn = await asyncpg.connect(database_url.replace("postgresql+asyncpg://", "postgresql://"),
+                                     statement_cache_size=0)
+    except Exception as exc:
+        log.warning("[Ticketing] Could not open DB connection for workspace=%s: %s", workspace_id, exc)
+        return
+
+    incident_id, agent_id = incident_summary.get("incident_id"), incident_summary.get("agent_id")
+    ticket = None
+    try:
+        ticket = await _resolution_ticket(conn, incident_id)
+        if ticket is None:
+            return  # nothing was filed (no ticketing channel, or it never resolved) -- normal
+        row = await conn.fetchrow(
+            "SELECT config_encrypted FROM workspace_notification_channels "
+            "WHERE workspace_id = $1 AND channel_type = $2 AND enabled = true",
+            workspace_id, ticket["provider"],
+        )
+        if row is None:
+            raise RuntimeError(f"{ticket['provider']} is no longer configured for this workspace")
+        summary = {**incident_summary, "ticket": ticket}
+        await _dispatch_reopen(ticket["provider"], json.loads(decrypt(row["config_encrypted"])),
+                               ticket["external_id"], summary, conn=conn, workspace_id=workspace_id)
+        schedule_audit_event(workspace_id=workspace_id, action="ticket_reopened", status="success",
+                             incident_id=incident_id, agent_id=agent_id, metadata=ticket)
+    except Exception as exc:
+        log.warning("[Ticketing] Ticket reopen failed for workspace=%s incident=%s: %s -- queued for retry",
+                    workspace_id, incident_id, exc, extra={"workspace_id": workspace_id})
+        schedule_audit_event(workspace_id=workspace_id, action="ticket_reopen_failed", status="failed",
+                             incident_id=incident_id, agent_id=agent_id,
+                             metadata={**(ticket or {}), "error": str(exc)[:500]})
+        if ticket:
+            from core.notification_retry import enqueue_retry
+            await enqueue_retry(workspace_id, ticket["provider"], "reopen", {**incident_summary, "ticket": ticket},
+                                str(exc))
+    finally:
+        await conn.close()
