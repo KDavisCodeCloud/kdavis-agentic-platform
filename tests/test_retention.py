@@ -98,6 +98,9 @@ class TestRunRetentionCleanup:
         # 3 rows each = 6 per table.
         assert result["incidents"] == 6
         assert result["audit_events"] == 6
+        # alert_ingestion_log: one tier-independent delete + one scrub, 3 rows each.
+        assert result["alert_ingestion_log"] == 3
+        assert result["alert_ingestion_log_scrubbed"] == 3
 
     async def test_zero_deletions_returns_zero_counts_not_error(self):
         pool, conn = _mock_pool(execute_return="DELETE 0")
@@ -138,14 +141,6 @@ class TestAlertIngestionLogRetention:
 
         for call in _ingestion_calls(conn):
             assert "product_tier" not in call.args[0]
-
-    async def test_counts_reported(self):
-        pool, conn = _mock_pool(execute_return="DELETE 2")
-
-        result = await run_retention_cleanup(pool)
-
-        assert result["alert_ingestion_log"] == 2
-        assert result["alert_ingestion_log_scrubbed"] == 2
 
     async def test_skipped_when_lock_not_acquired(self):
         pool, conn = _mock_pool(fetchval_return=False)
