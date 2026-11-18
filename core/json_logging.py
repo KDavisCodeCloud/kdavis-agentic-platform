@@ -18,6 +18,7 @@ log.info() in the codebase needing to be rewritten at once.
 
 import json
 import logging
+import re
 import time
 
 # Attributes every stdlib LogRecord carries regardless of extra= --
@@ -62,6 +63,48 @@ class JSONFormatter(logging.Formatter):
         )
 
 
+# G26 (Break-It Lab run 3): alert sources that can't send headers (Azure
+# Monitor, SNS, AlertManager) authenticate with the workspace token in the
+# webhook URL's query string, and uvicorn's access log wrote that full URL
+# to Railway's logs. Any query parameter whose name looks like a credential
+# has its value replaced before the line is emitted.
+_SECRET_QUERY_PARAM = re.compile(
+    r"(?i)([?&][^=&#\s]*(?:token|secret|key|password|signature|sig|code)[^=&#\s]*=)[^&#\s]*"
+)
+_REDACTED = "[REDACTED]"
+
+
+def redact_query_secrets(text: str) -> str:
+    """Replace the values of credential-like query parameters in a URL or log line."""
+    return _SECRET_QUERY_PARAM.sub(lambda m: m.group(1) + _REDACTED, text)
+
+
+class AccessLogRedactionFilter(logging.Filter):
+    """
+    Redacts credential-like query parameters from uvicorn access-log
+    records. uvicorn passes (client_addr, method, full_path, http_version,
+    status_code) as record.args; the path is rewritten in place so every
+    formatter (uvicorn's own, JSONFormatter) only ever sees the redacted
+    value. Never drops a record.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and record.args:
+            record.args = tuple(
+                redact_query_secrets(a) if isinstance(a, str) else a for a in record.args
+            )
+        if isinstance(record.msg, str):
+            record.msg = redact_query_secrets(record.msg)
+        return True
+
+
+def install_access_log_redaction() -> None:
+    """Attach the redaction filter to uvicorn's access logger (idempotent)."""
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, AccessLogRedactionFilter) for f in access.filters):
+        access.addFilter(AccessLogRedactionFilter())
+
+
 def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
     """
     Replaces logging.basicConfig(). fmt="json" (default, used in
@@ -82,3 +125,5 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
             logging.Formatter("%(asctime)s [%(name)s] %(levelname)s %(message)s")
         )
     root.addHandler(handler)
+
+    install_access_log_redaction()

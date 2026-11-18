@@ -124,3 +124,79 @@ class TestConfigureLogging:
         root = logging.getLogger()
 
         assert len(root.handlers) == 1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# G26 — credential-like query parameters are redacted from uvicorn access logs
+# ──────────────────────────────────────────────────────────────────────────────
+
+import logging as _logging
+
+from core.json_logging import (
+    AccessLogRedactionFilter,
+    install_access_log_redaction,
+    redact_query_secrets,
+)
+
+_TOKEN = "cd_ws_t_5qc-K1Tk8REbnbCxxHdLkBqk7qmDQL_tWDxFL6hQsA"
+
+
+class TestRedactQuerySecrets:
+    def test_redacts_workspace_token(self):
+        out = redact_query_secrets(f"/api/v1/webhooks/resource-health-alert?token={_TOKEN}")
+        assert _TOKEN not in out
+        assert out == "/api/v1/webhooks/resource-health-alert?token=[REDACTED]"
+
+    def test_redacts_only_secret_params_and_keeps_others(self):
+        out = redact_query_secrets(f"/x?format=sns&token={_TOKEN}&api_key=abc&state=ok#frag")
+        assert out == "/x?format=sns&token=[REDACTED]&api_key=[REDACTED]&state=ok#frag"
+
+    def test_redacts_oauth_code_and_signature(self):
+        out = redact_query_secrets("/cb?code=abc123&sig=deadbeef&installation_id=9")
+        assert out == "/cb?code=[REDACTED]&sig=[REDACTED]&installation_id=9"
+
+    def test_case_insensitive(self):
+        assert redact_query_secrets("/x?Token=abc") == "/x?Token=[REDACTED]"
+
+    def test_path_without_query_is_unchanged(self):
+        assert redact_query_secrets("/api/v1/webhooks/github-app") == "/api/v1/webhooks/github-app"
+
+
+class TestAccessLogRedactionFilter:
+    def _record(self, path):
+        # uvicorn.access's real call shape: '%s - "%s %s HTTP/%s" %d'
+        return _logging.LogRecord(
+            "uvicorn.access", _logging.INFO, __file__, 1,
+            '%s - "%s %s HTTP/%s" %d',
+            ("100.64.0.9:27546", "POST", path, "1.1", 200), None,
+        )
+
+    def test_rendered_line_has_no_token(self):
+        rec = self._record(f"/api/v1/webhooks/aks-alert?token={_TOKEN}")
+        assert AccessLogRedactionFilter().filter(rec) is True
+        line = rec.getMessage()
+        assert _TOKEN not in line
+        assert "aks-alert?token=[REDACTED]" in line
+        assert line.endswith("200")
+
+    def test_installed_on_uvicorn_access_logger_once(self, capsys):
+        access = _logging.getLogger("uvicorn.access")
+        before = list(access.filters)
+        try:
+            install_access_log_redaction()
+            install_access_log_redaction()
+            assert sum(isinstance(f, AccessLogRedactionFilter) for f in access.filters) == 1
+        finally:
+            access.filters[:] = before
+
+    def test_configure_logging_installs_it(self):
+        from core.json_logging import configure_logging
+        access = _logging.getLogger("uvicorn.access")
+        before = list(access.filters)
+        root_handlers = list(_logging.getLogger().handlers)
+        try:
+            configure_logging(level="INFO", fmt="text")
+            assert any(isinstance(f, AccessLogRedactionFilter) for f in access.filters)
+        finally:
+            access.filters[:] = before
+            _logging.getLogger().handlers[:] = root_handlers

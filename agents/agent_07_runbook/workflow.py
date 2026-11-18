@@ -19,6 +19,9 @@ context, it generates a contextualized execution plan, possibly skipping or reor
 steps that are not relevant to the current incident.
 
 Trigger: Manual via POST /agents/agent_07_runbook/run, or invoked by another agent.
+
+Runbook step execution is disabled (2026-11-18): see tools.py. The card offers
+only "file the plan as an issue" or Hold.
 """
 
 import json
@@ -26,12 +29,13 @@ import logging
 from pathlib import Path
 from typing import Optional, TypedDict
 
+import httpx
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt, Command
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
-from agents.agent_07_runbook.tools import RunbookTools, _summarize_step_results
+from agents.agent_07_runbook.tools import RunbookTools
 from core.security import shield
 
 log = logging.getLogger(__name__)
@@ -39,6 +43,25 @@ log = logging.getLogger(__name__)
 _MAX_RUNBOOK_CHARS  = 6_000
 _MAX_INCIDENT_CHARS = 3_000
 _MAX_STEPS          = 50
+
+# The only options Agent 07 offers. Runbook execution (the old opt_1) was
+# removed 2026-11-18: its steps ran on Cloud Decoded's shared API host.
+_OPTIONS = (
+    {
+        "id": "opt_2",
+        "title": "File the runbook plan as a GitHub issue",
+        "description": "Opens an issue listing the planned steps for your team to run. No step is executed.",
+        "impact": "NONE — documentation only",
+        "docs_url": "https://docs.github.com/en/issues",
+    },
+    {
+        "id": "hold",
+        "title": "Hold — run it manually",
+        "description": "Take no action; run the runbook yourself using this plan as a guide.",
+        "impact": "NONE — no action taken",
+        "docs_url": "",
+    },
+)
 
 
 # ──────────────────────────────────────────────
@@ -274,18 +297,15 @@ class RunbookWorkflow(BaseAgent):
         execution_plan   = diagnosis.get("execution_plan", state["runbook_steps_raw"])
         plan_summary     = diagnosis.get("plan_summary", "")
         skipped_steps    = diagnosis.get("skipped_steps", [])
-        options          = diagnosis.get("options", [])
+        # The LLM's own options are ignored: runbook execution is disabled
+        # (see tools.py), so the card only ever offers what can actually run.
+        options          = list(_OPTIONS)
         duration         = diagnosis.get("estimated_duration_seconds", 60)
 
         # Enforce step cap
         if len(execution_plan) > _MAX_STEPS:
             execution_plan = execution_plan[:_MAX_STEPS]
             log.warning("[Agent07] Execution plan capped at %d steps", _MAX_STEPS)
-
-        required_fields = {"id", "title", "description", "impact", "docs_url"}
-        for opt in options:
-            if not required_fields.issubset(opt.keys()):
-                log.warning("[Agent07] Option missing required fields: %s", opt)
 
         self._write_audit("diagnose", "ok", tokens_used=estimated_tokens)
         log.info(
@@ -388,46 +408,30 @@ class RunbookWorkflow(BaseAgent):
 
         plan = state.get("execution_plan") or []
         report_title = (
-            f"Runbook Execution: {state['runbook_name']} "
+            f"Runbook Plan: {state['runbook_name']} "
             f"(v{state['runbook_version']}) — {len(plan)} steps"
         )
 
         context = {
-            "runbook_name": state["runbook_name"],
-            "runbook_version": state["runbook_version"],
-            "incident_context": state["incident_context"],
-            "trigger_source": state["trigger_source"],
             "plan_steps": plan,
             "owner": owner,
             "repo": repo,
             "report_title": report_title,
-            "report_body": "",  # filled after execution for opt_1 pre-report (opt_2 dry-run)
-        }
-
-        result = await self._tools.execute_option(selected, context)
-
-        # For opt_1 (execution), build a post-execution report and create an issue if repo available
-        if option_id == "opt_1" and result.get("status") in ("ok", "partial", "failed") and owner and repo:
-            step_results = result.get("step_results", [])
-            report_body = _build_execution_report(
+            "report_body": _build_plan_report(
                 runbook_name=state["runbook_name"],
                 runbook_version=state["runbook_version"],
                 incident_context=state["incident_context"],
                 plan_summary=state.get("plan_summary", ""),
-                step_results=step_results,
+                plan_steps=plan,
                 skipped_steps=state.get("skipped_steps") or [],
-                overall_status=result.get("status", "unknown"),
-            )
-            try:
-                issue_result = await self._tools.create_runbook_issue(
-                    owner=owner, repo=repo,
-                    title=report_title,
-                    body=report_body,
-                    labels=["runbook", "operations"],
-                )
-                result["report_issue"] = issue_result
-            except (EnvironmentError, RuntimeError) as exc:
-                log.warning("[Agent07] Could not create execution report issue: %s", exc)
+            ),
+        }
+
+        try:
+            result = await self._tools.execute_option(selected, context)
+        except (EnvironmentError, RuntimeError, httpx.HTTPError) as exc:
+            log.warning("[Agent07] Option %s failed: %s", option_id, exc)
+            result = {"status": "failed", "reason": str(exc)}
 
         self._write_audit(
             f"execute:{option_id}", result.get("status", "done"),
@@ -441,10 +445,17 @@ class RunbookWorkflow(BaseAgent):
         incident_id = state.get("incident_id")
         if incident_id:
             exec_result = state.get("execution_result") or {}
-            if exec_result.get("status") == "held":
+            status = exec_result.get("status")
+            if status == "held":
                 await self.hitl._db.execute(
                     "UPDATE incidents SET execution_status = 'held' WHERE id = $1",
                     __import__("uuid").UUID(incident_id),
+                )
+            elif status in ("refused", "failed", "not_implemented", "skipped"):
+                await self.hitl.mark_failed(
+                    incident_id,
+                    reason=exec_result.get("reason") or f"option {status}",
+                    failure_kind="execution_error",
                 )
             else:
                 await self.hitl.mark_executed(incident_id, tokens_used=0)
@@ -536,36 +547,32 @@ class RunbookWorkflow(BaseAgent):
 # Report builders
 # ──────────────────────────────────────────────
 
-def _build_execution_report(
+def _build_plan_report(
     runbook_name: str,
     runbook_version: str,
     incident_context: str,
     plan_summary: str,
-    step_results: list[dict],
+    plan_steps: list,
     skipped_steps: list,
-    overall_status: str,
 ) -> str:
-    status_icon = {"ok": "✅", "partial": "⚠️", "failed": "❌"}.get(overall_status, "❓")
-    succeeded = sum(1 for r in step_results if r.get("status") == "ok")
-    failed    = sum(1 for r in step_results if r.get("status") == "failed")
-    skip_cnt  = sum(1 for r in step_results if r.get("status") == "skipped")
-
+    """Markdown body for the runbook-plan issue. Nothing in it has been run."""
+    step_lines = "\n".join(
+        f"{i}. **{s.get('name') or s.get('id', 'step')}** (`{s.get('type', '?')}`)"
+        + (f": `{s['command']}`" if s.get("command") else "")
+        + (f" — ⚠️ {s['risk_note']}" if s.get("risk_note") else "")
+        for i, s in enumerate(plan_steps, 1)
+    ) or "_No steps in the plan._"
+    skipped_lines = "\n".join(
+        f"- {s.get('name') or s.get('id', 'step')}: {s.get('reason', '')}" for s in skipped_steps
+    ) or "_None._"
     return (
-        f"## Cloud Decoded — Runbook Execution Report\n\n"
+        f"## Cloud Decoded — Runbook Plan\n\n"
         f"**Runbook:** {runbook_name} (v{runbook_version})  \n"
-        f"**Overall Status:** {status_icon} {overall_status.upper()}\n\n"
-        f"| Metric | Value |\n"
-        f"|--------|-------|\n"
-        f"| Steps Executed | {len(step_results)} |\n"
-        f"| Succeeded | {succeeded} |\n"
-        f"| Failed | {failed} |\n"
-        f"| Skipped | {skip_cnt + len(skipped_steps)} |\n\n"
-        f"### Incident Context\n\n"
-        f"{incident_context or '_Not provided_'}\n\n"
-        f"### Execution Plan Summary\n\n"
-        f"{plan_summary or '_Not available_'}\n\n"
-        f"### Step Results\n\n"
-        f"{_summarize_step_results(step_results)}\n\n"
-        f"---\n"
-        f"*Generated by Cloud Decoded Agent 07. Review step outputs before marking incident resolved.*"
+        f"**Status:** not executed. Cloud Decoded does not run runbook steps; "
+        f"run this plan with your own tooling.\n\n"
+        f"### Incident Context\n\n{incident_context or '_Not provided_'}\n\n"
+        f"### Plan Summary\n\n{plan_summary or '_Not available_'}\n\n"
+        f"### Steps\n\n{step_lines}\n\n"
+        f"### Skipped\n\n{skipped_lines}\n\n"
+        f"---\n*Generated by Cloud Decoded Agent 07.*"
     )

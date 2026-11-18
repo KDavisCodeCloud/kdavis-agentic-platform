@@ -378,3 +378,33 @@ carry a `?ref=` code, and activity from them is recorded against it.
   violation. Normalizing literals away made every same-sized table hash alike.
 - **Weekly full sweep unchanged:** it still reports everything and never
   fails.
+
+## 2026-11-18 — Agent 07 runbook execution removed; webhook tokens redacted from access logs (G26)
+
+Kelvin's decision after the 2026-11-18 claims audit ("NOW: disable Agent 07
+execution in production … own PR, merged with G26").
+
+- **Agent 07.** Runbook steps (shell via `create_subprocess_exec`, HTTP,
+  kubectl, notifications) ran from Cloud Decoded's shared, multi-tenant API
+  host once an operator approved `opt_1`. That is our server and network
+  position, not the customer's environment. The step executors are
+  **deleted**, not flagged off. `execute_runbook_plan()` and
+  `execute_option(opt_1)` return `refused`, and the module no longer imports
+  anything that can spawn a process. The diagnose node ignores the LLM's
+  option list and offers a fixed pair: `opt_2` (file the plan as a GitHub
+  issue, whose body is now the real plan instead of the old empty string)
+  and `hold`. An approval of a stale `opt_1` card (for incidents created
+  before this deploy) is refused and the incident is marked **failed**, not
+  executed. Re-enabling needs a design that runs steps inside the
+  customer's environment; the prompt file is unchanged (its `opt_1` is
+  discarded in code), so no prompt version bump.
+- **G26.** Alert sources that can't send headers (Azure Monitor, SNS,
+  AlertManager, Grafana) authenticate with `?token=` in the webhook URL,
+  and uvicorn's access log wrote the full URL to Railway's logs. Railway's
+  own HTTP log strips query strings; only uvicorn leaked. `configure_logging`
+  now installs `AccessLogRedactionFilter` on `uvicorn.access`, replacing the
+  value of any credential-like query parameter (`token`, `key`, `secret`,
+  `password`, `sig`/`signature`, `code`) with `[REDACTED]`. Verified under a
+  real `--workers 2` uvicorn. **Log lines already written still contain
+  tokens**, so every workspace whose webhooks used `?token=` must rotate its
+  workspace token.
