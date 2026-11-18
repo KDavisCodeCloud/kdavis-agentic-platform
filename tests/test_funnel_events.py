@@ -254,8 +254,10 @@ class TestHooks:
         pool, conn = _pool(fetchrow={"id": ws_id})
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
         body = CreateWorkspaceRequest(company_name="Acme", contact_email="ops@acme.io", tos_accepted=True,
+                                      owner_supabase_user_id=uuid4(),
                                       ref="lead_abc1", utm_campaign="nov", visitor_id="bad id!")
-        with patch("api.routes.workspaces.record_workspace_server_event", new=AsyncMock()) as rec:
+        with patch("api.routes.workspaces.record_workspace_server_event", new=AsyncMock()) as rec, \
+             patch("api.routes.workspaces.verify_new_owner", new=AsyncMock()):
             await create_workspace(body, request)
         insert = conn.fetchrow.await_args_list[0].args
         assert "signup_ref" in insert[0]
@@ -267,8 +269,10 @@ class TestHooks:
 
         pool, conn = _pool(fetchrow={"id": uuid4()})
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool)))
-        body = CreateWorkspaceRequest(company_name="Acme", contact_email="ops@acme.io", tos_accepted=True)
-        with patch("api.routes.workspaces.record_workspace_server_event", new=AsyncMock()):
+        body = CreateWorkspaceRequest(company_name="Acme", contact_email="ops@acme.io", tos_accepted=True,
+                                      owner_supabase_user_id=uuid4())
+        with patch("api.routes.workspaces.record_workspace_server_event", new=AsyncMock()), \
+             patch("api.routes.workspaces.verify_new_owner", new=AsyncMock()):
             await create_workspace(body, request)
         assert conn.fetchrow.await_args_list[0].args[4:] == (None, None, None, None, None)
 

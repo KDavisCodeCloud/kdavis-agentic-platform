@@ -27,15 +27,19 @@ import logging
 import re
 import secrets
 from typing import Optional
+from uuid import UUID
+
+import asyncpg
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
+from api.middleware.auth import _hash_token, get_workspace_admin, get_workspace_or_member
 from api.middleware.rate_limiter import limiter
 from core.funnel_events import (
     clean_ref, clean_utm, clean_visitor_id, record_workspace_server_event,
 )
+from core.owner_signup import OwnerVerificationError, verify_new_owner
 from security.encryption import encrypt
 
 log = logging.getLogger(__name__)
@@ -59,6 +63,9 @@ def _generate_raw_token() -> str:
 class CreateWorkspaceRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=255)
     contact_email: str = Field(..., min_length=3, max_length=255)
+    # Owner account at signup (2026-11-18): the founder's Supabase Auth user,
+    # created in the browser by supabase.auth.signUp just before this call.
+    owner_supabase_user_id: UUID
     tos_accepted: bool = Field(
         ...,
         description="Must be true -- the signup checkbox's state now actually reaches the backend "
@@ -91,9 +98,10 @@ class CreateWorkspaceRequest(BaseModel):
 
 
 class CreateWorkspaceResponse(BaseModel):
+    # No workspace token: it's never a login. The owner generates one in
+    # Settings (shown once) when they need it for webhooks or MCP.
     id: str
-    workspace_token: str  # ONLY time the raw token is shown — store it now
-    warning: str = "Save this token now — it will not be shown again."
+    message: str = "Check your email to verify your address, then log in."
 
 
 class SaveLlmKeyRequest(BaseModel):
@@ -129,37 +137,56 @@ async def create_workspace(
     body: CreateWorkspaceRequest,
     request: Request,
 ) -> CreateWorkspaceResponse:
-    raw_token = _generate_raw_token()
-    token_hash = _hash_token(raw_token)
+    try:
+        await verify_new_owner(str(body.owner_supabase_user_id), body.contact_email)
+    except OwnerVerificationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    async with request.app.state.db_pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO workspaces (
-                company_name, workspace_token, contact_email, tos_accepted_at,
-                signup_ref, signup_utm_source, signup_utm_medium, signup_utm_campaign, signup_visitor_id
-            )
-            VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8)
-            RETURNING id
-            """,
-            body.company_name,
-            token_hash,
-            body.contact_email,
-            clean_ref(body.ref),
-            clean_utm(body.utm_source),
-            clean_utm(body.utm_medium),
-            clean_utm(body.utm_campaign),
-            clean_visitor_id(body.visitor_id),
-        )
+    # The workspace gets a token hash nobody holds (the column is NOT NULL);
+    # workspace_token_last4 stays NULL until the owner generates a real one.
+    token_hash = _hash_token(_generate_raw_token())
+
+    try:
+        async with request.app.state.db_pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO workspaces (
+                        company_name, workspace_token, contact_email, tos_accepted_at,
+                        signup_ref, signup_utm_source, signup_utm_medium, signup_utm_campaign, signup_visitor_id
+                    )
+                    VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8)
+                    RETURNING id
+                    """,
+                    body.company_name,
+                    token_hash,
+                    body.contact_email,
+                    clean_ref(body.ref),
+                    clean_utm(body.utm_source),
+                    clean_utm(body.utm_medium),
+                    clean_utm(body.utm_campaign),
+                    clean_visitor_id(body.visitor_id),
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO workspace_members (workspace_id, supabase_user_id, email, role, status, joined_at)
+                    VALUES ($1, $2, $3, 'admin', 'active', NOW())
+                    """,
+                    row["id"],
+                    body.owner_supabase_user_id,
+                    body.contact_email,
+                )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail="This account already has a workspace. Log in instead.") from exc
 
     await record_workspace_server_event(request.app.state.db_pool, "signup_completed", row["id"])
 
     log.info(
-        "[Workspaces] Created workspace=%s company=%s contact=%s",
-        row["id"], body.company_name, body.contact_email,
+        "[Workspaces] Created workspace=%s company=%s owner=%s",
+        row["id"], body.company_name, body.owner_supabase_user_id,
     )
 
-    return CreateWorkspaceResponse(id=str(row["id"]), workspace_token=raw_token)
+    return CreateWorkspaceResponse(id=str(row["id"]))
 
 
 @router.post("/llm-key", response_model=SaveLlmKeyResponse)
@@ -167,7 +194,7 @@ async def create_workspace(
 async def save_llm_key(
     body: SaveLlmKeyRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> SaveLlmKeyResponse:
     if body.provider not in _VALID_PROVIDERS:
         raise HTTPException(

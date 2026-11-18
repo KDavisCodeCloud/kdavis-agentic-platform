@@ -475,14 +475,16 @@ export interface WorkspaceTokenStatus {
   // still inside its 72h rotation grace window (survives a page reload,
   // not just the response from the rotate call itself).
   grace_period_ends_at?: string | null
+  // Migration 071 -- false until the owner first generates a token.
+  issued?: boolean
 }
 
 export interface RotateWorkspaceTokenResult {
   workspace_token: string
   last4: string
   rotated_at: string
-  // 24-gap-closure Phase 5
-  grace_period_ends_at: string
+  // 24-gap-closure Phase 5 -- null on a first generation
+  grace_period_ends_at: string | null
   alert_source_checklist: string[]
 }
 

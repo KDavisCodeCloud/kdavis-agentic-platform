@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
+from api.middleware.auth import _hash_token, get_workspace_admin, get_workspace_or_member
 from core.audit import write_audit_event
 from core.github_app import (
     GitHubAppError, build_install_url, exchange_user_code, sign_installation_claim, sign_workspace_state,
@@ -181,6 +181,8 @@ class WorkspaceTokenStatusResponse(BaseModel):
     # reload still shows the banner correctly, not just the response
     # from the rotate call itself in that one session.
     grace_period_ends_at: str | None = None
+    # Migration 071: False until the owner first generates a token in Settings.
+    issued: bool = True
 
 
 # 24-gap-closure Phase 5 -- every place the workspace token appears in a
@@ -201,7 +203,7 @@ class RotateWorkspaceTokenResponse(BaseModel):
     workspace_token: str
     last4: str
     rotated_at: str
-    grace_period_ends_at: str
+    grace_period_ends_at: str | None  # None on a first generation (nothing to keep valid)
     alert_source_checklist: list[str] = Field(default_factory=lambda: list(_ALERT_SOURCE_CHECKLIST))
 
 
@@ -313,6 +315,7 @@ async def get_workspace_token_status(
         last_used_at=last_used_at.isoformat() if last_used_at else None,
         expires_at=expires_at.isoformat() if expires_at else None,
         grace_period_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
+        issued=workspace.get("workspace_token_issued_at") is not None,
     )
 
 
@@ -350,10 +353,15 @@ async def rotate_workspace_token_self_serve(
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "UPDATE workspaces SET "
-            "previous_workspace_token_hash = workspace_token, "
-            "previous_workspace_token_expires_at = NOW() + INTERVAL '72 hours', "
+            # A token that was never issued (migration 071) has no holder to
+            # protect, so its first generation gets no grace window.
+            "previous_workspace_token_hash = CASE WHEN workspace_token_issued_at IS NULL "
+            "THEN NULL ELSE workspace_token END, "
+            "previous_workspace_token_expires_at = CASE WHEN workspace_token_issued_at IS NULL "
+            "THEN NULL ELSE NOW() + INTERVAL '72 hours' END, "
             "workspace_token = $1, workspace_token_last4 = $2, "
             "workspace_token_rotated_at = NOW(), workspace_token_last_used_at = NULL, "
+            "workspace_token_issued_at = NOW(), "
             "updated_at = NOW() "
             "WHERE id = $3 "
             "RETURNING workspace_token_rotated_at, previous_workspace_token_expires_at",
@@ -374,7 +382,10 @@ async def rotate_workspace_token_self_serve(
         workspace_token=raw_token,
         last4=last4,
         rotated_at=row["workspace_token_rotated_at"].isoformat(),
-        grace_period_ends_at=row["previous_workspace_token_expires_at"].isoformat(),
+        grace_period_ends_at=(
+            row["previous_workspace_token_expires_at"].isoformat()
+            if row["previous_workspace_token_expires_at"] else None
+        ),
     )
 
 
@@ -426,7 +437,7 @@ async def set_workspace_token_expiry(
 async def connect_github(
     body: ConnectGithubRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ConnectGithubResponse:
     """
     Retired as of the item 4 GitHub App migration (decided 2026-09-13):
@@ -450,7 +461,7 @@ async def connect_github(
 @router.get("/github-app/install-url")
 async def get_github_app_install_url(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Returns a one-time install URL for this workspace. The signed state
     param ties GitHub's install-callback redirect back to this exact
@@ -533,7 +544,7 @@ class GithubAppClaimRequest(BaseModel):
 
 @router.post("/github-app/claim")
 async def claim_github_app_installation(
-    body: GithubAppClaimRequest, request: Request, workspace: dict = Depends(get_workspace),
+    body: GithubAppClaimRequest, request: Request, workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Links an installation GitHub already verified the installing user can
     access (the signed claim from the install callback) to the caller's own
@@ -571,7 +582,7 @@ async def _link_installation(conn, workspace_id: str, installation_id: str) -> N
 @router.post("/aws-role/setup", response_model=AwsRoleSetupResponse)
 async def setup_aws_role(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> AwsRoleSetupResponse:
     platform_aws_account_id = os.environ.get("CLOUD_DECODED_AWS_ACCOUNT_ID")
     if not platform_aws_account_id:
@@ -604,7 +615,7 @@ async def setup_aws_role(
 async def connect_aws_role(
     body: ConnectAwsRoleRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> CredentialStatusResponse:
     """
     24-gap-closure Phase 5 note: unlike connect_azure/connect_azure_devops
@@ -653,7 +664,7 @@ async def connect_aws_role(
 async def connect_azure(
     body: ConnectAzureRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> CredentialStatusResponse:
     try:
         await verify_service_principal(body.azure_tenant_id, body.client_id, body.client_secret, body.subscription_id)
@@ -692,7 +703,7 @@ async def connect_azure(
 async def connect_azure_devops(
     body: ConnectAzureDevOpsRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ConnectAzureDevOpsResponse:
     """
     Verify-then-store a workspace's Azure DevOps PAT (item 5, migration 024).
@@ -754,7 +765,7 @@ async def connect_azure_devops(
 async def connect_k8s(
     body: ConnectK8sRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> CredentialStatusResponse:
     """
     Verify-then-store a workspace's Kubernetes cluster credentials

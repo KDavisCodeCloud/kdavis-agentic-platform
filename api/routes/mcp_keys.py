@@ -27,7 +27,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_admin
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -76,7 +76,7 @@ class CreateKeyResponse(BaseModel):
 async def create_mcp_key(
     body: CreateKeyRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> CreateKeyResponse:
     workspace_id = str(workspace["id"])
     tier = workspace.get("product_tier", "starter")
@@ -136,7 +136,7 @@ async def create_mcp_key(
 @router.get("/keys")
 async def list_mcp_keys(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> list[KeySummary]:
     workspace_id = str(workspace["id"])
     now = datetime.now(timezone.utc)
@@ -171,7 +171,7 @@ async def list_mcp_keys(
 async def revoke_mcp_key(
     key_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     workspace_id = str(workspace["id"])
 
@@ -196,7 +196,7 @@ async def revoke_mcp_key(
 @router.delete("/keys")
 async def revoke_all_mcp_keys(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Emergency stop — revokes every active key for this workspace."""
     workspace_id = str(workspace["id"])
@@ -219,7 +219,7 @@ async def revoke_all_mcp_keys(
 @router.get("/status")
 async def get_mcp_status(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Connection telemetry for this workspace from mcp_audit_log."""
     workspace_id = str(workspace["id"])

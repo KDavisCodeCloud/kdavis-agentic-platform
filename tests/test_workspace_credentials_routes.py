@@ -643,9 +643,30 @@ class TestRotateWorkspaceTokenSelfServe:
         update_sql, token_hash_arg, last4_arg, workspace_id_arg = conn.fetchrow.await_args.args
         assert "UPDATE workspaces SET" in update_sql
         assert "workspace_token = $1" in update_sql
-        assert "previous_workspace_token_hash = workspace_token" in update_sql
+        # A previously issued token keeps a grace window; a never-issued one doesn't (migration 071).
+        assert "previous_workspace_token_hash = CASE WHEN workspace_token_issued_at IS NULL" in update_sql
+        assert "THEN NULL ELSE workspace_token END" in update_sql
+        assert "workspace_token_issued_at = NOW()" in update_sql
         assert token_hash_arg != result.workspace_token  # never the raw token
         assert last4_arg == result.last4
+
+    async def test_first_generation_has_no_grace_window(self):
+        from datetime import datetime, timezone
+        request, _ = _make_request(fetchrow_return={
+            "workspace_token_rotated_at": datetime.now(timezone.utc),
+            "previous_workspace_token_expires_at": None,
+        })
+        with patch("api.routes.workspace_credentials.write_audit_event", new=AsyncMock()):
+            result = await wc_routes.rotate_workspace_token_self_serve(request, workspace={"id": uuid4()})
+        assert result.grace_period_ends_at is None
+        assert result.workspace_token.startswith("cd_ws_")
+
+    async def test_token_status_reports_whether_a_token_was_ever_issued(self):
+        admin = {"id": uuid4(), "member_role": "admin"}
+        never = await wc_routes.get_workspace_token_status(workspace={**admin, "workspace_token_issued_at": None})
+        issued = await wc_routes.get_workspace_token_status(
+            workspace={**admin, "workspace_token_issued_at": "2026-11-18", "workspace_token_last4": "abcd"})
+        assert never.issued is False and issued.issued is True
 
     async def test_each_rotation_generates_a_distinct_token(self):
         from datetime import datetime, timedelta, timezone

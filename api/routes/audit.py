@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agents.audit_analysis.workflow import AuditAnalysisAgent
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_admin, get_workspace_approver, get_workspace_or_member
 from api.middleware.rate_limiter import limiter
 
 log = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ async def _load_report(conn, audit_id: str, workspace_id) -> AuditReportResponse
 async def submit_audit(
     body: AuditSubmitRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> AuditReportResponse:
     workspace_id = workspace["id"]
     findings = [f.model_dump() for f in body.findings]
@@ -194,7 +194,7 @@ async def submit_audit(
 @router.get("", response_model=list[AuditSubmissionSummary])
 async def list_audit_submissions(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> list[AuditSubmissionSummary]:
     async with request.app.state.db_pool.acquire() as conn:
         rows = await conn.fetch(
@@ -220,7 +220,7 @@ async def list_audit_submissions(
 async def get_audit_report(
     audit_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> AuditReportResponse:
     async with request.app.state.db_pool.acquire() as conn:
         return await _load_report(conn, audit_id, workspace["id"])
@@ -230,7 +230,7 @@ async def get_audit_report(
 async def approve_item(
     item_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_approver),
 ) -> ItemActionResponse:
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -255,7 +255,7 @@ async def approve_item(
 async def dismiss_item(
     item_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_approver),
 ) -> ItemActionResponse:
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(

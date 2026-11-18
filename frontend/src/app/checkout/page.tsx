@@ -12,6 +12,12 @@ import { createCheckoutSession, ApiError } from '@/lib/api'
 // our server), so this page is a thin tier selector that redirects the
 // browser to Stripe's hosted checkout_url via the already-built
 // createCheckoutSession(token, tier).
+//
+// Owner account at signup (2026-11-18): the founder reaches this page
+// signed in (their member session), straight after login while the
+// workspace is still unpaid -- "finish payment", not a dead end. Design
+// partner discounts are Stripe promotion codes entered on Stripe's page
+// (allow_promotion_codes is on), never a comp.
 
 type Tier = 'starter' | 'growth'
 
@@ -50,12 +56,12 @@ export default function CheckoutPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const stored = sessionStorage.getItem('pending_workspace_token')
-    if (!stored) {
-      router.replace('/signup')
+    const session = localStorage.getItem('member_session_token')
+    if (!session) {
+      router.replace('/login')
       return
     }
-    setToken(stored)
+    setToken(session)
   }, [router])
 
   async function handleSubscribe() {
@@ -164,11 +170,12 @@ export default function CheckoutPage() {
               </span>
             </div>
             <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 24, color: '#fff', margin: '0 0 10px' }}>
-              Ready when you are.
+              Finish payment to activate your workspace.
             </h1>
             <p style={{ fontSize: 14, lineHeight: 1.6, color: 'rgba(232,236,242,.55)', margin: '0 0 28px' }}>
               You&apos;ll enter payment details on Stripe&apos;s secure checkout page. Your first month is charged
-              today, and you can cancel anytime from your billing portal.
+              today, and you can cancel anytime from your billing portal. Have a promotion code? Enter it on the
+              Stripe page.
             </p>
 
             {error && <p style={{ marginBottom: 14, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}

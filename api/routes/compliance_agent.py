@@ -26,7 +26,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_admin, get_workspace_or_member
 from integrations.compliance_agent_client import AgentServiceError
 from integrations import compliance_agent_client as client
 from security.encryption import decrypt, encrypt
@@ -96,14 +96,14 @@ def _upstream_status(exc: AgentServiceError) -> int:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/status", response_model=ConnectionStatusResponse)
-async def get_status(request: Request, workspace: dict = Depends(get_workspace)) -> ConnectionStatusResponse:
+async def get_status(request: Request, workspace: dict = Depends(get_workspace_or_member)) -> ConnectionStatusResponse:
     async with request.app.state.db_pool.acquire() as conn:
         row = await _get_connection(conn, workspace["id"])
     return _to_status_response(row)
 
 
 @router.post("/connect", response_model=ConnectionStatusResponse, status_code=201)
-async def connect(request: Request, workspace: dict = Depends(get_workspace)) -> ConnectionStatusResponse:
+async def connect(request: Request, workspace: dict = Depends(get_workspace_admin)) -> ConnectionStatusResponse:
     workspace_id = workspace["id"]
     async with request.app.state.db_pool.acquire() as conn:
         existing = await _get_connection(conn, workspace_id)
@@ -140,7 +140,7 @@ async def connect(request: Request, workspace: dict = Depends(get_workspace)) ->
 
 @router.post("/verify-role", response_model=VerifyRoleResponse)
 async def verify_role(
-    body: VerifyRoleRequest, request: Request, workspace: dict = Depends(get_workspace)
+    body: VerifyRoleRequest, request: Request, workspace: dict = Depends(get_workspace_admin)
 ) -> VerifyRoleResponse:
     workspace_id = workspace["id"]
     async with request.app.state.db_pool.acquire() as conn:
@@ -167,7 +167,7 @@ async def verify_role(
 
 @router.post("/verify-azure", response_model=VerifyRoleResponse)
 async def verify_azure(
-    body: VerifyAzureServicePrincipalRequest, request: Request, workspace: dict = Depends(get_workspace)
+    body: VerifyAzureServicePrincipalRequest, request: Request, workspace: dict = Depends(get_workspace_admin)
 ) -> VerifyRoleResponse:
     workspace_id = workspace["id"]
     async with request.app.state.db_pool.acquire() as conn:
@@ -195,7 +195,7 @@ async def verify_azure(
 
 
 @router.post("/scan")
-async def scan(request: Request, workspace: dict = Depends(get_workspace)) -> dict:
+async def scan(request: Request, workspace: dict = Depends(get_workspace_admin)) -> dict:
     async with request.app.state.db_pool.acquire() as conn:
         row = await _get_connection(conn, workspace["id"])
     tenant_id, tenant_token = _require_connected(row)
@@ -207,7 +207,7 @@ async def scan(request: Request, workspace: dict = Depends(get_workspace)) -> di
 
 
 @router.get("/report")
-async def report(request: Request, workspace: dict = Depends(get_workspace)) -> dict:
+async def report(request: Request, workspace: dict = Depends(get_workspace_or_member)) -> dict:
     async with request.app.state.db_pool.acquire() as conn:
         row = await _get_connection(conn, workspace["id"])
     tenant_id, tenant_token = _require_connected(row)

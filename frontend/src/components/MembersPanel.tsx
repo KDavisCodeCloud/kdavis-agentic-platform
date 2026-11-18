@@ -22,6 +22,7 @@ import {
 } from '@/lib/api'
 import type { WorkspaceMember, ConnectionsStatus } from '@/lib/types'
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase'
+import { confirmTotpEnrollment, startTotpEnrollment } from '@/lib/mfa'
 
 interface MembersPanelProps {
   token: string
@@ -132,15 +133,10 @@ export function MembersPanel({ token }: MembersPanelProps) {
     setMfaError('')
     setMfaBusy(true)
     try {
-      const supabase = getSupabaseClient()
-      const { data, error: enrollError } = await supabase.auth.mfa.enroll({ factorType: 'totp' })
-      if (enrollError || !data) {
-        setMfaError(enrollError?.message || 'Could not start enrollment')
-        return
-      }
-      setMfaFactorId(data.id)
-      setMfaEnrollQr(data.totp.qr_code)
-      setMfaEnrollSecret(data.totp.secret)
+      const enrollment = await startTotpEnrollment()
+      setMfaFactorId(enrollment.factorId)
+      setMfaEnrollQr(enrollment.qrCode)
+      setMfaEnrollSecret(enrollment.secret)
     } catch (err) {
       setMfaError(err instanceof Error ? err.message : 'Could not start enrollment')
     } finally {
@@ -151,25 +147,10 @@ export function MembersPanel({ token }: MembersPanelProps) {
   async function handleConfirmEnroll(e: React.FormEvent) {
     e.preventDefault()
     setMfaError('')
-    if (!mfaFactorId || mfaEnrollCode.trim().length !== 6) {
-      setMfaError('Enter the 6-digit code from your authenticator app')
-      return
-    }
+    if (!mfaFactorId) return
     setMfaBusy(true)
     try {
-      const supabase = getSupabaseClient()
-      const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaFactorId })
-      if (challengeError || !challenge) {
-        setMfaError(challengeError?.message || 'Could not verify code')
-        return
-      }
-      const { error: verifyError } = await supabase.auth.mfa.verify({
-        factorId: mfaFactorId, challengeId: challenge.id, code: mfaEnrollCode.trim(),
-      })
-      if (verifyError) {
-        setMfaError(verifyError.message)
-        return
-      }
+      await confirmTotpEnrollment(mfaFactorId, mfaEnrollCode)
       setMfaEnrolled(true)
       setMfaEnrollQr(null)
       setMfaEnrollSecret(null)

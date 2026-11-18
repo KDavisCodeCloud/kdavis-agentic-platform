@@ -32,7 +32,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_admin
 from security.encryption import encrypt
 from core.severity import VALID_SEVERITIES
 
@@ -142,7 +142,7 @@ async def _upsert_channel(
 async def connect_slack(
     body: ConnectSlackRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ChannelStatusResponse:
     workspace_id = workspace["id"]
     await _upsert_channel(request, workspace_id, "slack", {"webhook_url": body.webhook_url}, body.enabled, body)
@@ -158,7 +158,7 @@ async def connect_slack(
 async def connect_pagerduty(
     body: ConnectPagerDutyRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ChannelStatusResponse:
     workspace_id = workspace["id"]
     await _upsert_channel(request, workspace_id, "pagerduty", {"routing_key": body.routing_key}, body.enabled, body)
@@ -174,7 +174,7 @@ async def connect_pagerduty(
 async def connect_email(
     body: ConnectEmailRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ChannelStatusResponse:
     """24-gap-closure Phase 3 -- email as a third channel type."""
     workspace_id = workspace["id"]
@@ -190,7 +190,7 @@ async def connect_email(
 @router.get("", response_model=NotificationChannelsResponse)
 async def list_notification_channels(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> NotificationChannelsResponse:
     """
     Read-only channel status for the Connections settings page. Never
@@ -220,7 +220,7 @@ async def list_notification_channels(
 @router.get("/retry-queue/exhausted", response_model=ExhaustedRetriesResponse)
 async def list_exhausted_retries(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ExhaustedRetriesResponse:
     """
     24-gap-closure Phase 3 -- "flagged in dashboard" for a notification
