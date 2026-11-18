@@ -219,6 +219,47 @@ const MOCK_INCIDENTS: Incident[] = [
     created_at: ago(12),
     options: [],
   },
+  // Item 3: a one-block Terraform PR that's open (proposed) and one that
+  // merged and is waiting for item 4's verification (fix_merged).
+  {
+    incident_id: 'c3d4e5f6-0a1b-4c2d-9e3f-1a2b3c4d5e60',
+    status: 'proposed',
+    agent_id: 'agent_08_drift_detection',
+    severity: 'high',
+    cloud_provider: 'aws',
+    repository: 'stackbridge/infra',
+    branch: 'main',
+    parsed_error:
+      'Security group sg-0a1b2c (cdlab-web) has port 22 open to 0.0.0.0/0; aws/main.tf declares only 443. PR #41 removes the extra ingress rule.',
+    estimated_duration_seconds: 60,
+    created_at: ago(25),
+    options: [
+      {
+        id: 'opt_1',
+        title: 'Open a PR changing aws_security_group.web in aws/main.tf',
+        description:
+          'Changes only that resource block. terraform fmt and validate passed before the PR was opened.',
+        impact: 'low',
+        docs_url: '',
+        diff:
+          '--- a/aws/main.tf\n+++ b/aws/main.tf\n@@ -21,11 +21,4 @@\n     cidr_blocks = ["0.0.0.0/0"]\n   }\n-\n-  ingress {\n-    from_port   = 22\n-    to_port     = 22\n-    protocol    = "tcp"\n-    cidr_blocks = ["0.0.0.0/0"]\n-  }\n }\n',
+      },
+    ],
+  },
+  {
+    incident_id: 'd4e5f6a7-1b2c-4d3e-8f4a-2b3c4d5e6f71',
+    status: 'fix_merged',
+    agent_id: 'agent_11_resource_health',
+    severity: 'medium',
+    cloud_provider: 'aws',
+    repository: 'stackbridge/infra',
+    branch: 'main',
+    parsed_error:
+      'cdlab-app CPU at 100% for 30 minutes on t3.micro. PR #40 (aws_instance.app → t3.small) was merged; waiting for the pipeline to apply it.',
+    estimated_duration_seconds: 120,
+    created_at: ago(95),
+    options: [],
+  },
   {
     incident_id: '07a8b9c0-d1e2-3456-abcd-567890123407',
     status: 'executed',
