@@ -3,40 +3,16 @@ tests/test_agent07.py
 Tests for agents/agent_07_runbook/tools.py and workflow.py.
 
 What this file validates:
-  RunbookTools — step executors:
-    - run_shell_step() executes a command and captures stdout/stderr/exit_code
-    - run_shell_step() returns failed on non-zero exit code
-    - run_shell_step() returns failed on timeout
-    - run_shell_step() returns skipped when allow_shell=False
-    - run_http_step() makes the correct HTTP request and returns status_code
-    - run_http_step() returns failed on non-2xx response
-    - run_http_step() returns failed on network error
-    - run_notification_step() POSTs to Slack webhook
-    - run_notification_step() returns skipped when SLACK_WEBHOOK_URL missing
-    - run_notification_step() posts GitHub comment when channel=github_comment
+  Runbook execution disabled (2026-11-18 claims audit — steps ran on
+  Cloud Decoded's shared API host):
+    - no shell/HTTP/kubectl/notification step executor exists
+    - execute_runbook_plan() refuses without running anything
+    - execute_option(opt_1) refuses; never spawns a process or makes a request
+    - diagnose offers only opt_2 (file plan as issue) and hold, whatever the LLM says
+    - approving a stale opt_1 card marks the incident failed, not executed
     - create_runbook_issue() creates GitHub issue with runbook labels
     - create_runbook_issue() raises EnvironmentError when GITHUB_TOKEN missing
-
-  RunbookTools — execute_runbook_plan():
-    - Executes steps in order and aggregates results
-    - Stops on failure when on_failure=stop
-    - Continues on failure when on_failure=continue
-    - Skips steps with skip_to when on_failure=skip_to:<id>
-    - Returns correct succeeded/failed/skipped counts
-    - Caps plan at MAX_STEPS_PER_RUN
-    - Returns skipped for empty plan
-
-  RunbookTools — execute_option():
-    - hold → returns held without any execution
-    - opt_1 → dispatches to execute_runbook_plan
-    - opt_1 with empty plan → returns skipped
-    - opt_2 → dispatches to create_runbook_issue
-    - unknown option → returns not_implemented
-
-  _substitute():
-    - Replaces known {{key}} placeholders from context
-    - Leaves unknown {{key}} as-is
-    - Handles empty context
+    - _build_plan_report() says the plan was not executed
 
   _normalize_runbook_steps():
     - Parses a list of step dicts
@@ -53,7 +29,7 @@ What this file validates:
 
   RunbookWorkflow._diagnose_node():
     - Calls router with task_type="runbook_automation"
-    - Parses all LLM fields: execution_plan, skipped_steps, plan_summary, options
+    - Parses LLM fields: execution_plan, skipped_steps, plan_summary
     - Accumulates tokens from prior state
     - Sets error on parse failure
     - Calls check_budget() before LLM call
@@ -66,22 +42,19 @@ What this file validates:
     - Skips incident creation when state["error"] is set
 """
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from agents.agent_07_runbook.tools import (
-    RunbookTools,
-    _substitute,
-)
+from agents.agent_07_runbook import tools as runbook_tools
+from agents.agent_07_runbook.tools import EXECUTION_DISABLED_REASON, RunbookTools
 from agents.agent_07_runbook.workflow import (
     RunbookWorkflow,
     RunbookState,
     _normalize_runbook_steps,
-    _build_execution_report,
+    _build_plan_report,
 )
 
 
@@ -239,35 +212,6 @@ def _hitl_state(workspace_id: str) -> RunbookState:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# _substitute() helper
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestSubstitute:
-    def test_replaces_known_key(self):
-        result = _substitute("kubectl get pods -n {{namespace}}", {"namespace": "production"})
-        assert result == "kubectl get pods -n production"
-
-    def test_leaves_unknown_key_as_is(self):
-        result = _substitute("kubectl logs {{pod_name}}", {})
-        assert result == "kubectl logs {{pod_name}}"
-
-    def test_replaces_multiple_keys(self):
-        result = _substitute(
-            "kubectl logs -n {{namespace}} {{pod_name}} --tail=50",
-            {"namespace": "production", "pod_name": "payment-abc"},
-        )
-        assert "production" in result
-        assert "payment-abc" in result
-
-    def test_handles_empty_context(self):
-        result = _substitute("echo {{missing}}", {})
-        assert result == "echo {{missing}}"
-
-    def test_handles_empty_template(self):
-        assert _substitute("", {"key": "value"}) == ""
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # _normalize_runbook_steps()
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -307,161 +251,6 @@ class TestNormalizeRunbookSteps:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# RunbookTools — run_shell_step()
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestRunShellStep:
-    @pytest.fixture
-    def tools(self):
-        return RunbookTools(allow_shell=True)
-
-    async def test_executes_command_and_returns_stdout(self, tools):
-        step = {"id": "step-01", "command": "echo hello_world", "timeout_seconds": 5}
-        result = await tools.run_shell_step(step, {})
-        assert result["status"] == "ok"
-        assert "hello_world" in result["stdout"]
-        assert result["exit_code"] == 0
-
-    async def test_returns_failed_on_nonzero_exit(self, tools):
-        step = {"id": "step-01", "command": "false", "timeout_seconds": 5}
-        result = await tools.run_shell_step(step, {})
-        assert result["status"] == "failed"
-        assert result["exit_code"] != 0
-
-    async def test_returns_skipped_when_shell_disabled(self):
-        no_shell = RunbookTools(allow_shell=False)
-        step = {"id": "step-01", "command": "echo hi"}
-        result = await no_shell.run_shell_step(step, {})
-        assert result["status"] == "skipped"
-
-    async def test_substitutes_context_variables_in_command(self, tools):
-        step = {"id": "step-01", "command": "echo {{namespace}}", "timeout_seconds": 5}
-        result = await tools.run_shell_step(step, {"namespace": "production"})
-        assert "production" in result["stdout"]
-
-    async def test_returns_failed_on_timeout(self, tools):
-        step = {"id": "step-01", "command": "sleep 10", "timeout_seconds": 1}
-        result = await tools.run_shell_step(step, {})
-        assert result["status"] == "failed"
-        assert "timed out" in result["error"].lower()
-
-    async def test_caps_timeout_at_max(self, tools):
-        step = {"id": "step-01", "command": "echo ok", "timeout_seconds": 9999}
-
-        captured_timeout = {}
-        original_wait_for = asyncio.wait_for
-
-        async def mock_wait_for(coro, timeout):
-            captured_timeout["timeout"] = timeout
-            return await original_wait_for(coro, timeout)
-
-        with patch("agents.agent_07_runbook.tools.asyncio.wait_for", side_effect=mock_wait_for):
-            await tools.run_shell_step(step, {})
-
-        assert captured_timeout.get("timeout", 9999) <= 120
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# RunbookTools — run_http_step()
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestRunHTTPStep:
-    @pytest.fixture
-    def tools(self):
-        return RunbookTools()
-
-    async def test_makes_request_with_correct_method_and_url(self, tools):
-        resp = _make_http_resp(200, {"ok": True})
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.request = AsyncMock(return_value=resp)
-
-        with patch("agents.agent_07_runbook.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.run_http_step(SAMPLE_HTTP_STEP, {"deployment_name": "payment", "api_token": "tok"})
-
-        assert result["status"] == "ok"
-        assert result["status_code"] == 200
-        call_kwargs = ctx.request.call_args.kwargs
-        assert call_kwargs["method"] == "POST"
-        assert "payment" in call_kwargs["url"]
-
-    async def test_returns_failed_on_4xx_response(self, tools):
-        resp = _make_http_resp(404, {"error": "not found"})
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.request = AsyncMock(return_value=resp)
-
-        with patch("agents.agent_07_runbook.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.run_http_step(SAMPLE_HTTP_STEP, {})
-
-        assert result["status"] == "failed"
-        assert result["status_code"] == 404
-
-    async def test_returns_failed_on_network_error(self, tools):
-        import httpx as httpx_mod
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.request = AsyncMock(side_effect=httpx_mod.RequestError("connection refused"))
-
-        with patch("agents.agent_07_runbook.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.run_http_step(SAMPLE_HTTP_STEP, {})
-
-        assert result["status"] == "failed"
-        assert "connection refused" in result["error"]
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# RunbookTools — run_notification_step()
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestRunNotificationStep:
-    @pytest.fixture
-    def tools(self):
-        return RunbookTools(slack_webhook_url="https://hooks.slack.com/services/T000/B000/abc")
-
-    async def test_posts_to_slack_webhook(self, tools):
-        ok_resp = MagicMock(status_code=200, text="ok")
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=ok_resp)
-
-        step = {"id": "notif-01", "channel": "slack", "message": "Done: {{deployment_name}}"}
-        with patch("agents.agent_07_runbook.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.run_notification_step(step, {"deployment_name": "payment-service"})
-
-        assert result["status"] == "ok"
-        payload = ctx.post.call_args.kwargs["json"]
-        assert "payment-service" in payload["text"]
-
-    async def test_returns_skipped_when_slack_url_missing(self):
-        no_slack = RunbookTools(slack_webhook_url="")
-        step = {"id": "notif-01", "channel": "slack", "message": "done"}
-        result = await no_slack.run_notification_step(step, {})
-        assert result["status"] == "skipped"
-
-    async def test_posts_github_comment(self, tools):
-        tools.github_token = "gh_test_token"
-        ok_resp = _make_http_resp(201, {"id": 123})
-        ctx = AsyncMock()
-        ctx.__aenter__ = AsyncMock(return_value=ctx)
-        ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.post = AsyncMock(return_value=ok_resp)
-
-        step = {"id": "notif-02", "channel": "github_comment", "message": "Runbook complete"}
-        context = {"owner": "acme", "repo": "ops", "github_issue_number": "42"}
-        with patch("agents.agent_07_runbook.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.run_notification_step(step, context)
-
-        assert result["status"] == "ok"
-        call_url = ctx.post.call_args.args[0]
-        assert "acme/ops/issues/42/comments" in call_url
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # RunbookTools — create_runbook_issue()
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -492,147 +281,6 @@ class TestCreateRunbookIssue:
         assert result["issue_number"] == 55
         payload = ctx.post.call_args.kwargs["json"]
         assert "runbook" in payload.get("labels", [])
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# RunbookTools — execute_runbook_plan()
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestExecuteRunbookPlan:
-    @pytest.fixture
-    def tools(self):
-        return RunbookTools(allow_shell=True)
-
-    async def test_executes_steps_in_order_and_aggregates_counts(self, tools):
-        shell_step = {"id": "s1", "type": "shell", "command": "echo ok", "on_failure": "continue"}
-        with patch.object(tools, "run_shell_step", new=AsyncMock(return_value={"status": "ok", "step_id": "s1"})) as mock_sh:
-            result = await tools.execute_runbook_plan([shell_step, {**shell_step, "id": "s2"}], {})
-
-        assert result["status"] == "ok"
-        assert result["steps_succeeded"] == 2
-        assert result["steps_failed"] == 0
-        assert mock_sh.call_count == 2
-
-    async def test_stops_on_failure_when_on_failure_is_stop(self, tools):
-        steps = [
-            {"id": "s1", "type": "shell", "command": "false", "on_failure": "stop"},
-            {"id": "s2", "type": "shell", "command": "echo ok", "on_failure": "continue"},
-        ]
-        with patch.object(tools, "run_shell_step", new=AsyncMock(side_effect=[
-            {"status": "failed", "step_id": "s1"},
-            {"status": "ok", "step_id": "s2"},
-        ])) as mock_sh:
-            result = await tools.execute_runbook_plan(steps, {})
-
-        assert result["steps_failed"] == 1
-        assert mock_sh.call_count == 1  # stopped after s1
-
-    async def test_continues_on_failure_when_on_failure_is_continue(self, tools):
-        steps = [
-            {"id": "s1", "type": "shell", "command": "false", "on_failure": "continue"},
-            {"id": "s2", "type": "shell", "command": "echo ok", "on_failure": "continue"},
-        ]
-        with patch.object(tools, "run_shell_step", new=AsyncMock(side_effect=[
-            {"status": "failed", "step_id": "s1"},
-            {"status": "ok", "step_id": "s2"},
-        ])):
-            result = await tools.execute_runbook_plan(steps, {})
-
-        assert result["steps_failed"] == 1
-        assert result["steps_succeeded"] == 1
-
-    async def test_skip_to_jumps_to_target_step(self, tools):
-        steps = [
-            {"id": "s1", "type": "shell", "command": "false", "on_failure": "skip_to:s3"},
-            {"id": "s2", "type": "shell", "command": "echo skip_me", "on_failure": "continue"},
-            {"id": "s3", "type": "shell", "command": "echo ok", "on_failure": "continue"},
-        ]
-
-        call_ids = []
-
-        async def track_shell(step, ctx):
-            call_ids.append(step["id"])
-            return {"status": "failed" if step["id"] == "s1" else "ok", "step_id": step["id"]}
-
-        with patch.object(tools, "run_shell_step", side_effect=track_shell):
-            result = await tools.execute_runbook_plan(steps, {})
-
-        assert "s2" not in call_ids  # bypassed — index jumps directly to s3
-        assert "s3" in call_ids
-        # s2 is absent from step_results; the implementation jumps directly to the target index
-        s2_result = next((r for r in result["step_results"] if r.get("step_id") == "s2"), None)
-        assert s2_result is None
-
-    async def test_returns_partial_status_when_some_fail(self, tools):
-        steps = [
-            {"id": "s1", "type": "shell", "command": "echo ok", "on_failure": "continue"},
-            {"id": "s2", "type": "shell", "command": "false", "on_failure": "continue"},
-        ]
-        with patch.object(tools, "run_shell_step", new=AsyncMock(side_effect=[
-            {"status": "ok", "step_id": "s1"},
-            {"status": "failed", "step_id": "s2"},
-        ])):
-            result = await tools.execute_runbook_plan(steps, {})
-
-        assert result["status"] == "partial"
-
-    async def test_caps_plan_at_max_steps(self, tools):
-        many = [{"id": f"s{i}", "type": "shell", "command": "echo ok", "on_failure": "continue"} for i in range(60)]
-        with patch.object(tools, "run_shell_step", new=AsyncMock(return_value={"status": "ok", "step_id": "x"})) as mock_sh:
-            await tools.execute_runbook_plan(many, {})
-
-        assert mock_sh.call_count <= 50
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# RunbookTools — execute_option()
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestExecuteOption:
-    @pytest.fixture
-    def tools(self):
-        return RunbookTools(github_token="gh_test_token", allow_shell=True)
-
-    @pytest.fixture
-    def context(self):
-        return {
-            "plan_steps": SAMPLE_STEPS,
-            "owner": "acme",
-            "repo": "ops",
-            "report_title": "Runbook: OOMKilled Recovery",
-            "report_body": "## Dry Run Plan",
-            "runbook_name": "OOMKilled Recovery",
-            "incident_context": "payment-service OOMKilled",
-        }
-
-    async def test_hold_returns_held_without_execution(self, tools, context):
-        with patch.object(tools, "execute_runbook_plan") as mock_exec:
-            result = await tools.execute_option({"id": "hold"}, context)
-        assert result["status"] == "held"
-        mock_exec.assert_not_called()
-
-    async def test_opt1_dispatches_to_execute_runbook_plan(self, tools, context):
-        expected = {"status": "ok", "steps_total": 3, "steps_succeeded": 3, "steps_failed": 0, "steps_skipped": 0, "step_results": []}
-        with patch.object(tools, "execute_runbook_plan", new=AsyncMock(return_value=expected)) as mock_exec:
-            result = await tools.execute_option({"id": "opt_1"}, context)
-        assert result["status"] == "ok"
-        mock_exec.assert_called_once_with(SAMPLE_STEPS, context)
-
-    async def test_opt1_with_empty_plan_returns_skipped(self, tools, context):
-        context["plan_steps"] = []
-        result = await tools.execute_option({"id": "opt_1"}, context)
-        assert result["status"] == "skipped"
-
-    async def test_opt2_dispatches_to_create_runbook_issue(self, tools, context):
-        expected = {"status": "issue_created", "issue_url": "https://github.com/acme/ops/issues/55", "issue_number": 55}
-        with patch.object(tools, "create_runbook_issue", new=AsyncMock(return_value=expected)) as mock_issue:
-            result = await tools.execute_option({"id": "opt_2"}, context)
-        assert result["status"] == "issue_created"
-        mock_issue.assert_called_once()
-
-    async def test_unknown_option_returns_not_implemented(self, tools, context):
-        result = await tools.execute_option({"id": "opt_99"}, context)
-        assert result["status"] == "not_implemented"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -883,40 +531,139 @@ class TestHITLGateNode:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# _build_execution_report()
+# Runbook execution is disabled
 # ──────────────────────────────────────────────────────────────────────────────
 
-class TestBuildExecutionReport:
-    def test_includes_runbook_name_and_version(self):
-        report = _build_execution_report(
-            runbook_name="OOMKilled Recovery",
-            runbook_version="1.2",
-            incident_context="payment-service crashed",
-            plan_summary="Run 3 steps",
-            step_results=[{"step_id": "s1", "status": "ok"}],
-            skipped_steps=[],
-            overall_status="ok",
-        )
-        assert "OOMKilled Recovery" in report
-        assert "1.2" in report
+class TestExecutionDisabled:
+    @pytest.fixture
+    def tools(self):
+        return RunbookTools(github_token="gh_test_token")
 
-    def test_includes_correct_status_icon(self):
-        ok_report = _build_execution_report("R", "1", "", "", [], [], "ok")
-        fail_report = _build_execution_report("R", "1", "", "", [], [], "failed")
-        partial_report = _build_execution_report("R", "1", "", "", [], [], "partial")
-        assert "✅" in ok_report
-        assert "❌" in fail_report
-        assert "⚠️" in partial_report
+    @pytest.fixture
+    def context(self):
+        return {
+            "plan_steps": SAMPLE_STEPS + [SAMPLE_HTTP_STEP],
+            "owner": "acme",
+            "repo": "ops",
+            "report_title": "Runbook Plan: OOMKilled Recovery",
+            "report_body": "## Plan",
+        }
 
-    def test_includes_step_results_table(self):
-        results = [
-            {"step_id": "s1", "status": "ok"},
-            {"step_id": "s2", "status": "failed", "error": "command not found"},
-        ]
-        report = _build_execution_report("R", "1", "", "", results, [], "partial")
-        assert "s1" in report
-        assert "s2" in report
+    def test_no_step_executor_exists(self):
+        for name in ("run_shell_step", "run_http_step", "run_kubectl_step", "run_notification_step"):
+            assert not hasattr(RunbookTools, name), name
 
-    def test_includes_cloud_decoded_attribution(self):
-        report = _build_execution_report("R", "1", "", "", [], [], "ok")
-        assert "Cloud Decoded" in report
+    def test_module_cannot_spawn_processes(self):
+        assert not hasattr(runbook_tools, "asyncio")
+        assert not hasattr(runbook_tools, "shlex")
+        assert not hasattr(runbook_tools, "subprocess")
+
+    async def test_execute_runbook_plan_refuses(self, tools, context):
+        with patch("asyncio.create_subprocess_exec") as spawn, \
+             patch("httpx.AsyncClient") as http:
+            result = await tools.execute_runbook_plan(context["plan_steps"], context)
+        assert result == {"status": "refused", "reason": EXECUTION_DISABLED_REASON}
+        spawn.assert_not_called()
+        http.assert_not_called()
+
+    async def test_opt1_refuses_without_running_anything(self, tools, context):
+        with patch("asyncio.create_subprocess_exec") as spawn, \
+             patch("httpx.AsyncClient") as http:
+            result = await tools.execute_option({"id": "opt_1"}, context)
+        assert result["status"] == "refused"
+        spawn.assert_not_called()
+        http.assert_not_called()
+
+    async def test_hold_returns_held(self, tools, context):
+        result = await tools.execute_option({"id": "hold"}, context)
+        assert result["status"] == "held"
+
+    async def test_opt2_files_the_plan_as_an_issue(self, tools, context):
+        expected = {"status": "issue_created", "issue_url": "https://github.com/acme/ops/issues/55", "issue_number": 55}
+        with patch.object(tools, "create_runbook_issue", new=AsyncMock(return_value=expected)) as mock_issue:
+            result = await tools.execute_option({"id": "opt_2"}, context)
+        assert result["status"] == "issue_created"
+        assert mock_issue.call_args.kwargs["body"] == "## Plan"
+
+    async def test_unknown_option_returns_not_implemented(self, tools, context):
+        result = await tools.execute_option({"id": "opt_99"}, context)
+        assert result["status"] == "not_implemented"
+
+
+class TestOfferedOptions:
+    async def test_llm_execute_option_is_never_offered(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        parsed = json.loads(SAMPLE_LLM_RUNBOOK_DIAGNOSIS)
+        assert parsed["options"][0]["id"] == "opt_1"  # the LLM still proposes it
+        with patch.object(wf, "check_budget", new=AsyncMock()), \
+             patch.object(wf, "call_llm", return_value=(SAMPLE_LLM_RUNBOOK_DIAGNOSIS, 900)), \
+             patch.object(wf, "parse_llm_json", return_value=parsed), \
+             patch.object(wf, "record_token_usage", new=AsyncMock()):
+            result = await wf._diagnose_node(_diagnose_state(workspace_id))
+        assert [o["id"] for o in result["remediation_options"]] == ["opt_2", "hold"]
+        for opt in result["remediation_options"]:
+            assert {"id", "title", "description", "impact", "docs_url"} <= opt.keys()
+
+
+class TestExecuteAndCompleteNodes:
+    @pytest.fixture
+    def wf(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        wf._tools = RunbookTools(github_token="gh_test_token")
+        wf.hitl = MagicMock()
+        wf.hitl.mark_failed = AsyncMock()
+        wf.hitl.mark_executed = AsyncMock()
+        return wf
+
+    def _state(self, workspace_id, option_id):
+        s = _hitl_state(workspace_id)
+        s["incident_id"] = str(uuid4())
+        s["selected_option"] = {"id": option_id}
+        return s
+
+    async def test_stale_opt1_approval_is_refused_and_marked_failed(self, wf, workspace_id):
+        state = self._state(workspace_id, "opt_1")
+        with patch("asyncio.create_subprocess_exec") as spawn:
+            out = await wf._execute_node(state)
+        spawn.assert_not_called()
+        assert out["execution_result"]["status"] == "refused"
+        state.update(out)
+        await wf._complete_node(state)
+        wf.hitl.mark_failed.assert_awaited_once()
+        assert wf.hitl.mark_failed.call_args.kwargs["reason"] == EXECUTION_DISABLED_REASON
+        wf.hitl.mark_executed.assert_not_called()
+
+    async def test_opt2_issue_body_is_the_plan(self, wf, workspace_id):
+        state = self._state(workspace_id, "opt_2")
+        created = {"status": "issue_created", "issue_url": "u", "issue_number": 1}
+        with patch.object(wf._tools, "create_runbook_issue", new=AsyncMock(return_value=created)) as mk:
+            out = await wf._execute_node(state)
+        assert out["execution_result"]["status"] == "issue_created"
+        body = mk.call_args.kwargs["body"]
+        assert "not executed" in body and "Check pod status" in body
+        state.update(out)
+        await wf._complete_node(state)
+        wf.hitl.mark_executed.assert_awaited_once()
+
+    async def test_opt2_failure_is_marked_failed(self, wf, workspace_id):
+        state = self._state(workspace_id, "opt_2")
+        wf._tools.github_token = ""
+        out = await wf._execute_node(state)
+        assert out["execution_result"]["status"] == "failed"
+        state.update(out)
+        await wf._complete_node(state)
+        wf.hitl.mark_failed.assert_awaited_once()
+        wf.hitl.mark_executed.assert_not_called()
+
+
+class TestBuildPlanReport:
+    def test_lists_steps_and_says_not_executed(self):
+        report = _build_plan_report("OOMKilled Recovery", "1.2", "ctx", "summary", SAMPLE_STEPS, [])
+        assert "OOMKilled Recovery" in report and "1.2" in report
+        assert "not executed" in report
+        assert "Check pod status" in report and "kubectl get pods" in report
+
+    def test_handles_empty_plan_and_skipped_steps(self):
+        report = _build_plan_report("R", "1", "", "", [], [{"id": "s4", "reason": "irrelevant"}])
+        assert "No steps in the plan" in report
+        assert "irrelevant" in report
