@@ -408,3 +408,54 @@ execution in production … own PR, merged with G26").
   real `--workers 2` uvicorn. **Log lines already written still contain
   tokens**, so every workspace whose webhooks used `?token=` must rotate its
   workspace token.
+
+## 2026-11-17 — Fix session item 1: option labels bound to executed code (G12 + G5)
+
+Evidence: Break-It Lab (`KDavisCodeCloud/cloud-decoded-lab`, results.md @ 365ea2b).
+
+- **One definition per option.** Each agent's `tools.py` exports
+  `option_catalog(context)`: title, description, impact and `calls` (the tool
+  methods that id runs). The diagnose node sends the catalog to the LLM and
+  passes its options through `core/option_catalog.bind_options`: catalog text
+  replaces the LLM's, the LLM's wording is kept as `rationale` ("Why the agent
+  suggests this" on the card), and ids with no code are dropped.
+  `execute_option` refuses ids outside the catalog (`not_available`).
+- **The catalog varies with context because the code does**: cloud (05, 06),
+  CI provider and whether a PR exists (01), drift source (08). Same keys at
+  diagnose and execute time.
+- **Test, not convention.** `tests/test_option_catalog.py` runs every option of
+  every agent with all tool methods mocked and asserts the methods called are
+  exactly `calls`. Changing behavior without changing the label fails CI.
+- **Behavior changes where the code itself contradicted any honest label:**
+  Agent 01 opt_2 now re-runs the whole workflow (it duplicated opt_1), opt_3
+  is offered only when the run has a PR (it silently fell back to a full
+  re-run); Agent 08 opt_2 exists only for Kubernetes (on Terraform it was
+  "Apply correction directly" but opened a second PR); Agent 07 opt_2's issue
+  now contains the plan (its body was empty); Agent 05 opt_1 refuses clouds it
+  has no code for (it fell back to the AWS call).
+- **G5 (narrowed per Kelvin's review, 2026-11-17):** Agent 05 Azure opt_1 is
+  "Remove the over-privileged role assignment(s)". At diagnose time the agent
+  lists the identity's live assignments and flags only privileged built-in
+  roles (Owner, Contributor, User Access Administrator, RBAC Administrator,
+  matched by their fixed role-definition GUIDs) at the subscription scope
+  itself. The card lists each flagged assignment's id, role and scope. On
+  approval it creates or keeps the minimized assignment(s), then deletes only
+  those listed ids, and only if each is still privileged at subscription scope
+  (an id that is gone or changed is reported, not deleted). Every other
+  assignment is left untouched. Nothing is deleted if creation fails, and a
+  minimized set that still contains a flagged role is refused. opt_1 isn't
+  offered when nothing is flagged or the assignments can't be listed (the
+  reason goes on the incident).
+  - **Why not "replace everything":** analysis can miss legitimate access, and
+    a broad delete could cause an outage on a customer's first approval. The
+    first version (delete every other assignment in the subscription) is
+    dropped. No "replace all" option was added: no lab case needs it, and an
+    operator who wants it can do it via "I'll handle this myself".
+  - The old create-only `apply_azure_role_assignment` is removed.
+- **"Custom solution" is gone.** The card promised "a custom fix for the
+  platform to execute"; no agent could. The API now refuses `custom` with a
+  pointer to "I'll handle this myself" (`/resolve-manually`). Approved on the
+  condition that a human path stays on every card. It does:
+  `RemediationCard.tsx` adds "I'll handle this myself" to every incident
+  regardless of agent, and `bind_options` always keeps Hold.
+- Option `impact` is now the catalog's low/medium/high, not LLM free text.

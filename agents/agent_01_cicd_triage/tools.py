@@ -19,6 +19,8 @@ from typing import Optional
 
 import httpx
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GITHUB_API = "https://api.github.com"
@@ -218,42 +220,19 @@ class CICDTools:
 
     async def execute_option(self, option: dict, context: dict) -> dict:
         """
-        Dispatch to the correct tool based on approved option and incident context.
-        context must include: cloud_provider, owner/org, repo/project, run_id, pr_number (optional)
+        Run the approved option. Only ids in option_catalog(context) run, and
+        each runs exactly the calls its catalog entry declares.
+        context: cloud_provider, owner/org, repo/project, run_id, pr_number (optional)
         """
         option_id = option.get("id", "")
         provider = context.get("cloud_provider", "github")
-
-        log.info(
-            "[CICDTools] Executing option '%s' for provider '%s'",
-            option_id, provider
-        )
+        catalog = option_catalog(context)
+        log.info("[CICDTools] Executing option '%s' for provider '%s'", option_id, provider)
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to stay broken / handle manually"}
-
-        if option_id in ("opt_1", "opt_2") and provider == "github":
-            # Default: re-run failed jobs
-            return await self.rerun_failed_jobs_only(
-                owner=context["owner"],
-                repo=context["repo"],
-                run_id=context["run_id"],
-            )
-
-        if option_id == "opt_3" and provider == "github" and context.get("pr_number"):
-            # Post diagnostic comment to PR
-            diagnosis = context.get("parsed_error", "Diagnosis not available")
-            body = (
-                f"## Cloud Decoded — CI/CD Triage Result\n\n"
-                f"**Root cause:** {diagnosis}\n\n"
-                f"**Status:** Remediation initiated. See Cloud Decoded dashboard for details."
-            )
-            return await self.post_github_pr_comment(
-                owner=context["owner"],
-                repo=context["repo"],
-                pr_number=context["pr_number"],
-                comment_body=body,
-            )
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
 
         if provider == "azure_devops":
             return await self.retry_azure_pipeline(
@@ -262,12 +241,57 @@ class CICDTools:
                 build_id=context["run_id"],
             )
 
-        # Full rerun fallback
-        if provider == "github":
-            return await self.rerun_github_workflow(
-                owner=context["owner"],
-                repo=context["repo"],
-                run_id=context["run_id"],
+        if option_id == "opt_1":
+            return await self.rerun_failed_jobs_only(
+                owner=context["owner"], repo=context["repo"], run_id=context["run_id"],
             )
 
-        return {"status": "not_implemented", "option_id": option_id, "provider": provider}
+        if option_id == "opt_2":
+            return await self.rerun_github_workflow(
+                owner=context["owner"], repo=context["repo"], run_id=context["run_id"],
+            )
+
+        # opt_3: only in the catalog when the run belongs to a PR
+        diagnosis = context.get("parsed_error", "Diagnosis not available")
+        body = (
+            f"## Cloud Decoded — CI/CD Triage Result\n\n"
+            f"**Root cause:** {diagnosis}\n\n"
+            f"Posted by Cloud Decoded after operator approval. No re-run was triggered."
+        )
+        return await self.post_github_pr_comment(
+            owner=context["owner"], repo=context["repo"],
+            pr_number=context["pr_number"], comment_body=body,
+        )
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """
+    What Agent 01 can actually do, per CI provider. The diagnosis may describe
+    a code or IaC fix, but this agent can only re-run the pipeline or post the
+    diagnosis; the labels say so.
+    """
+    if context.get("cloud_provider", "github") == "azure_devops":
+        return catalog_dict(OptionSpec(
+            "opt_1", "Retry the Azure DevOps pipeline run",
+            "Queues a new run of the failed build. Nothing in the code or infrastructure is changed.",
+            "low", ("retry_azure_pipeline",),
+        ))
+    specs = [
+        OptionSpec(
+            "opt_1", "Re-run the failed jobs",
+            "Re-runs only the failed jobs of this GitHub Actions run. Nothing in the code or infrastructure is changed.",
+            "low", ("rerun_failed_jobs_only",),
+        ),
+        OptionSpec(
+            "opt_2", "Re-run the whole workflow",
+            "Re-runs every job of this GitHub Actions run. Nothing in the code or infrastructure is changed.",
+            "low", ("rerun_github_workflow",),
+        ),
+    ]
+    if context.get("pr_number"):
+        specs.append(OptionSpec(
+            "opt_3", "Post the diagnosis on the pull request",
+            "Adds a comment with the root cause to the PR that triggered this run. Nothing is re-run.",
+            "low", ("post_github_pr_comment",),
+        ))
+    return catalog_dict(*specs)

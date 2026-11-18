@@ -19,7 +19,8 @@ any request to execute a plan is refused here, and the workflow no longer
 offers the option. Re-enabling needs a design that runs steps inside the
 customer's own environment.
 
-What remains: filing the runbook plan as a GitHub issue (opt_2), or Hold.
+What remains: filing the runbook plan as a GitHub issue (opt_2), or Hold —
+the whole option catalog (core/option_catalog.py).
 """
 
 import logging
@@ -27,6 +28,8 @@ import os
 from typing import Optional
 
 import httpx
+
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
 
@@ -84,14 +87,6 @@ class RunbookTools:
 
         raise RuntimeError(f"GitHub issue error {resp.status_code}: {resp.text[:200]}")
 
-    async def execute_runbook_plan(self, plan_steps: list[dict], context: dict) -> dict:
-        """Hard refusal. No runbook step is ever executed from this host."""
-        log.warning(
-            "[RunbookTools] Refused to execute a %d-step runbook plan: execution disabled",
-            len(plan_steps or []),
-        )
-        return {"status": "refused", "reason": EXECUTION_DISABLED_REASON}
-
     async def execute_option(self, option: dict, context: dict) -> dict:
         """
         Dispatch to the approved runbook action.
@@ -105,7 +100,14 @@ class RunbookTools:
             return {"status": "held", "message": "Operator chose to run the runbook manually"}
 
         if option_id == "opt_1":
-            return await self.execute_runbook_plan(context.get("plan_steps", []), context)
+            # Hard refusal: runbook execution was removed, and a card created
+            # before that change may still offer it. Nothing is run.
+            log.warning("[RunbookTools] Refused opt_1 (run the runbook steps): execution disabled")
+            return {"status": "not_available", "option_id": option_id, "reason": EXECUTION_DISABLED_REASON}
+
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
 
         if option_id == "opt_2":
             # File the runbook plan as a GitHub issue. Nothing is executed.
@@ -117,7 +119,7 @@ class RunbookTools:
                 labels=["runbook", "operations"],
             )
 
-        return {"status": "not_implemented", "option_id": option_id}
+        return not_available_result(option_id, catalog)
 
 
 # ──────────────────────────────────────────────
@@ -130,3 +132,12 @@ def _gh_headers(token: str) -> dict:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 07 can actually do: file the plan as an issue (runbook execution was removed)."""
+    return catalog_dict(
+        OptionSpec("opt_2", "File the runbook plan as an issue (don't run it)",
+                   "Creates a GitHub issue listing the planned steps for your team to run. Nothing is executed.",
+                   "low", ("create_runbook_issue",)),
+    )

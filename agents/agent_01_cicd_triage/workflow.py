@@ -29,6 +29,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
 from agents.agent_01_cicd_triage.tools import CICDTools
+from agents.agent_01_cicd_triage.tools import option_catalog
+from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 
 log = logging.getLogger(__name__)
@@ -239,6 +241,10 @@ class CICDTriageWorkflow(BaseAgent):
         # Budget check before LLM call
         await self.check_budget(estimated_tokens=3000, model="claude-sonnet-4-20250514")
 
+        # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
+        _catalog = option_catalog({"cloud_provider": state["cloud_provider"], "pr_number": state.get("pr_number")})
+        user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
+
         response, estimated_tokens = self.call_llm(
             task_type="issue_triage",
             messages=[{"role": "user", "content": user_message}],
@@ -252,7 +258,7 @@ class CICDTriageWorkflow(BaseAgent):
             return {"error": str(exc), "tokens_used": estimated_tokens}
 
         parsed_error = diagnosis.get("parsed_error", "Unknown error")
-        options = diagnosis.get("options", [])
+        options = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
         duration = diagnosis.get("estimated_duration_seconds", 120)
 
         # Validate option structure

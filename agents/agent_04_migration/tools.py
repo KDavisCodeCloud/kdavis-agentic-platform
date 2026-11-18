@@ -21,6 +21,8 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GH_API = "https://api.github.com"
@@ -147,6 +149,10 @@ class MigrationTools:
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to handle migration manually"}
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
+
 
         if option_id == "opt_1":
             # Create PR with migrated code
@@ -194,3 +200,16 @@ def _gh_headers(token: str) -> dict:
 def _short_id() -> str:
     import uuid
     return str(uuid.uuid4())[:8]
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 04 can actually do: a PR with the migrated file, or an issue with the plan."""
+    return catalog_dict(
+        OptionSpec("opt_1", "Open a PR with the migrated file",
+                   "Commits the migrated code to a new branch and opens a pull request for review. "
+                   "Fails without a change if no migrated code was generated.",
+                   "low", ("create_migration_pr",)),
+        OptionSpec("opt_2", "Open an issue with the migration plan",
+                   "Creates a GitHub issue containing the step-by-step migration plan. No code is changed.",
+                   "low", ("create_github_issue",)),
+    )

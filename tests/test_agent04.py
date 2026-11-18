@@ -526,9 +526,9 @@ class TestMigrationToolsExecuteOption:
         call_kwargs = mock_issue.call_args.kwargs
         assert call_kwargs["labels"] == ["migration", "technical-debt"]
 
-    async def test_unknown_option_returns_not_implemented(self, tools, base_context):
+    async def test_unknown_option_returns_not_available(self, tools, base_context):
         result = await tools.execute_option({"id": "opt_99"}, base_context)
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
         assert result["option_id"] == "opt_99"
 
 
@@ -711,7 +711,13 @@ class TestDiagnoseNode:
         assert result["parsed_error"] == parsed["parsed_error"]
         assert result["migration_plan"] == parsed["migration_plan"]
         assert result["migrated_code"] == parsed["migrated_code"]
-        assert result["remediation_options"] == parsed["options"]
+        # G12: labels come from the option catalog; the LLM's own text is kept as rationale.
+        from agents.agent_04_migration.tools import option_catalog
+        catalog = option_catalog({})
+        assert [o["id"] for o in result["remediation_options"]] == [o["id"] for o in parsed["options"]]
+        for bound, llm in zip(result["remediation_options"], parsed["options"]):
+            assert bound["title"] == catalog[bound["id"]].title
+            assert llm["title"] in bound["rationale"]
         assert result["estimated_duration_seconds"] == 300
 
     async def test_accumulates_tokens_from_prior_state(self, wf, workspace_id):

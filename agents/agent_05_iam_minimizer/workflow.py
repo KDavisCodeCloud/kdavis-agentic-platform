@@ -32,6 +32,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
 from agents.agent_05_iam_minimizer.tools import IAMMinimizeTools, _summarize_permissions
+from agents.agent_05_iam_minimizer.tools import option_catalog
+from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 from core.severity import normalize_severity
 
@@ -70,6 +72,8 @@ class IAMMinimizeState(TypedDict):
     permissions_kept: Optional[list[str]]     # actions that were retained
     risk_score: Optional[str]          # "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
     remediation_options: Optional[list]
+    azure_removal_plan: Optional[list]  # G5: [{"id","role","scope"}] opt_1 would delete (Azure only)
+    azure_removal_note: Optional[str]   # why no removal plan could be built, if so
     estimated_duration_seconds: Optional[int]
     tokens_used: int
 
@@ -272,6 +276,8 @@ class IAMMinimizeWorkflow(BaseAgent):
             "permissions_kept": None,
             "risk_score": None,
             "remediation_options": None,
+            "azure_removal_plan": None,
+            "azure_removal_note": None,
             "estimated_duration_seconds": None,
             "selected_option": None,
             "execution_result": None,
@@ -305,6 +311,34 @@ class IAMMinimizeWorkflow(BaseAgent):
 
         await self.check_budget(estimated_tokens=6000, model="claude-sonnet-4-20250514")
 
+        # G5 (narrowed): opt_1 deletes only privileged assignments at subscription scope,
+        # listed by id on the card. Read them live now so the card shows exactly what goes.
+        removal_plan: list = []
+        removal_note = None
+        if cloud == "azure":
+            try:
+                removal_plan = await self._tools.list_flagged_azure_assignments(
+                    state.get("resource_scope", ""), principal_id,
+                )
+                if not removal_plan:
+                    removal_note = "No privileged role assignment at subscription scope was found for this identity."
+            except Exception as exc:  # opt_1 is simply not offered; the rest of the analysis stands
+                removal_note = f"Could not list this identity's role assignments: {exc}"
+                log.warning("[Agent05] %s", removal_note)
+
+        # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
+        _catalog = option_catalog({"cloud_provider": cloud, "azure_remove": removal_plan})
+        user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
+        if cloud == "azure":
+            user_message += (
+                "\n\nFor Azure, `minimized_policy` MUST be "
+                '{"role_assignments": [{"role": "<built-in role name or roleDefinitionId>", '
+                '"scope": "<full ARM scope, e.g. /subscriptions/<id>/resourceGroups/<rg>>"}]} '
+                "listing the narrower assignment(s) the identity needs. Do not include Owner, Contributor, "
+                "User Access Administrator or RBAC Administrator at the subscription scope. "
+                "Only the assignments named in opt_1 are deleted; every other assignment is left alone."
+            )
+
         response, estimated_tokens = self.call_llm(
             task_type="iam_minimization",
             messages=[{"role": "user", "content": user_message}],
@@ -322,7 +356,7 @@ class IAMMinimizeWorkflow(BaseAgent):
         permissions_removed = diagnosis.get("permissions_removed", [])
         permissions_kept   = diagnosis.get("permissions_kept", [])
         risk_score         = diagnosis.get("risk_score", "MEDIUM")
-        options            = diagnosis.get("options", [])
+        options            = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
         duration           = diagnosis.get("estimated_duration_seconds", 60)
 
         minimized_policy_str = json.dumps(minimized_policy, indent=2) if minimized_policy else ""
@@ -346,6 +380,8 @@ class IAMMinimizeWorkflow(BaseAgent):
             "permissions_kept": permissions_kept,
             "risk_score": risk_score,
             "remediation_options": options,
+            "azure_removal_plan": removal_plan,
+            "azure_removal_note": removal_note,
             "estimated_duration_seconds": duration,
             "tokens_used": state.get("tokens_used", 0) + estimated_tokens,
         }
@@ -374,6 +410,8 @@ class IAMMinimizeWorkflow(BaseAgent):
             f"Permissions to Keep: {len(state.get('permissions_kept') or [])}\n\n"
             f"Current Policy (excerpt):\n{state['current_policy_summary'][:500]}"
         )
+        if state.get("azure_removal_note"):
+            raw_log += f"\n\nRole assignment removal: {state['azure_removal_note']}"
 
         incident_id = await self.hitl.create_incident(
             incident_id=state["incident_id"],
@@ -457,6 +495,7 @@ class IAMMinimizeWorkflow(BaseAgent):
             "resource_type": "projects",
             "minimized_policy": state.get("minimized_policy", {}),
             "minimized_policy_str": state.get("minimized_policy_str", "{}"),
+            "azure_remove": state.get("azure_removal_plan") or [],
             "owner": owner,
             "repo": repo,
             "file_path": policy_file_path,
@@ -532,6 +571,8 @@ class IAMMinimizeWorkflow(BaseAgent):
             "permissions_kept": None,
             "risk_score": None,
             "remediation_options": None,
+            "azure_removal_plan": None,
+            "azure_removal_note": None,
             "estimated_duration_seconds": None,
             "tokens_used": 0,
             "selected_option": None,

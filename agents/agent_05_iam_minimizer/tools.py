@@ -37,6 +37,7 @@ import httpx
 from botocore.exceptions import ClientError
 
 from core.cloud_errors import classify_aws_client_error, raise_if_azure_permission_error
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
 
@@ -432,50 +433,137 @@ class IAMMinimizeTools:
             "cloud": "aws",
         }
 
-    async def apply_azure_role_assignment(
-        self,
-        subscription_id: str,
-        principal_id: str,
-        role_definition_id: str,
-        scope: str,
-    ) -> dict:
+    async def list_flagged_azure_assignments(self, subscription_id: str, principal_id: str) -> list[dict]:
         """
-        Create a new (minimized) Azure role assignment.
-        The caller is responsible for removing the over-privileged assignment separately.
-        Ref: https://learn.microsoft.com/en-us/rest/api/authorization/role-assignments/create
+        The identity's live assignments that opt_1 would delete: a privileged
+        built-in role (Owner, Contributor, User Access Administrator, RBAC
+        Administrator) at the subscription scope itself. Read-only. Computed at
+        diagnose time so the approval card can list each one by id.
         """
         if not self.azure_access_token:
             raise EnvironmentError("AZURE_ACCESS_TOKEN not configured for this workspace")
+        sub = _subscription_guid(subscription_id)
+        if not sub or not principal_id:
+            raise ValueError("subscription_id and principal_id are required to list role assignments")
+        sub_scope = f"/subscriptions/{sub}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            current = await _list_azure_assignments(client, _azure_headers(self.azure_access_token),
+                                                    sub_scope, principal_id)
+        return flag_overprivileged_azure_assignments(current, sub_scope)
 
-        import uuid as _uuid
-        assignment_name = str(_uuid.uuid4())
-        url = f"{_ARM_API}{scope}/providers/Microsoft.Authorization/roleAssignments/{assignment_name}?api-version=2022-04-01"
+    async def remove_flagged_azure_assignments(
+        self,
+        subscription_id: str,
+        principal_id: str,
+        keep: list[dict],
+        remove: list[dict],
+    ) -> dict:
+        """
+        Break-It Lab G5, narrowed per Kelvin 2026-11-17: create the minimized
+        assignment(s), then delete ONLY the assignments listed on the approval
+        card (`remove`, from list_flagged_azure_assignments at diagnose time).
+        Every other assignment the identity holds is left untouched.
+
+          1. Resolve each keep entry {"role", "scope"}; refuse if one of them is
+             itself a flagged (privileged, subscription-scope) assignment.
+          2. Create each keep assignment that doesn't already exist.
+          3. Only after 1-2 succeed, delete each `remove` id that is still
+             present AND still privileged at subscription scope. An id that is
+             gone or whose role/scope no longer matches is reported, not deleted.
+
+        Raises (nothing deleted) if keep or remove is empty or keep can't be resolved.
+        Ref: https://learn.microsoft.com/en-us/rest/api/authorization/role-assignments
+        """
+        if not self.azure_access_token:
+            raise EnvironmentError("AZURE_ACCESS_TOKEN not configured for this workspace")
+        sub = _subscription_guid(subscription_id)
+        if not sub or not principal_id:
+            raise ValueError("subscription_id and principal_id are required to change role assignments")
+        if not keep:
+            raise ValueError(
+                "The analysis did not produce a minimized role assignment set (role + scope); "
+                "nothing was created or removed"
+            )
+        remove_ids = {str(r.get("id", "")).lower() for r in remove or [] if r.get("id")}
+        if not remove_ids:
+            raise ValueError("No over-privileged assignment was flagged for removal; nothing was changed")
+
+        sub_scope = f"/subscriptions/{sub}"
+        headers = _azure_headers(self.azure_access_token)
+        api = {"api-version": "2022-04-01"}
 
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.put(
-                url,
-                headers=_azure_headers(self.azure_access_token),
-                json={
-                    "properties": {
-                        "roleDefinitionId": role_definition_id,
-                        "principalId": principal_id,
-                    }
-                },
-            )
+            # 1. resolve the keep set
+            wanted: list[tuple[str, str]] = []  # (roleDefinitionId, scope)
+            for entry in keep:
+                scope = str(entry.get("scope", "")).rstrip("/")
+                if not scope.lower().startswith(sub_scope.lower()):
+                    raise ValueError(f"keep scope {scope!r} is not inside {sub_scope}; nothing was changed")
+                role_def = await _resolve_azure_role(client, headers, sub_scope, str(entry.get("role", "")))
+                if _is_flagged(role_def, scope, sub_scope):
+                    raise ValueError(
+                        f"the minimized set still contains {_role_label(role_def)} at the subscription scope; "
+                        "nothing was changed"
+                    )
+                wanted.append((role_def, scope))
 
-        if resp.status_code in (200, 201):
-            log.info("[IAMTools] Azure role assignment created: %s", assignment_name)
-            return {
-                "status": "assignment_created",
-                "assignment_id": assignment_name,
-                "principal_id": principal_id,
-                "cloud": "azure",
-            }
+            current = await _list_azure_assignments(client, headers, sub_scope, principal_id)
 
-        raise_if_azure_permission_error(
-            resp.status_code, resp.text, "Microsoft.Authorization/roleAssignments/write",
-        )
-        raise RuntimeError(f"Azure role assignment error {resp.status_code}: {resp.text[:200]}")
+            # 2. create what's missing
+            created, kept_existing = [], []
+            for role_def, scope in wanted:
+                match = next((a for a in current if _same_role(a["roleDefinitionId"], role_def)
+                              and a["scope"].rstrip("/").lower() == scope.lower()), None)
+                if match:
+                    kept_existing.append(match["id"])
+                    continue
+                import uuid as _uuid
+                url = f"{_ARM_API}{scope}/providers/Microsoft.Authorization/roleAssignments/{_uuid.uuid4()}"
+                resp = await client.put(url, params=api, headers=headers, json={
+                    "properties": {"roleDefinitionId": role_def, "principalId": principal_id},
+                })
+                if resp.status_code not in (200, 201):
+                    raise_if_azure_permission_error(resp.status_code, resp.text,
+                                                    "Microsoft.Authorization/roleAssignments/write")
+                    raise RuntimeError(f"Azure role assignment create error {resp.status_code}: {resp.text[:200]}; "
+                                       "nothing was removed")
+                created.append(resp.json().get("id", url.replace(_ARM_API, "")))
+
+            # 3. delete exactly the flagged ids that are still flagged
+            by_id = {a["id"].lower(): a for a in current}
+            removed, already_gone, changed = [], [], []
+            for rid in sorted(remove_ids):
+                a = by_id.get(rid)
+                if a is None:
+                    already_gone.append(rid)
+                    continue
+                if not _is_flagged(a["roleDefinitionId"], a["scope"], sub_scope):
+                    changed.append(a["id"])
+                    continue
+                resp = await client.delete(f"{_ARM_API}{a['id']}", params=api, headers=headers)
+                if resp.status_code not in (200, 204):
+                    raise_if_azure_permission_error(resp.status_code, resp.text,
+                                                    "Microsoft.Authorization/roleAssignments/delete")
+                    raise RuntimeError(
+                        f"Azure role assignment delete error {resp.status_code} on {a['id']}: {resp.text[:200]} "
+                        f"(created={created}, removed so far={removed})"
+                    )
+                removed.append(a["id"])
+            untouched = [a["id"] for a in current if a["id"] not in removed]
+
+        log.info("[IAMTools] Azure flagged assignments for %s: created=%d kept=%d removed=%d gone=%d changed=%d",
+                 principal_id, len(created), len(kept_existing), len(removed), len(already_gone), len(changed))
+        return {
+            "status": "assignments_removed" if (removed or created) else "no_change",
+            "cloud": "azure",
+            "principal_id": principal_id,
+            "created": created,
+            "kept_existing": kept_existing,
+            "removed": removed,
+            "already_gone": already_gone,
+            "not_removed_changed_since_analysis": changed,
+            "untouched": untouched,
+        }
 
     async def apply_gcp_iam_binding(
         self,
@@ -606,61 +694,203 @@ class IAMMinimizeTools:
 
     async def execute_option(self, option: dict, context: dict) -> dict:
         """
-        Dispatch to the correct post-approval action.
+        Run the approved option. Only ids in option_catalog(context) run, and
+        each runs exactly the calls its catalog entry declares.
 
-        context must include:
-          cloud_provider, principal_id / policy_arn / resource,
-          minimized_policy (dict or str), minimized_policy_str (JSON string),
-          owner, repo, file_path, pr_title, pr_body
+        context: cloud_provider, policy_arn / subscription_id / principal_id /
+        resource, minimized_policy (dict), minimized_policy_str, azure_remove
+        (the flagged assignments listed on the card), owner, repo,
+        file_path, pr_title, pr_body
         """
         option_id = option.get("id", "")
         cloud = context.get("cloud_provider", "aws")
+        catalog = option_catalog(context)
 
         log.info("[IAMTools] Executing approved option '%s' for cloud=%s", option_id, cloud)
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to apply policy changes manually"}
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
 
         if option_id == "opt_1":
-            # Apply minimized policy directly to the cloud provider
             minimized = context.get("minimized_policy", {})
-
             if cloud == "aws":
                 return await self.apply_aws_policy(
                     policy_arn=context["policy_arn"],
                     minimized_document=minimized,
                 )
-
             if cloud == "azure":
-                return await self.apply_azure_role_assignment(
-                    subscription_id=context["subscription_id"],
+                return await self.remove_flagged_azure_assignments(
+                    subscription_id=context.get("subscription_id", ""),
                     principal_id=context["principal_id"],
-                    role_definition_id=context["role_definition_id"],
-                    scope=context.get("scope", f"/subscriptions/{context['subscription_id']}"),
+                    keep=azure_keep_set(minimized),
+                    remove=context.get("azure_remove") or [],
                 )
-
-            if cloud in ("gcp", "google"):
-                return await self.apply_gcp_iam_binding(
-                    resource=context["resource"],
-                    resource_type=context.get("resource_type", "projects"),
-                    policy=minimized,
-                )
-
-            return {"status": "not_implemented", "cloud": cloud, "reason": "Unsupported cloud provider for direct apply"}
-
-        if option_id == "opt_2":
-            # Create a GitHub PR with the policy diff as a file
-            return await self.create_policy_pr(
-                owner=context.get("owner", ""),
-                repo=context.get("repo", ""),
-                file_path=context.get("file_path", "iam/minimized_policy.json"),
-                new_content=context.get("minimized_policy_str", "{}"),
-                pr_title=context.get("pr_title", "security(iam): apply minimized policy"),
-                pr_body=context.get("pr_body", ""),
-                base_branch=context.get("base_branch", "main"),
+            return await self.apply_gcp_iam_binding(
+                resource=context["resource"],
+                resource_type=context.get("resource_type", "projects"),
+                policy=minimized,
             )
 
-        return {"status": "not_implemented", "option_id": option_id}
+        # opt_2
+        return await self.create_policy_pr(
+            owner=context.get("owner", ""),
+            repo=context.get("repo", ""),
+            file_path=context.get("file_path", "iam/minimized_policy.json"),
+            new_content=context.get("minimized_policy_str", "{}"),
+            pr_title=context.get("pr_title", "security(iam): apply minimized policy"),
+            pr_body=context.get("pr_body", ""),
+            base_branch=context.get("base_branch", "main"),
+        )
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 05 can actually do, per cloud."""
+    cloud = context.get("cloud_provider", "aws")
+    if cloud == "azure":
+        # G5 (narrowed): offered only when diagnose found privileged assignments to remove,
+        # and the card names each one. No "replace everything" option — see DECISIONS.md.
+        flagged = context.get("azure_remove") or []
+        opt_1 = OptionSpec(
+            "opt_1", "Remove the over-privileged role assignment(s)",
+            "Creates the minimized role assignment(s) from this analysis if they don't already exist, then "
+            "deletes exactly these assignments and nothing else:\n"
+            + "\n".join(f"• {f['role']} at {f['scope']} (assignment {f['id']})" for f in flagged)
+            + "\nEvery other assignment this identity holds is left untouched. Nothing is deleted if the "
+            "create step fails; an assignment whose role or scope changed since this analysis is skipped.",
+            "high", ("remove_flagged_azure_assignments",),
+        ) if flagged else None
+    elif cloud in ("gcp", "google"):
+        opt_1 = OptionSpec(
+            "opt_1", "Replace the project IAM policy with the minimized policy",
+            "Calls setIamPolicy with the minimized policy, replacing the resource's entire IAM policy.",
+            "high", ("apply_gcp_iam_binding",),
+        )
+    elif cloud == "aws":
+        opt_1 = OptionSpec(
+            "opt_1", "Apply the minimized policy as a new default version",
+            "Creates a new version of the customer-managed IAM policy with the minimized document and makes it "
+            "the default. Previous versions are kept, so it can be rolled back.",
+            "high", ("apply_aws_policy",),
+        )
+    else:
+        opt_1 = None  # no direct-apply code for this cloud
+    return catalog_dict(
+        *([opt_1] if opt_1 else []),
+        OptionSpec(
+            "opt_2", "Open a PR with the minimized policy",
+            "Commits the minimized policy document to a new branch and opens a pull request. No live change.",
+            "low", ("create_policy_pr",),
+        ),
+    )
+
+
+def azure_keep_set(minimized: dict | str | None) -> list[dict]:
+    """
+    The minimized Azure assignment set as [{"role": name-or-id, "scope": ARM scope}].
+    Accepts {"role_assignments": [...]} (the format the diagnose request asks
+    for) or a single {"roleDefinitionId"/"role", "scope"} object.
+    """
+    if isinstance(minimized, str):
+        try:
+            minimized = json.loads(minimized)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if not isinstance(minimized, dict):
+        return []
+    entries = minimized.get("role_assignments") or minimized.get("roleAssignments")
+    if entries is None:
+        entries = [minimized]
+    out = []
+    for e in entries if isinstance(entries, list) else []:
+        if not isinstance(e, dict):
+            continue
+        role = (e.get("role") or e.get("role_definition_id") or e.get("roleDefinitionId")
+                or e.get("role_definition_name") or e.get("roleDefinitionName") or e.get("roleName") or "")
+        scope = e.get("scope") or ""
+        if role and scope:
+            out.append({"role": str(role), "scope": str(scope)})
+    return out
+
+
+# Built-in roles that grant write or access management over everything at their scope.
+# Role definition GUIDs are fixed across tenants.
+# Ref: https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
+_AZURE_PRIVILEGED_ROLES = {
+    "8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner",
+    "b24988ac-6180-42a0-ab63-f8f86f70ec4b": "Contributor",
+    "18d7d88d-d35e-4fb5-a5c3-7773c20a72d9": "User Access Administrator",
+    "f58310d9-a9f6-439a-9e8d-f62e7b41a168": "Role Based Access Control Administrator",
+}
+
+
+def _role_guid(role_definition_id: str) -> str:
+    return role_definition_id.rstrip("/").split("/")[-1].lower()
+
+
+def _role_label(role_definition_id: str) -> str:
+    return _AZURE_PRIVILEGED_ROLES.get(_role_guid(role_definition_id), _role_guid(role_definition_id))
+
+
+def _is_flagged(role_definition_id: str, scope: str, sub_scope: str) -> bool:
+    """A privileged built-in role assigned at the subscription scope itself."""
+    return (_role_guid(role_definition_id) in _AZURE_PRIVILEGED_ROLES
+            and scope.rstrip("/").lower() == sub_scope.rstrip("/").lower())
+
+
+def flag_overprivileged_azure_assignments(assignments: list[dict], sub_scope: str) -> list[dict]:
+    """[{"id", "role", "scope"}] for each assignment opt_1 would delete."""
+    return [
+        {"id": a["id"], "role": _role_label(a["roleDefinitionId"]), "scope": a["scope"]}
+        for a in assignments
+        if _is_flagged(a["roleDefinitionId"], a["scope"], sub_scope)
+    ]
+
+
+def _subscription_guid(value: str) -> str:
+    v = (value or "").strip().strip("/")
+    if v.lower().startswith("subscriptions/"):
+        v = v.split("/")[1]
+    return v
+
+
+def _same_role(a: str, b: str) -> bool:
+    return a.rstrip("/").split("/")[-1].lower() == b.rstrip("/").split("/")[-1].lower()
+
+
+async def _resolve_azure_role(client, headers: dict, sub_scope: str, role: str) -> str:
+    """A roleDefinitionId for a role name or id; raises if it can't be resolved."""
+    if not role:
+        raise ValueError("keep entry has no role; nothing was changed")
+    if "/roleDefinitions/" in role:
+        return f"{sub_scope}/providers/Microsoft.Authorization/roleDefinitions/{role.rstrip('/').split('/')[-1]}"
+    resp = await client.get(
+        f"{_ARM_API}{sub_scope}/providers/Microsoft.Authorization/roleDefinitions",
+        params={"api-version": "2022-04-01", "$filter": f"roleName eq '{role}'"}, headers=headers,
+    )
+    if resp.status_code != 200:
+        raise_if_azure_permission_error(resp.status_code, resp.text, "Microsoft.Authorization/roleDefinitions/read")
+        raise RuntimeError(f"Azure role definition lookup error {resp.status_code}: {resp.text[:200]}")
+    found = resp.json().get("value", [])
+    if not found:
+        raise ValueError(f"Azure role {role!r} not found; nothing was changed")
+    return found[0]["id"]
+
+
+async def _list_azure_assignments(client, headers: dict, sub_scope: str, principal_id: str) -> list[dict]:
+    resp = await client.get(
+        f"{_ARM_API}{sub_scope}/providers/Microsoft.Authorization/roleAssignments",
+        params={"api-version": "2022-04-01", "$filter": f"principalId eq '{principal_id}'"}, headers=headers,
+    )
+    if resp.status_code != 200:
+        raise_if_azure_permission_error(resp.status_code, resp.text, "Microsoft.Authorization/roleAssignments/read")
+        raise RuntimeError(f"Azure role assignment list error {resp.status_code}: {resp.text[:200]}")
+    return [
+        {"id": a["id"], "scope": a["properties"]["scope"], "roleDefinitionId": a["properties"]["roleDefinitionId"]}
+        for a in resp.json().get("value", [])
+        if a.get("properties", {}).get("principalId", principal_id) == principal_id
+    ]
 
 
 # ──────────────────────────────────────────────

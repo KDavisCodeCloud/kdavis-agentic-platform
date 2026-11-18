@@ -60,6 +60,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from agents.base_agent import BaseAgent
 from agents.agent_11_resource_health.tools import ResourceHealthTools
+from agents.agent_11_resource_health.tools import option_catalog
+from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 from core.severity import normalize_severity
 
@@ -775,6 +777,10 @@ class ResourceHealthWorkflow(BaseAgent):
 
         await self.check_budget(estimated_tokens=3000, model="claude-sonnet-4-20250514")
 
+        # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
+        _catalog = option_catalog({})
+        user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
+
         try:
             response, estimated_tokens = self.call_llm(
                 task_type="resource_health_triage",
@@ -797,7 +803,7 @@ class ResourceHealthWorkflow(BaseAgent):
                 "parsed_error": f"LLM diagnosis unavailable — retry manually. (All LLM providers failed: {exc})",
                 "remediation_options": [{
                     "id": "hold",
-                    "title": "Stay broken / submit custom solution",
+                    "title": "Hold — handle it manually",
                     "description": (
                         "Automated diagnosis could not run because every configured LLM "
                         "provider failed. Review the alert manually — see the incident's "
@@ -817,7 +823,7 @@ class ResourceHealthWorkflow(BaseAgent):
             return {"error": str(exc), "tokens_used": estimated_tokens}
 
         parsed_error = diagnosis.get("parsed_error", "Unknown resource health alert")
-        options = diagnosis.get("options", [])
+        options = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
         duration = diagnosis.get("estimated_duration_seconds", 120)
 
         required_fields = {"id", "title", "description", "impact", "docs_url"}

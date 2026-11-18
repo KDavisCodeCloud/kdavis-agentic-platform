@@ -16,7 +16,7 @@ What this file validates:
     - apply_aws_policy() calls real boto3 iam.create_policy_version
     - apply_aws_policy() deletes the oldest non-default version and retries on LimitExceeded
     - apply_aws_policy() raises EnvironmentError when no AWS session
-    - apply_azure_role_assignment() PUTs a new role assignment
+    - remove_flagged_azure_assignments() creates the narrower assignment, then deletes only the flagged ones (G5)
     - apply_gcp_iam_binding() POSTs setIamPolicy for the resource
     - create_policy_pr() opens a PR with the minimized policy file (5-step flow)
     - create_policy_pr() raises EnvironmentError when GITHUB_TOKEN missing
@@ -24,7 +24,7 @@ What this file validates:
   IAMMinimizeTools — execute_option():
     - hold → returns held without any cloud API call
     - opt_1 (aws) → dispatches to apply_aws_policy
-    - opt_1 (azure) → dispatches to apply_azure_role_assignment
+    - opt_1 (azure) → dispatches to remove_flagged_azure_assignments
     - opt_1 (gcp) → dispatches to apply_gcp_iam_binding
     - opt_1 (unsupported cloud) → returns not_implemented
     - opt_2 → dispatches to create_policy_pr
@@ -789,28 +789,174 @@ class TestApplyAWSPolicy:
         assert result["new_version_id"] == "v6"
 
 
-class TestApplyAzureRoleAssignment:
+class TestRemoveFlaggedAzureAssignments:
+    """
+    G5 (Break-It Lab Z3), narrowed 2026-11-17: "Remove Owner" removes Owner after
+    the narrower assignment exists, and deletes ONLY the assignments flagged and
+    listed on the card. Anything unflagged is untouched.
+    """
+
+    SUB = "/subscriptions/sub-123"
+    OWNER = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635"
+    CONTRIBUTOR = "b24988ac-6180-42a0-ab63-f8f86f70ec4b"
+    READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+    STORAGE_READER = "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"
+    RG = "/subscriptions/sub-123/resourceGroups/rg-cdlab"
+
     @pytest.fixture
     def tools(self):
         return IAMMinimizeTools(azure_access_token="eyJ0...")
 
-    async def test_puts_role_assignment(self, tools):
-        resp = _make_http_resp(201, {"id": "/subscriptions/sub-123/.../roleAssignments/new-id"})
+    def _assignment(self, name, scope, role_guid, principal="pid"):
+        return {"id": f"{scope}/providers/Microsoft.Authorization/roleAssignments/{name}",
+                "properties": {"scope": scope, "principalId": principal,
+                               "roleDefinitionId": f"{self.SUB}/providers/Microsoft.Authorization/roleDefinitions/{role_guid}"}}
+
+    def _flag(self, a, role="Owner"):
+        return {"id": a["id"], "role": role, "scope": a["properties"]["scope"]}
+
+    def _client(self, assignments, put_status=201, delete_status=200):
         ctx = AsyncMock()
         ctx.__aenter__ = AsyncMock(return_value=ctx)
         ctx.__aexit__ = AsyncMock(return_value=False)
-        ctx.put = AsyncMock(return_value=resp)
+        names = {"Reader": self.READER, "Owner": self.OWNER, "Contributor": self.CONTRIBUTOR}
 
-        with patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=ctx)):
-            result = await tools.apply_azure_role_assignment(
-                subscription_id="sub-123",
-                principal_id="principal-abc",
-                role_definition_id="/subscriptions/sub-123/providers/Microsoft.Authorization/roleDefinitions/def-id",
-                scope="/subscriptions/sub-123",
-            )
+        async def get(url, params=None, headers=None):
+            if url.endswith("/roleDefinitions"):
+                guid = next(g for n, g in names.items() if f"'{n}'" in params["$filter"])
+                return _make_http_resp(200, {"value": [{"id": f"{self.SUB}/providers/Microsoft.Authorization/roleDefinitions/{guid}"}]})
+            return _make_http_resp(200, {"value": assignments})
 
-        assert result["status"] == "assignment_created"
-        assert result["cloud"] == "azure"
+        ctx.get = AsyncMock(side_effect=get)
+        ctx.put = AsyncMock(return_value=_make_http_resp(put_status, {"id": f"{self.RG}/providers/Microsoft.Authorization/roleAssignments/new"}))
+        ctx.delete = AsyncMock(return_value=_make_http_resp(delete_status, {}))
+        return ctx
+
+    def _patch(self, ctx):
+        return patch("agents.agent_05_iam_minimizer.tools.httpx.AsyncClient", MagicMock(return_value=ctx))
+
+    async def test_lists_only_privileged_subscription_scope_assignments(self, tools):
+        owner = self._assignment("owner-1", self.SUB, self.OWNER)
+        reader = self._assignment("reader-1", self.RG, self.READER)
+        rg_contrib = self._assignment("contrib-rg", self.RG, self.CONTRIBUTOR)
+        sub_storage = self._assignment("storage-1", self.SUB, self.STORAGE_READER)
+        with self._patch(self._client([owner, reader, rg_contrib, sub_storage])):
+            flagged = await tools.list_flagged_azure_assignments("sub-123", "pid")
+        assert flagged == [{"id": owner["id"], "role": "Owner", "scope": self.SUB}]
+
+    async def test_z3_owner_deleted_reader_kept_unflagged_untouched(self, tools):
+        owner = self._assignment("owner-1", self.SUB, self.OWNER)
+        reader = self._assignment("reader-1", self.RG, self.READER)
+        # Unflagged extras the analysis did not account for: must survive.
+        rg_contrib = self._assignment("contrib-rg", self.RG, self.CONTRIBUTOR)
+        sub_storage = self._assignment("storage-1", self.SUB, self.STORAGE_READER)
+        ctx = self._client([owner, reader, rg_contrib, sub_storage])
+        with self._patch(ctx):
+            result = await tools.remove_flagged_azure_assignments(
+                "sub-123", "pid", [{"role": "Reader", "scope": self.RG}], [self._flag(owner)])
+        assert result["status"] == "assignments_removed"
+        assert result["kept_existing"] == [reader["id"]]
+        assert result["removed"] == [owner["id"]]
+        assert set(result["untouched"]) == {reader["id"], rg_contrib["id"], sub_storage["id"]}
+        ctx.put.assert_not_called()  # Reader already existed
+        ctx.delete.assert_awaited_once()
+        assert ctx.delete.await_args.args[0].endswith("roleAssignments/owner-1")
+
+    async def test_unlisted_privileged_assignment_is_not_deleted(self, tools):
+        """Only ids on the card go — even another Owner at subscription scope stays if it wasn't listed."""
+        owner = self._assignment("owner-1", self.SUB, self.OWNER)
+        contrib = self._assignment("contrib-1", self.SUB, self.CONTRIBUTOR)
+        ctx = self._client([owner, contrib, self._assignment("reader-1", self.RG, self.READER)])
+        with self._patch(ctx):
+            result = await tools.remove_flagged_azure_assignments(
+                "sub-123", "pid", [{"role": "Reader", "scope": self.RG}], [self._flag(owner)])
+        assert result["removed"] == [owner["id"]]
+        assert contrib["id"] in result["untouched"]
+        ctx.delete.assert_awaited_once()
+
+    async def test_creates_narrower_assignment_before_deleting(self, tools):
+        owner = self._assignment("owner-1", self.SUB, self.OWNER)
+        ctx = self._client([owner])
+        order = []
+        ctx.put.side_effect = lambda *a, **k: order.append("put") or _make_http_resp(201, {"id": f"{self.RG}/x/new"})
+        ctx.delete.side_effect = lambda *a, **k: order.append("delete") or _make_http_resp(200, {})
+        with self._patch(ctx):
+            result = await tools.remove_flagged_azure_assignments(
+                "/subscriptions/sub-123", "pid", [{"role": "Reader", "scope": self.RG}], [self._flag(owner)])
+        assert order == ["put", "delete"]
+        assert len(result["created"]) == 1 and result["removed"] == [owner["id"]]
+
+    async def test_create_failure_deletes_nothing(self, tools):
+        owner = self._assignment("owner-1", self.SUB, self.OWNER)
+        ctx = self._client([owner], put_status=400)
+        with self._patch(ctx):
+            with pytest.raises(RuntimeError, match="nothing was removed"):
+                await tools.remove_flagged_azure_assignments(
+                    "sub-123", "pid", [{"role": "Reader", "scope": self.RG}], [self._flag(owner)])
+        ctx.delete.assert_not_called()
+
+    async def test_empty_keep_set_changes_nothing(self, tools):
+        owner = self._assignment("owner-1", self.SUB, self.OWNER)
+        ctx = self._client([owner])
+        with self._patch(ctx):
+            with pytest.raises(ValueError, match="nothing was created or removed"):
+                await tools.remove_flagged_azure_assignments("sub-123", "pid", [], [self._flag(owner)])
+        ctx.put.assert_not_called()
+        ctx.delete.assert_not_called()
+
+    async def test_empty_removal_list_changes_nothing(self, tools):
+        ctx = self._client([self._assignment("owner-1", self.SUB, self.OWNER)])
+        with self._patch(ctx):
+            with pytest.raises(ValueError, match="nothing was changed"):
+                await tools.remove_flagged_azure_assignments(
+                    "sub-123", "pid", [{"role": "Reader", "scope": self.RG}], [])
+        ctx.put.assert_not_called()
+        ctx.delete.assert_not_called()
+
+    async def test_keep_set_containing_owner_at_subscription_is_refused(self, tools):
+        owner = self._assignment("owner-1", self.SUB, self.OWNER)
+        ctx = self._client([owner])
+        with self._patch(ctx):
+            with pytest.raises(ValueError, match="still contains Owner"):
+                await tools.remove_flagged_azure_assignments(
+                    "sub-123", "pid", [{"role": "Owner", "scope": self.SUB}], [self._flag(owner)])
+        ctx.put.assert_not_called()
+        ctx.delete.assert_not_called()
+
+    async def test_assignment_changed_since_analysis_is_skipped(self, tools):
+        """The card listed owner-1; by approval it no longer exists, and contrib-1's id now
+        points at a Reader. Neither is deleted."""
+        reader = self._assignment("reader-1", self.RG, self.READER)
+        repurposed = self._assignment("contrib-1", self.SUB, self.READER)
+        ctx = self._client([reader, repurposed])
+        planned = [self._flag(self._assignment("owner-1", self.SUB, self.OWNER)),
+                   {"id": repurposed["id"], "role": "Contributor", "scope": self.SUB}]
+        with self._patch(ctx):
+            result = await tools.remove_flagged_azure_assignments(
+                "sub-123", "pid", [{"role": "Reader", "scope": self.RG}], planned)
+        assert result["status"] == "no_change"
+        assert result["removed"] == []
+        assert len(result["already_gone"]) == 1
+        assert result["not_removed_changed_since_analysis"] == [repurposed["id"]]
+        ctx.delete.assert_not_called()
+
+    def test_keep_set_parsing(self):
+        from agents.agent_05_iam_minimizer.tools import azure_keep_set
+        assert azure_keep_set({"role_assignments": [{"role": "Reader", "scope": self.RG}, {"role": "Owner"}]}) == \
+            [{"role": "Reader", "scope": self.RG}]
+        assert azure_keep_set({"roleDefinitionId": "/x/roleDefinitions/abc", "scope": self.RG}) == \
+            [{"role": "/x/roleDefinitions/abc", "scope": self.RG}]
+        assert azure_keep_set("not json") == []
+
+    def test_card_lists_each_assignment_to_delete(self):
+        from agents.agent_05_iam_minimizer.tools import option_catalog
+        owner_id = f"{self.SUB}/providers/Microsoft.Authorization/roleAssignments/owner-1"
+        cat = option_catalog({"cloud_provider": "azure",
+                              "azure_remove": [{"id": owner_id, "role": "Owner", "scope": self.SUB}]})
+        desc = cat["opt_1"].description
+        assert f"Owner at {self.SUB} (assignment {owner_id})" in desc
+        assert "left untouched" in desc
+        assert "opt_1" not in option_catalog({"cloud_provider": "azure", "azure_remove": []})
 
 
 class TestApplyGCPIAMBinding:
@@ -917,19 +1063,32 @@ class TestExecuteOption:
             result = await tools.execute_option({"id": "opt_1"}, aws_context)
         assert result["status"] == "policy_updated"
 
-    async def test_opt1_azure_dispatches_to_apply_azure_role_assignment(self, tools):
+    async def test_opt1_azure_dispatches_to_remove_flagged_azure_assignments(self, tools):
+        rg = "/subscriptions/sub-123/resourceGroups/rg"
+        flagged = [{"id": "/subscriptions/sub-123/providers/Microsoft.Authorization/roleAssignments/o",
+                    "role": "Owner", "scope": "/subscriptions/sub-123"}]
         azure_ctx = {
             "cloud_provider": "azure",
             "subscription_id": "sub-123",
             "principal_id": "obj-abc",
-            "role_definition_id": "/subscriptions/sub-123/.../def-id",
-            "scope": "/subscriptions/sub-123",
-            "minimized_policy": {},
+            "minimized_policy": {"role_assignments": [{"role": "Reader", "scope": rg}]},
+            "azure_remove": flagged,
         }
-        expected = {"status": "assignment_created", "assignment_id": "new-id", "principal_id": "obj-abc", "cloud": "azure"}
-        with patch.object(tools, "apply_azure_role_assignment", new=AsyncMock(return_value=expected)):
+        expected = {"status": "assignments_removed", "removed": ["owner"], "cloud": "azure"}
+        mock = AsyncMock(return_value=expected)
+        with patch.object(tools, "remove_flagged_azure_assignments", new=mock):
             result = await tools.execute_option({"id": "opt_1"}, azure_ctx)
-        assert result["status"] == "assignment_created"
+        assert result["status"] == "assignments_removed"
+        mock.assert_awaited_once_with(subscription_id="sub-123", principal_id="obj-abc",
+                                      keep=[{"role": "Reader", "scope": rg}], remove=flagged)
+
+    async def test_opt1_azure_not_available_without_flagged_assignments(self, tools):
+        azure_ctx = {"cloud_provider": "azure", "subscription_id": "sub-123", "principal_id": "obj-abc",
+                     "minimized_policy": {}, "azure_remove": []}
+        with patch.object(tools, "remove_flagged_azure_assignments", new=AsyncMock()) as mock:
+            result = await tools.execute_option({"id": "opt_1"}, azure_ctx)
+        assert result["status"] == "not_available"
+        mock.assert_not_called()
 
     async def test_opt1_gcp_dispatches_to_apply_gcp_iam_binding(self, tools):
         gcp_ctx = {
@@ -943,10 +1102,10 @@ class TestExecuteOption:
             result = await tools.execute_option({"id": "opt_1"}, gcp_ctx)
         assert result["status"] == "policy_set"
 
-    async def test_opt1_unsupported_cloud_returns_not_implemented(self, tools):
+    async def test_opt1_unsupported_cloud_returns_not_available(self, tools):
         ctx = {"cloud_provider": "oracle", "minimized_policy": {}}
         result = await tools.execute_option({"id": "opt_1"}, ctx)
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
 
     async def test_opt2_dispatches_to_create_policy_pr(self, tools, aws_context):
         expected = {"status": "pr_opened", "pr_url": "...", "pr_number": 5, "branch": "cloud-decoded/iam-minimize-abc"}
@@ -954,9 +1113,9 @@ class TestExecuteOption:
             result = await tools.execute_option({"id": "opt_2"}, aws_context)
         assert result["status"] == "pr_opened"
 
-    async def test_unknown_option_returns_not_implemented(self, tools, aws_context):
+    async def test_unknown_option_returns_not_available(self, tools, aws_context):
         result = await tools.execute_option({"id": "opt_99"}, aws_context)
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
         assert result["option_id"] == "opt_99"
 
 

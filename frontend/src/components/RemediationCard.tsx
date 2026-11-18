@@ -402,7 +402,6 @@ interface RemediationCardProps {
 
 export function RemediationCard({ incident, token, onApproved, onResolvedManually, onAssigned, readOnlyConnection, onRejected }: RemediationCardProps) {
   const [selected, setSelected]         = useState<string | null>(null)
-  const [customInput, setCustom]        = useState('')
   const [expanded, setExpanded]         = useState<string | null>(null)
   const [loading, setLoading]           = useState(false)
   const [error, setError]               = useState<string | null>(null)
@@ -428,7 +427,6 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
     try {
       await approveIncident(token, incident.incident_id, {
         selected_option_id: selected,
-        custom_solution_input: selected === 'custom' ? customInput : undefined,
       })
       const chosen = incident.options.find((o) => o.id === selected)
       if (selected !== 'hold' && chosen?.execution_log?.length) setStreamLines(chosen.execution_log)
@@ -473,13 +471,6 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
 
   const allOptions: RemediationOption[] = [
     ...incident.options.filter((o) => o.id !== 'hold'),
-    {
-      id: 'custom',
-      title: 'Enter custom solution',
-      description: 'Describe a custom fix for the platform to execute.',
-      impact: 'low',
-      docs_url: '',
-    },
     {
       id: MANUAL_RESOLVE_ID,
       title: "I'll handle this myself",
@@ -587,7 +578,6 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
               const isSelected      = selected === opt.id
               const isExp           = expanded === opt.id
               const isHold          = opt.id === 'hold'
-              const isCustom        = opt.id === 'custom'
               const isManualResolve = opt.id === MANUAL_RESOLVE_ID
               const impact          = IMPACT_META[opt.impact]
               // Settings → Policies, Step 3: hold and manual-resolve never
@@ -635,7 +625,7 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                         )}>
                           {opt.title}
                         </span>
-                        {!isHold && !isCustom && !isManualResolve && (
+                        {!isHold && !isManualResolve && (
                           <span className={cn('rounded border px-1.5 py-0.5 text-xs', impact.color)}>
                             {impact.label}
                           </span>
@@ -676,9 +666,14 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                                 transition={{ duration: 0.15 }}
                                 className="overflow-hidden"
                               >
-                                <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                                <p className="mt-2 whitespace-pre-line break-words text-xs leading-relaxed text-zinc-400">
                                   {opt.description}
                                 </p>
+                                {opt.rationale && (
+                                  <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+                                    <span className="text-zinc-400">Why the agent suggests this:</span> {opt.rationale}
+                                  </p>
+                                )}
                                 {opt.docs_url && (
                                   <a
                                     href={opt.docs_url}
@@ -695,17 +690,6 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                             )}
                           </AnimatePresence>
                         </>
-                      )}
-
-                      {isCustom && isSelected && (
-                        <textarea
-                          value={customInput}
-                          onChange={(e) => setCustom(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          placeholder="Describe the custom fix (e.g., 'Update the npm lock file and rerun')"
-                          rows={3}
-                          className="mt-2 w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none"
-                        />
                       )}
 
                       {/* Inline "I'll handle this myself" form — its own

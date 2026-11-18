@@ -558,19 +558,18 @@ class TestExecutionDisabled:
         assert not hasattr(runbook_tools, "shlex")
         assert not hasattr(runbook_tools, "subprocess")
 
-    async def test_execute_runbook_plan_refuses(self, tools, context):
-        with patch("asyncio.create_subprocess_exec") as spawn, \
-             patch("httpx.AsyncClient") as http:
-            result = await tools.execute_runbook_plan(context["plan_steps"], context)
-        assert result == {"status": "refused", "reason": EXECUTION_DISABLED_REASON}
-        spawn.assert_not_called()
-        http.assert_not_called()
+    def test_no_plan_executor_exists(self):
+        assert not hasattr(RunbookTools, "execute_runbook_plan")
+
+    def test_run_option_is_not_in_the_catalog(self):
+        assert list(runbook_tools.option_catalog({})) == ["opt_2", "hold"]
 
     async def test_opt1_refuses_without_running_anything(self, tools, context):
         with patch("asyncio.create_subprocess_exec") as spawn, \
              patch("httpx.AsyncClient") as http:
             result = await tools.execute_option({"id": "opt_1"}, context)
-        assert result["status"] == "refused"
+        assert result["status"] == "not_available"
+        assert result["reason"] == EXECUTION_DISABLED_REASON
         spawn.assert_not_called()
         http.assert_not_called()
 
@@ -585,13 +584,13 @@ class TestExecutionDisabled:
         assert result["status"] == "issue_created"
         assert mock_issue.call_args.kwargs["body"] == "## Plan"
 
-    async def test_unknown_option_returns_not_implemented(self, tools, context):
+    async def test_unknown_option_returns_not_available(self, tools, context):
         result = await tools.execute_option({"id": "opt_99"}, context)
-        assert result["status"] == "not_implemented"
+        assert result["status"] == "not_available"
 
 
 class TestOfferedOptions:
-    async def test_llm_execute_option_is_never_offered(self, mock_db, workspace_id, mock_router):
+    async def test_llm_execute_option_is_never_offered_and_plan_issue_always_is(self, mock_db, workspace_id, mock_router):
         wf = _make_workflow(mock_db, workspace_id, mock_router)
         parsed = json.loads(SAMPLE_LLM_RUNBOOK_DIAGNOSIS)
         assert parsed["options"][0]["id"] == "opt_1"  # the LLM still proposes it
@@ -603,6 +602,17 @@ class TestOfferedOptions:
         assert [o["id"] for o in result["remediation_options"]] == ["opt_2", "hold"]
         for opt in result["remediation_options"]:
             assert {"id", "title", "description", "impact", "docs_url"} <= opt.keys()
+
+    async def test_plan_issue_offered_even_when_llm_proposes_only_execution(self, mock_db, workspace_id, mock_router):
+        wf = _make_workflow(mock_db, workspace_id, mock_router)
+        parsed = json.loads(SAMPLE_LLM_RUNBOOK_DIAGNOSIS)
+        parsed["options"] = [parsed["options"][0]]  # opt_1 only
+        with patch.object(wf, "check_budget", new=AsyncMock()), \
+             patch.object(wf, "call_llm", return_value=(SAMPLE_LLM_RUNBOOK_DIAGNOSIS, 900)), \
+             patch.object(wf, "parse_llm_json", return_value=parsed), \
+             patch.object(wf, "record_token_usage", new=AsyncMock()):
+            result = await wf._diagnose_node(_diagnose_state(workspace_id))
+        assert [o["id"] for o in result["remediation_options"]] == ["opt_2", "hold"]
 
 
 class TestExecuteAndCompleteNodes:
@@ -626,7 +636,7 @@ class TestExecuteAndCompleteNodes:
         with patch("asyncio.create_subprocess_exec") as spawn:
             out = await wf._execute_node(state)
         spawn.assert_not_called()
-        assert out["execution_result"]["status"] == "refused"
+        assert out["execution_result"]["status"] == "not_available"
         state.update(out)
         await wf._complete_node(state)
         wf.hitl.mark_failed.assert_awaited_once()

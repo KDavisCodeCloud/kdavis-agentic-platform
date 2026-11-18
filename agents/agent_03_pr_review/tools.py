@@ -20,6 +20,8 @@ from typing import Optional
 
 import httpx
 
+from core.option_catalog import OptionSpec, catalog_dict, not_available_result
+
 log = logging.getLogger(__name__)
 
 _GH_API = "https://api.github.com"
@@ -175,6 +177,10 @@ class PRReviewTools:
 
         if option_id == "hold":
             return {"status": "held", "message": "Operator chose to review manually"}
+        catalog = option_catalog(context)
+        if option_id not in catalog:
+            return not_available_result(option_id, catalog)
+
 
         if option_id == "opt_1":
             # Request changes — blocks the PR from merging
@@ -217,3 +223,18 @@ def _gh_headers(token: str) -> dict:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+def option_catalog(context: dict) -> dict[str, OptionSpec]:
+    """What Agent 03 can actually do: post the review on the PR in one of three modes."""
+    return catalog_dict(
+        OptionSpec("opt_1", "Request changes on the PR",
+                   "Posts the review with inline comments as \"Request changes\", which blocks merging until it's resolved.",
+                   "medium", ("post_pr_review",)),
+        OptionSpec("opt_2", "Post the review as a comment",
+                   "Posts the review as a non-blocking comment. Merging is not affected.",
+                   "low", ("post_pr_review",)),
+        OptionSpec("opt_3", "Approve the PR with the review",
+                   "Posts the review as an approval of the current head commit.",
+                   "medium", ("post_pr_review",)),
+    )
