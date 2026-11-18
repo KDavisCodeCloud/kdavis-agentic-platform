@@ -1,19 +1,19 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck } from 'lucide-react'
+import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck, GitPullRequest } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
-import { SEVERITY_META } from '@/lib/types'
+import { SEVERITY_META, MANUALLY_RESOLVABLE_STATUSES } from '@/lib/types'
 
 interface PipelineTrackerProps {
   incidents: Incident[]
   onSelect: (incident: Incident) => void
   selectedId: string | null
-  // 24-gap-closure Phase 2 -- bulk select. Only pending_approval incidents
-  // are ever selectable (bulk dismiss/resolve-manually only apply to
-  // that status, same as the single-incident endpoints), so
+  // 24-gap-closure Phase 2 -- bulk select. Only statuses bulk
+  // resolve-manually accepts are selectable (MANUALLY_RESOLVABLE_STATUSES,
+  // the same rule as the single-incident endpoint), so
   // checkedIds/onToggleCheck are ignored entirely for any other row.
   checkedIds?: Set<string>
   onToggleCheck?: (incidentId: string) => void
@@ -31,13 +31,14 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
     { id: 'diagnose', label: 'Diagnosed' },
     { id: 'hitl',     label: 'Awaiting Approval' },
     { id: 'execute',  label: 'Executing' },
-    { id: 'complete', label: 'Resolved' },
+    { id: 'complete', label: 'Done' },
   ]
 
   const activeIndex: Record<IncidentStatus, number> = {
     pending_approval:  2,
     executing:         3,
     executed:          4,
+    proposed:          3, // a PR/issue was opened; the live fix (merge) hasn't happened -- G1
     held:              2, // stopped at HITL gate — steps 3-4 stay waiting
     failed:            3,
     budget_exceeded:   2,
@@ -47,7 +48,7 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
 
   const active = activeIndex[status] ?? 2
   // Any terminal status: the active step is done, not spinning
-  const isTerminal = ['executed', 'held', 'budget_exceeded', 'resolved_manually', 'rejected'].includes(status)
+  const isTerminal = ['executed', 'proposed', 'held', 'budget_exceeded', 'resolved_manually', 'rejected'].includes(status)
 
   return steps.map((s, i) => ({
     ...s,
@@ -107,7 +108,7 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
       {/* Top row */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          {isPending && onToggleCheck && (
+          {MANUALLY_RESOLVABLE_STATUSES.includes(incident.status) && onToggleCheck && (
             <input
               type="checkbox"
               checked={!!checked}
@@ -125,6 +126,9 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
           )}
           {incident.status === 'executed' && (
             <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+          )}
+          {incident.status === 'proposed' && (
+            <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-blue-400" />
           )}
           {incident.status === 'resolved_manually' && (
             <UserCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
@@ -191,7 +195,8 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
           {{
             pending_approval:  'Awaiting Approval',
             executing:         'Executing',
-            executed:          'Resolved',
+            executed:          'Executed',
+            proposed:          'Fix Proposed',
             held:              'Held',
             failed:            'Failed',
             budget_exceeded:   'Budget Exceeded',
@@ -215,6 +220,9 @@ export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, o
 
   const pending  = incidents.filter(i => i.status === 'pending_approval')
   const active   = incidents.filter(i => i.status === 'executing')
+  // A proposed fix is open work in the customer's repo, not a resolution:
+  // its own section, selectable for bulk resolve (MANUALLY_RESOLVABLE_STATUSES).
+  const fixInProgress = incidents.filter(i => i.status === 'proposed')
   const resolved = incidents.filter(i => ['executed', 'resolved_manually', 'held', 'failed', 'budget_exceeded', 'rejected'].includes(i.status))
 
   if (incidents.length === 0) {
@@ -267,6 +275,27 @@ export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, o
                 incident={inc}
                 isSelected={inc.incident_id === selectedId}
                 onClick={() => onSelect(inc)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {fixInProgress.length > 0 && (
+        <section>
+          <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-blue-400">
+            <GitPullRequest className="h-3 w-3" />
+            Fix in your repo ({fixInProgress.length})
+          </h3>
+          <div className="space-y-2">
+            {fixInProgress.map(inc => (
+              <IncidentRow
+                key={inc.incident_id}
+                incident={inc}
+                isSelected={inc.incident_id === selectedId}
+                onClick={() => onSelect(inc)}
+                checked={checkedIds?.has(inc.incident_id)}
+                onToggleCheck={onToggleCheck ? () => onToggleCheck(inc.incident_id) : undefined}
               />
             ))}
           </div>

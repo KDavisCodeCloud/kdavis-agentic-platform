@@ -623,10 +623,11 @@ class TestScheduleResolutionNotification:
                 await asyncio.gather(*pending, return_exceptions=True)
 
         with patch("core.ticketing.notify_resolution", new=AsyncMock()) as mock_notify:
-            ticketing.schedule_resolution_notification("ws-1", {"incident_id": "i-1"}, resolved_by="m-1")
+            ticketing.schedule_resolution_notification(
+                "ws-1", {"incident_id": "i-1", "execution_status": "executed"}, resolved_by="m-1")
             await _drain()
 
-        mock_notify.assert_awaited_once_with("ws-1", {"incident_id": "i-1"}, "m-1")
+        mock_notify.assert_awaited_once_with("ws-1", {"incident_id": "i-1", "execution_status": "executed"}, "m-1")
 
     def test_scheduling_failure_never_raises(self):
         with patch("core.ticketing.asyncio.create_task", side_effect=RuntimeError("no event loop")):

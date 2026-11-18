@@ -206,8 +206,8 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
         OptionSpec("opt_1", "Open a PR with the proposed IaC change",
                    "Writes the proposed change to the IaC file on a new branch and opens a pull request. "
                    "Nothing changes in the cloud until the PR is merged and your pipeline applies it.",
-                   "low", ("create_alert_pr",)),
+                   "low", ("create_alert_pr",), proposal=True),
         OptionSpec("opt_2", "Open an investigation issue",
                    "Creates a GitHub issue with the alert, the diagnosis and investigation steps. Nothing is changed.",
-                   "low", ("create_alert_issue",)),
+                   "low", ("create_alert_issue",), proposal=True),
     )

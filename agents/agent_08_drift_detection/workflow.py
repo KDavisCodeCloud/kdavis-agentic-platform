@@ -76,6 +76,7 @@ class DriftState(TypedDict):
     drift_summary: Optional[str]
     corrected_content: Optional[str]
     remediation_options: Optional[list]
+    nothing_found: Optional[str]   # G15: why there is nothing to approve (no incident is created)
     tokens_used: int
 
     # After HITL
@@ -210,7 +211,7 @@ class DriftWorkflow(BaseAgent):
             {"exempted": "exempted_complete", "normal": "diagnose"},
         )
         graph.add_edge("exempted_complete", END)
-        graph.add_edge("diagnose",  "hitl_gate")
+        self._add_diagnose_routing(graph)  # G15: no drift → no incident (agents/base_agent.py)
         graph.add_edge("hitl_gate", "execute")
         graph.add_edge("execute",   "complete")
         graph.add_edge("complete",  END)
@@ -356,6 +357,7 @@ class DriftWorkflow(BaseAgent):
             "drift_summary":      None,
             "corrected_content":  None,
             "remediation_options": None,
+            "nothing_found": None,
             "selected_option":    None,
             "execution_result":   None,
             "error":              None,
@@ -414,6 +416,16 @@ class DriftWorkflow(BaseAgent):
         corrected_content = diagnosis.get("corrected_content", "")
         options           = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
 
+        if not drift_items and str(drift_severity).upper() == "UNKNOWN":
+            # The prompt's answer when desired or actual state is missing: that is
+            # "couldn't check", not "no drift" -- record it as a failed check.
+            self._write_audit("diagnose", "could_not_compare", tokens_used=estimated_tokens)
+            return {
+                "error": "Drift check could not compare desired and actual state: "
+                         + (drift_summary or parsed_error or "no detail from the analysis"),
+                "tokens_used": state.get("tokens_used", 0) + estimated_tokens,
+            }
+
         required_fields = {"id", "title", "description", "impact", "docs_url"}
         for opt in options:
             if not required_fields.issubset(opt.keys()):
@@ -433,6 +445,8 @@ class DriftWorkflow(BaseAgent):
             "drift_summary":     drift_summary,
             "corrected_content": corrected_content,
             "remediation_options": options,
+            # G15 (Break-It Lab A2): no drift items → no incident, audit entry only
+            "nothing_found":     None if drift_items else (parsed_error or "No drift detected"),
             "tokens_used":       state.get("tokens_used", 0) + estimated_tokens,
         }
 
@@ -560,23 +574,6 @@ class DriftWorkflow(BaseAgent):
 
         return {"execution_result": result}
 
-    async def _complete_node(self, state: DriftState) -> dict:
-        """Mark incident as executed and finalize audit trail."""
-        incident_id = state.get("incident_id")
-        if incident_id:
-            exec_result = state.get("execution_result") or {}
-            if exec_result.get("status") == "held":
-                await self.hitl._db.execute(
-                    "UPDATE incidents SET execution_status = 'held' WHERE id = $1",
-                    __import__("uuid").UUID(incident_id),
-                )
-            else:
-                await self.hitl.mark_executed(incident_id, tokens_used=0)
-
-        self._write_audit("complete", "done", incident_id=incident_id)
-        log.info("[Agent08] Workflow complete for incident %s", incident_id)
-        return {}
-
     # ──────────────────────────────────────────────
     # Public interface
     # ──────────────────────────────────────────────
@@ -617,6 +614,7 @@ class DriftWorkflow(BaseAgent):
             "drift_summary":     None,
             "corrected_content": None,
             "remediation_options": None,
+            "nothing_found": None,
             "tokens_used":       0,
             "selected_option":   None,
             "execution_result":  None,

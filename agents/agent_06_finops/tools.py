@@ -555,9 +555,9 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
     return catalog_dict(
         OptionSpec("opt_1", "Open a cost report issue",
                    "Creates a GitHub issue with the full cost analysis and recommendations. No resource is changed.",
-                   "low", ("create_cost_report_issue",)),
+                   "low", ("create_cost_report_issue",), proposal=True),
         *([quick_wins[cloud]] if cloud in quick_wins else []),
         OptionSpec("opt_3", "Post the cost summary to Slack",
                    "Sends the cost summary to the workspace's Slack webhook. No resource is changed.",
-                   "low", ("post_slack_alert",)),
+                   "low", ("post_slack_alert",), proposal=True),
     )

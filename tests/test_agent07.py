@@ -49,6 +49,7 @@ from uuid import uuid4
 import pytest
 
 from agents.agent_07_runbook import tools as runbook_tools
+from core.execution_outcome import STATUS_FAILED, STATUS_PROPOSED, classify_execution
 from agents.agent_07_runbook.tools import EXECUTION_DISABLED_REASON, RunbookTools
 from agents.agent_07_runbook.workflow import (
     RunbookWorkflow,
@@ -621,49 +622,50 @@ class TestExecuteAndCompleteNodes:
         wf = _make_workflow(mock_db, workspace_id, mock_router)
         wf._tools = RunbookTools(github_token="gh_test_token")
         wf.hitl = MagicMock()
-        wf.hitl.mark_failed = AsyncMock()
-        wf.hitl.mark_executed = AsyncMock()
+        wf.hitl.record_execution = AsyncMock()
         return wf
 
-    def _state(self, workspace_id, option_id):
+    def _state(self, workspace_id, option):
         s = _hitl_state(workspace_id)
         s["incident_id"] = str(uuid4())
-        s["selected_option"] = {"id": option_id}
+        s["selected_option"] = option
         return s
 
-    async def test_stale_opt1_approval_is_refused_and_marked_failed(self, wf, workspace_id):
-        state = self._state(workspace_id, "opt_1")
-        with patch("asyncio.create_subprocess_exec") as spawn:
-            out = await wf._execute_node(state)
-        spawn.assert_not_called()
-        assert out["execution_result"]["status"] == "not_available"
+    async def _complete_and_classify(self, wf, state, out):
         state.update(out)
         await wf._complete_node(state)
-        wf.hitl.mark_failed.assert_awaited_once()
-        assert wf.hitl.mark_failed.call_args.kwargs["reason"] == EXECUTION_DISABLED_REASON
-        wf.hitl.mark_executed.assert_not_called()
+        wf.hitl.record_execution.assert_awaited_once()
+        _, exec_result, selected = wf.hitl.record_execution.call_args.args
+        return classify_execution(exec_result, selected)
 
-    async def test_opt2_issue_body_is_the_plan(self, wf, workspace_id):
-        state = self._state(workspace_id, "opt_2")
+    async def test_stale_opt1_approval_is_refused_and_recorded_failed(self, wf, workspace_id):
+        state = self._state(workspace_id, {"id": "opt_1", "title": "Run the runbook steps"})
+        with patch("asyncio.create_subprocess_exec") as spawn, patch("httpx.AsyncClient") as http:
+            out = await wf._execute_node(state)
+        spawn.assert_not_called()
+        http.assert_not_called()
+        assert out["execution_result"]["status"] == "not_available"
+        outcome = await self._complete_and_classify(wf, state, out)
+        assert outcome.status == STATUS_FAILED
+        assert EXECUTION_DISABLED_REASON in outcome.reason
+
+    async def test_opt2_issue_body_is_the_plan_and_is_recorded_proposed(self, wf, workspace_id):
+        state = self._state(workspace_id, {"id": "opt_2", "proposal": True})
         created = {"status": "issue_created", "issue_url": "u", "issue_number": 1}
         with patch.object(wf._tools, "create_runbook_issue", new=AsyncMock(return_value=created)) as mk:
             out = await wf._execute_node(state)
-        assert out["execution_result"]["status"] == "issue_created"
         body = mk.call_args.kwargs["body"]
         assert "not executed" in body and "Check pod status" in body
-        state.update(out)
-        await wf._complete_node(state)
-        wf.hitl.mark_executed.assert_awaited_once()
+        outcome = await self._complete_and_classify(wf, state, out)
+        assert outcome.status == STATUS_PROPOSED
 
-    async def test_opt2_failure_is_marked_failed(self, wf, workspace_id):
-        state = self._state(workspace_id, "opt_2")
+    async def test_opt2_failure_is_recorded_failed(self, wf, workspace_id):
+        state = self._state(workspace_id, {"id": "opt_2", "proposal": True})
         wf._tools.github_token = ""
         out = await wf._execute_node(state)
         assert out["execution_result"]["status"] == "failed"
-        state.update(out)
-        await wf._complete_node(state)
-        wf.hitl.mark_failed.assert_awaited_once()
-        wf.hitl.mark_executed.assert_not_called()
+        outcome = await self._complete_and_classify(wf, state, out)
+        assert outcome.status == STATUS_FAILED
 
 
 class TestBuildPlanReport:

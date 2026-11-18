@@ -10,6 +10,7 @@ import { listIncidents, bulkIncidentAction, getConnectionsStatus, isDemoSessionT
 import { trackEvent } from '@/lib/attribution'
 import { cn } from '@/lib/utils'
 import type { Incident, IncidentStatus, IncidentFilters, ConnectionsStatus } from '@/lib/types'
+import { MANUALLY_RESOLVABLE_STATUSES, REJECTABLE_STATUSES } from '@/lib/types'
 
 interface IncidentConsoleProps {
   token: string
@@ -27,7 +28,8 @@ const FILTER_TABS: { id: FilterTab; label: string }[] = [
   { id: 'all',               label: 'All' },
   { id: 'pending_approval',  label: 'Needs Action' },
   { id: 'executing',         label: 'Running' },
-  { id: 'executed',          label: 'Resolved' },
+  { id: 'executed',          label: 'Executed' },
+  { id: 'proposed',          label: 'Fix Proposed' },
   { id: 'resolved_manually', label: 'Resolved Manually' },
   { id: 'failed',            label: 'Failed' },
 ]
@@ -105,10 +107,12 @@ export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentC
   const selectedRef                   = useRef<Incident | null>(null)
   selectedRef.current = selected
 
-  // Bulk select — only ever holds pending_approval incident ids (the only
-  // status bulk dismiss/resolve-manually apply to, same as the
-  // single-incident endpoints). Cleared on every successful fetch that no
-  // longer contains a checked id (e.g. it moved out of pending elsewhere).
+  // Bulk select — only ever holds ids whose status bulk resolve-manually
+  // accepts (MANUALLY_RESOLVABLE_STATUSES: awaiting approval or Fix
+  // Proposed, same rule as the single-incident endpoint). Dismiss applies
+  // only to REJECTABLE_STATUSES, so it's disabled while a Fix Proposed
+  // incident is selected. Pruned on every fetch that no longer contains a
+  // checked id in a selectable status.
   const [checkedIds, setCheckedIds]   = useState<Set<string>>(new Set())
   const [bulkNote, setBulkNote]       = useState('')
   const [bulkLoading, setBulkLoading] = useState(false)
@@ -143,7 +147,8 @@ export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentC
       setCheckedIds(prev => {
         if (prev.size === 0) return prev
         const stillValid = new Set(
-          data.filter(i => i.status === 'pending_approval' && prev.has(i.incident_id)).map(i => i.incident_id),
+          data.filter(i => MANUALLY_RESOLVABLE_STATUSES.includes(i.status) && prev.has(i.incident_id))
+            .map(i => i.incident_id),
         )
         return stillValid.size === prev.size ? prev : stillValid
       })
@@ -242,6 +247,10 @@ export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentC
       return next
     })
   }
+
+  const canBulkDismiss = incidents.every(
+    i => !checkedIds.has(i.incident_id) || REJECTABLE_STATUSES.includes(i.status),
+  )
 
   async function handleBulkAction(action: 'dismiss' | 'resolve_manually') {
     if (checkedIds.size === 0) return
@@ -420,7 +429,7 @@ export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentC
       )}
 
       {/* Bulk action bar — 24-gap-closure Phase 2. Only ever appears when
-          1+ pending_approval incidents are checked. */}
+          1+ selectable incidents are checked. */}
       {checkedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 bg-blue-500/5 px-6 py-2.5">
           <span className="text-xs font-medium text-zinc-300">
@@ -437,7 +446,9 @@ export function IncidentConsole({ token, onAuthError, onFixApproved }: IncidentC
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5 border border-zinc-700 text-xs"
-            disabled={bulkLoading}
+            disabled={bulkLoading || !canBulkDismiss}
+            title={canBulkDismiss ? undefined
+              : 'Fix Proposed incidents can’t be dismissed — a PR or issue was already opened. Resolve them instead.'}
             onClick={() => handleBulkAction('dismiss')}
           >
             <XCircle className="h-3.5 w-3.5" />

@@ -1008,7 +1008,7 @@ class TestDiagnoseNode:
         parsed = json.loads(SAMPLE_LLM_RESPONSE)
 
         with patch.object(wf._tools, "fetch_manifest", new=AsyncMock(return_value=self._manifest_data())), \
-             patch.object(wf._tools, "query_osv_batch", new=AsyncMock(return_value=[])), \
+             patch.object(wf._tools, "query_osv_batch", new=AsyncMock(return_value=self._osv_results())), \
              patch.object(wf, "check_budget", new=AsyncMock()), \
              patch.object(wf, "call_llm", return_value=(SAMPLE_LLM_RESPONSE, 2000)) as mock_llm, \
              patch.object(wf, "parse_llm_json", return_value=parsed), \
@@ -1041,7 +1041,7 @@ class TestDiagnoseNode:
         parsed = json.loads(SAMPLE_LLM_RESPONSE)
 
         with patch.object(wf._tools, "fetch_manifest", new=AsyncMock(return_value=self._manifest_data())), \
-             patch.object(wf._tools, "query_osv_batch", new=AsyncMock(return_value=[])), \
+             patch.object(wf._tools, "query_osv_batch", new=AsyncMock(return_value=self._osv_results())), \
              patch.object(wf, "check_budget", new=AsyncMock()), \
              patch.object(wf, "call_llm", return_value=(SAMPLE_LLM_RESPONSE, 2000)), \
              patch.object(wf, "parse_llm_json", return_value=parsed), \

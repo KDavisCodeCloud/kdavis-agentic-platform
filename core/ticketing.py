@@ -620,6 +620,13 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
         await conn.close()
 
 
+# Only these statuses close a ticket or send a PagerDuty resolve. 'proposed'
+# (a PR/issue was opened, nothing changed live -- G1) and 'failed' never do;
+# a proposed incident resolves later via resolve-manually (or, from item 3,
+# the merge webhook + item 4 verification).
+RESOLVED_STATUSES = frozenset({"executed", "resolved_manually"})
+
+
 def schedule_resolution_notification(workspace_id: str, incident_summary: dict, resolved_by: Optional[str] = None) -> None:
     """
     Fire-and-forget scheduling helper shared by both resolution call sites
@@ -629,6 +636,13 @@ def schedule_resolution_notification(workspace_id: str, incident_summary: dict, 
     task, e.g. no running event loop, must never block incident
     resolution). Mirrors core/hitl.py's own _fire_notification pattern.
     """
+    status = incident_summary.get("execution_status")
+    if status not in RESOLVED_STATUSES:
+        log.info(
+            "[Ticketing] Not resolving tickets/PagerDuty for incident %s: status %r is not a resolution",
+            incident_summary.get("incident_id"), status,
+        )
+        return
     try:
         asyncio.create_task(notify_resolution(workspace_id, incident_summary, resolved_by))
     except Exception as exc:

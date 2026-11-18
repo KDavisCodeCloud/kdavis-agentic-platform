@@ -931,25 +931,6 @@ class ResourceHealthWorkflow(BaseAgent):
 
         return {"execution_result": result}
 
-    async def _complete_node(self, state: ResourceHealthState) -> dict:
-        """Mark incident as executed and finalize audit trail."""
-        incident_id = state.get("incident_id")
-        if incident_id:
-            exec_result = state.get("execution_result") or {}
-            exec_status = exec_result.get("status", "unknown")
-
-            if exec_status == "held":
-                await self.hitl._db.execute(
-                    "UPDATE incidents SET execution_status = 'held' WHERE id = $1",
-                    __import__("uuid").UUID(incident_id),
-                )
-            else:
-                await self.hitl.mark_executed(incident_id, tokens_used=0)
-
-        self._write_audit("complete", "done", incident_id=incident_id)
-        log.info("[Agent11] Workflow complete for incident %s", incident_id)
-        return {}
-
     # ──────────────────────────────────────────────
     # Public interface
     # ──────────────────────────────────────────────

@@ -459,3 +459,94 @@ Evidence: Break-It Lab (`KDavisCodeCloud/cloud-decoded-lab`, results.md @ 365ea2
   `RemediationCard.tsx` adds "I'll handle this myself" to every incident
   regardless of agent, and `bind_options` always keeps Hold.
 - Option `impact` is now the catalog's low/medium/high, not LLM free text.
+
+## 2026-11-17 — Fix session item 2: honest execution status (G1) + no-drift creates no incident (G15)
+
+Baseline: Break-It Lab results.md @ 365ea2b. A1/Z1 returned `skipped` and the
+incident said **executed** with no failure_reason; A2/Z2 opened a PR, nothing
+changed live, and the incident said **executed**; A2's bad-IaC check said "No
+drift detected" and still created a `pending_approval` incident with PR and
+apply options.
+
+- **One rule for all 11 agents** (`core/execution_outcome.py`,
+  `HITLGate.record_execution`). Every `_complete_node` calls it; none decides
+  'executed' itself.
+  - held → `held`
+  - skipped / not_implemented / not_available / failed / error / no_change /
+    no status → `failed`, `failure_kind = not_executed`, with the tool's
+    reason in `failure_reason`
+  - a runbook `partial`, or a multi-call option where some part did nothing →
+    `failed`, `failure_kind = partial_execution`, naming the parts
+  - success of an option that only proposes a fix → **`proposed`** (new
+    status): nothing changed live; not counted as resolved, no `resolved_at`,
+    no ticketing "resolved" notification
+  - success of an option that is the change itself → `executed`
+- **`OptionSpec.proposal`** marks the proposal options (13: every PR/issue
+  option in Agents 04/05/07/08/10/11, Agent 06's report issue and Slack
+  alert). Agent 09's issue/Slack post is the deliverable, so it stays
+  `executed`. A test fails if a PR/issue-only option isn't flagged.
+- **'executed' now means "the approved action ran"**, not "resolved and
+  verified". The card said "The incident has been resolved and verified"; it
+  now says the live resource hasn't been re-checked. Verification is item 4
+  (G4). The status label "Resolved" is now "Executed".
+- **A `proposed` incident can be marked resolved** (`/resolve-manually` accepts
+  `pending_approval` or `proposed`). The card shows "Fix proposed — nothing
+  changed live yet" with a "Mark resolved" box for after the merge.
+- **G15:** Agent 08 routes diagnose → `no_drift_complete` when `drift_items` is
+  empty: no incident, an audit entry `complete:no_drift`. Same pattern as the
+  existing exempted-resource path. An empty result with severity `UNKNOWN`
+  (the prompt's answer when desired or actual state is missing) is "couldn't
+  check", not "no drift": it becomes a failed incident with the reason.
+- **G15 generalized (Kelvin's review, 2026-11-17): any agent that finds
+  nothing creates no incident, only an audit entry.** A shared base-agent path
+  is used: diagnose returns `nothing_found: "<why>"` and the graph routes to
+  `nothing_found_complete`, which writes action `complete`, status
+  `nothing_found`, with the reason in metadata.
+  - **Agents that can find nothing:**
+    - **05 IAM:** nothing to remove, judged against a real access log. An empty
+      access log still becomes an incident, because usage can't be judged.
+    - **06 FinOps:** no savings, recommendations or idle resources.
+    - **08 Drift:** no drift items.
+    - **10 Dependencies:** OSV.dev checked every pinned dependency and none is
+      vulnerable. This is decided before the LLM call, so a clean scan costs
+      no tokens.
+  - **"Couldn't check" is a failed incident with the reason, never "nothing
+    found":**
+    - 06: no cost data.
+    - 08: severity UNKNOWN.
+    - 10: zero dependencies parsed, or any OSV query failed. The scan now
+      records checked, failed and unversioned counts; it used to skip
+      failures silently.
+  - **Agents left out on purpose:** 01, 02, 07, 09 and 11 are triggered by an
+    event that is itself the finding. 03 always has a verdict to post. 04 runs
+    on an operator's request. `tests/test_nothing_found.py` pins this list.
+- **"Fix Proposed" is not a resolution downstream.**
+  - `schedule_resolution_notification` (Jira, Linear, GitHub Issues,
+    ServiceNow, PagerDuty resolve) now refuses any status other than
+    `executed` or `resolved_manually`. Both callers pass the status
+    explicitly.
+  - No channel notification fires on the transition; those fire only when an
+    incident is created.
+  - MTTR: the product has no MTTR computation. The resolution end time is
+    `resolved_at` (migration 038), and a proposed incident never gets one.
+    When it is later resolved, that resolution goes downstream normally.
+- **Bulk and single actions share one status rule** (Kelvin, 2026-11-17).
+  - `core/hitl.py` holds `REJECTABLE_STATUSES` (`pending_approval`) and
+    `MANUALLY_RESOLVABLE_STATUSES` (`pending_approval`, `proposed`), behind
+    `rejection_allowed()` / `manual_resolution_allowed()`. The single reject,
+    single resolve-manually and bulk endpoints all call them.
+  - Bulk dismiss keeps reject's rule: a Fix Proposed incident already opened a
+    PR or issue, so there is nothing to reject. The UI disables Dismiss while
+    one is selected.
+  - The frontend mirrors both lists in `types.ts`; a test pins them equal to
+    the backend's, and another drives every status through the single and bulk
+    endpoints and asserts they accept the same set.
+  - Known gap, unchanged: bulk resolve doesn't fire resolution ticketing or
+    PagerDuty resolve; single resolve does.
+- **One `_complete_node` for all eleven agents**, in `BaseAgent`. Item 2 had
+  made ten copies identical, and the code-quality gate (fixed in
+  `fix/ci-code-quality-gate`) flagged the new duplication. Agent 02 overrides
+  `_before_state()` to keep its rollback snapshot.
+- **Added to item 3:** a GitHub App `pull_request` webhook. When the fix PR
+  merges, the incident moves to "Fix merged — awaiting verification". Item 4's
+  verification then closes it as `verified` or `verification_failed`.

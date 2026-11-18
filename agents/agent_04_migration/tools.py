@@ -208,8 +208,8 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
         OptionSpec("opt_1", "Open a PR with the migrated file",
                    "Commits the migrated code to a new branch and opens a pull request for review. "
                    "Fails without a change if no migrated code was generated.",
-                   "low", ("create_migration_pr",)),
+                   "low", ("create_migration_pr",), proposal=True),
         OptionSpec("opt_2", "Open an issue with the migration plan",
                    "Creates a GitHub issue containing the step-by-step migration plan. No code is changed.",
-                   "low", ("create_github_issue",)),
+                   "low", ("create_github_issue",), proposal=True),
     )

@@ -46,6 +46,10 @@ class OptionSpec:
     description: str          # what the code does, in plain language
     impact: str               # low | medium | high (frontend IMPACT_META keys)
     calls: tuple[str, ...] = field(default_factory=tuple)  # tool methods execute_option invokes
+    # True when success only proposes a fix (opens a PR or issue, posts an alert)
+    # and nothing live changes until someone acts on it. The incident then ends
+    # as 'proposed', never 'executed' (G1, core/execution_outcome.py).
+    proposal: bool = False
 
     def __post_init__(self) -> None:
         if self.impact not in _IMPACTS:
@@ -107,6 +111,7 @@ def bind_options(llm_options: Iterable[Mapping] | None, catalog: Mapping[str, Op
             "title": spec.title,
             "description": spec.description,
             "impact": spec.impact,
+            "proposal": spec.proposal,
             "docs_url": str(llm.get("docs_url", "") or ""),
             "rationale": rationale,
         })

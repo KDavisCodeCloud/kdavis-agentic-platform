@@ -31,6 +31,23 @@ STATUS_EXECUTED   = "executed"
 STATUS_HELD       = "held"           # operator chose "stay broken"
 STATUS_FAILED     = "failed"
 STATUS_BUDGET_EXC = "budget_exceeded"
+STATUS_PROPOSED   = "proposed"       # a PR/issue was opened; nothing live changed yet (G1)
+
+# Which statuses an operator can close out by hand. The single-incident and
+# bulk endpoints both ask these functions, so they can never disagree.
+# - Rejecting means "don't run this": only possible before anything ran.
+# - Manual resolution means "I fixed it myself": possible while approval is
+#   pending, or after a PR/issue was proposed (merged or acted on outside us).
+REJECTABLE_STATUSES = frozenset({STATUS_PENDING})
+MANUALLY_RESOLVABLE_STATUSES = frozenset({STATUS_PENDING, STATUS_PROPOSED})
+
+
+def rejection_allowed(status: str) -> bool:
+    return status in REJECTABLE_STATUSES
+
+
+def manual_resolution_allowed(status: str) -> bool:
+    return status in MANUALLY_RESOLVABLE_STATUSES
 
 
 class HITLGate:
@@ -380,6 +397,40 @@ class HITLGate:
         if row is not None:
             self._fire_ticketing_notification(incident_id, dict(row))
 
+    async def record_execution(
+        self,
+        incident_id: str,
+        execution_result: Optional[dict],
+        selected_option: Optional[dict] = None,
+        tokens_used: int = 0,
+        before_state: Optional[dict] = None,
+    ) -> str:
+        """
+        Set the incident's final status from what execution actually did
+        (G1, core/execution_outcome.py). Every agent's complete node calls
+        this; none of them decide 'executed' on their own any more.
+        Returns the status written.
+        """
+        from core.execution_outcome import classify_execution  # local: core.execution_outcome is leaf-level
+
+        outcome = classify_execution(execution_result, selected_option)
+        if outcome.status == STATUS_EXECUTED:
+            await self.mark_executed(incident_id, tokens_used=tokens_used, before_state=before_state)
+        elif outcome.status == STATUS_PROPOSED:
+            await self._db.execute(
+                "UPDATE incidents SET execution_status = $1, tokens_used = tokens_used + $2 WHERE id = $3",
+                STATUS_PROPOSED, tokens_used, UUID(incident_id),
+            )
+            self._write_audit_entry("unknown", "hitl_gate", incident_id, "proposed", tokens_used)
+        elif outcome.status == STATUS_HELD:
+            await self._db.execute(
+                "UPDATE incidents SET execution_status = $1 WHERE id = $2", STATUS_HELD, UUID(incident_id),
+            )
+        else:
+            await self.mark_failed(incident_id, outcome.reason or "", failure_kind=outcome.failure_kind)
+        log.info("[HITL] Incident %s execution recorded as %s", incident_id, outcome.status)
+        return outcome.status
+
     async def mark_failed(
         self,
         incident_id: str,
@@ -519,6 +570,7 @@ class HITLGate:
 
             incident_summary = {
                 "incident_id": incident_id,
+                "execution_status": STATUS_EXECUTED,
                 "agent_id": row.get("agent_id"),
                 "resource_name": row.get("resource_name"),
                 "resource_group": row.get("resource_group"),

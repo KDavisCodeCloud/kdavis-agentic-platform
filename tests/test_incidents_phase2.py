@@ -390,3 +390,80 @@ class TestBulkIncidentAction:
         )
 
         assert result.results[0].outcome == "not_found"
+
+
+# ── Bulk and single-incident actions accept exactly the same statuses ─────────
+
+import re
+from pathlib import Path
+from unittest.mock import patch
+
+from api.routes.incidents import IncidentRejectRequest
+from core.hitl import MANUALLY_RESOLVABLE_STATUSES, REJECTABLE_STATUSES
+from db.models import IncidentResolveManuallyRequest
+
+_TYPES_TS = Path(__file__).resolve().parents[1] / "frontend/src/lib/types.ts"
+
+
+def _all_statuses() -> list[str]:
+    block = re.search(r"export type IncidentStatus =(.*?)\n\n", _TYPES_TS.read_text(), re.S).group(1)
+    return re.findall(r"\|\s*'(\w+)'", block)
+
+
+async def _single_accepts(action: str, status: str) -> bool:
+    incident_id = uuid4()
+    request, _conn = _make_request(fetchrow_return={
+        "id": incident_id, "agent_id": "agent_08_drift_detection", "execution_status": status,
+        "resource_name": None, "resource_group": None, "metric_name": None, "parsed_error": "x",
+        "cloud_provider": None, "severity": None,
+    })
+    try:
+        with patch("core.ticketing.schedule_resolution_notification"):
+            if action == "dismiss":
+                await incidents.reject_incident(str(incident_id), IncidentRejectRequest(reason="r"),
+                                                request, workspace={"id": uuid4()})
+            else:
+                await incidents.resolve_incident_manually(str(incident_id), IncidentResolveManuallyRequest(),
+                                                          request, workspace={"id": uuid4()})
+    except HTTPException as exc:
+        assert exc.status_code == 409, exc.detail
+        return False
+    return True
+
+
+async def _bulk_accepts(action: str, status: str) -> bool:
+    incident_id = uuid4()
+    request, _conn = _make_request(fetchrow_side_effect=[
+        {"id": incident_id, "agent_id": "agent_08_drift_detection", "execution_status": status},
+    ])
+    result = await incidents.bulk_incident_action(
+        BulkIncidentActionRequest(incident_ids=[str(incident_id)], action=action),
+        request, workspace={"id": uuid4()},
+    )
+    return result.results[0].outcome == "applied"
+
+
+@pytest.mark.parametrize("action", ["dismiss", "resolve_manually"])
+async def test_bulk_and_single_accept_exactly_the_same_statuses(action):
+    statuses = _all_statuses()
+    assert "proposed" in statuses and "pending_approval" in statuses
+    single = {s for s in statuses if await _single_accepts(action, s)}
+    bulk = {s for s in statuses if await _bulk_accepts(action, s)}
+    assert single == bulk
+    expected = REJECTABLE_STATUSES if action == "dismiss" else MANUALLY_RESOLVABLE_STATUSES
+    assert bulk == set(expected)
+
+
+async def test_bulk_resolve_accepts_fix_proposed():
+    assert await _bulk_accepts("resolve_manually", "proposed")
+    assert not await _bulk_accepts("dismiss", "proposed")  # a PR was already opened; nothing to reject
+
+
+def test_frontend_status_rules_match_the_backend():
+    ts = _TYPES_TS.read_text()
+
+    def ts_list(name: str) -> set[str]:
+        return set(re.findall(r"'(\w+)'", re.search(rf"export const {name}[^=]*=\s*\[(.*?)\]", ts).group(1)))
+
+    assert ts_list("REJECTABLE_STATUSES") == set(REJECTABLE_STATUSES)
+    assert ts_list("MANUALLY_RESOLVABLE_STATUSES") == set(MANUALLY_RESOLVABLE_STATUSES)

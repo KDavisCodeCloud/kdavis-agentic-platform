@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send, ShieldOff } from 'lucide-react'
+import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send, ShieldOff, GitPullRequest } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -498,6 +498,8 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
           <span className={cn('inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium', statusMeta.bg, statusMeta.color)}>
             {incident.status === 'executed'
               ? <CheckCircle2 className="h-3 w-3" />
+              : incident.status === 'proposed'
+              ? <GitPullRequest className="h-3 w-3" />
               : incident.status === 'resolved_manually'
               ? <UserCheck className="h-3 w-3" />
               : incident.status === 'failed'
@@ -739,9 +741,48 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
             {incident.status === 'executed' && (
               <>
                 <CheckCircle2 className="h-10 w-10 text-emerald-400" />
-                <div>
-                  <p className="text-sm font-medium text-emerald-400">Remediation complete</p>
-                  <p className="mt-1 text-xs text-zinc-500">The incident has been resolved and verified.</p>
+                <div className="max-w-sm">
+                  <p className="text-sm font-medium text-emerald-400">Action executed</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    The approved action ran. Cloud Decoded has not re-checked the live resource yet.
+                  </p>
+                </div>
+              </>
+            )}
+            {incident.status === 'proposed' && (
+              <>
+                <GitPullRequest className="h-10 w-10 text-blue-400" />
+                <div className="max-w-sm">
+                  <p className="text-sm font-medium text-blue-400">Fix proposed — nothing changed live yet</p>
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                    A pull request, issue or alert was created. The live resource stays as it is until
+                    someone merges or acts on it. Once that&apos;s done, record it here.
+                  </p>
+                </div>
+                <div className="w-full max-w-sm space-y-2 text-left">
+                  <textarea
+                    value={manualNote}
+                    onChange={(e) => setManualNote(e.target.value)}
+                    placeholder="Optional — e.g., 'Merged PR #12 and applied it.'"
+                    rows={2}
+                    maxLength={4000}
+                    className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-emerald-500 focus:outline-none"
+                  />
+                  {manualError && (
+                    <p className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                      {manualError}
+                    </p>
+                  )}
+                  <Button
+                    size="sm"
+                    className="w-full bg-emerald-600 hover:bg-emerald-500"
+                    disabled={manualLoading}
+                    loading={manualLoading}
+                    onClick={handleConfirmManualResolve}
+                  >
+                    <UserCheck className="h-4 w-4" />
+                    Mark resolved
+                  </Button>
                 </div>
               </>
             )}
@@ -759,7 +800,10 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                 <XCircle className="h-10 w-10 text-red-400" />
                 <div className="max-w-sm">
                   <p className="text-sm font-medium text-red-400">
-                    {incident.failure_kind === 'permission_denied' ? 'Insufficient permissions' : 'Execution failed'}
+                    {incident.failure_kind === 'permission_denied' ? 'Insufficient permissions'
+                      : incident.failure_kind === 'not_executed' ? 'Not executed — nothing was changed'
+                      : incident.failure_kind === 'partial_execution' ? 'Only partly executed'
+                      : 'Execution failed'}
                   </p>
                   <p className="mt-1 text-xs leading-relaxed text-zinc-500">
                     {incident.failure_reason
