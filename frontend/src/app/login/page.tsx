@@ -2,44 +2,67 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import type { Session } from '@supabase/supabase-js'
+import { ApiError, getBillingStatus } from '@/lib/api'
+import { confirmTotpEnrollment, startTotpEnrollment, type TotpEnrollment } from '@/lib/mfa'
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase'
 
 // Real dedicated /login route, recreating login.dc.html's 2-column brand/
 // form layout from the design handoff.
 //
-// Membership plan, Phase A: primary sign-in is now real Supabase email +
-// password (getSupabaseClient().auth.signInWithPassword) -- a genuine
-// per-human identity, not a shared secret pasted into localStorage. The
-// raw workspace-token flow is kept as a secondary "Use a workspace token
-// instead" fallback rather than removed outright: workspace_members is a
-// brand-new table with zero rows for every existing paying customer, so
-// until each one is invited and accepts (POST /workspace-members/invite,
-// /accept-invite), the token is still the ONLY credential that works for
-// them. Removing it here would be a self-inflicted login outage for every
-// current customer, not a migration.
-//
-// The handoff's SSO buttons (Google Workspace, Azure AD/Okta) are still
-// deliberately NOT recreated here -- that's Phase D, not this one.
+// Owner account at signup (Kelvin, 2026-11-18): email + password is the only
+// way in. The workspace token is never a login -- it's for webhooks and MCP,
+// generated in Settings. After sign-in:
+//   - a member with a verified TOTP factor completes the MFA challenge;
+//   - otherwise, on first login, two-factor setup is offered (skippable;
+//     recorded in the user's metadata so it's offered once);
+//   - then the workspace's billing state decides where they land: an unpaid
+//     workspace goes to /checkout to finish payment, a canceled/suspended one
+//     to /billing, everything else to the dashboard.
 
 const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 
-// 24-gap-closure Phase 4 -- MFA challenge step, added between password
-// sign-in and reaching the dashboard. 'mfa_challenge' only ever appears
-// for a member who has already enrolled a verified TOTP factor (Supabase
-// itself decides this via getAuthenticatorAssuranceLevel's nextLevel) --
-// nothing here forces enrollment; that happens separately in the
-// dashboard's Members & Security panel.
-type Mode = 'member' | 'token' | 'mfa_challenge'
+type Mode = 'credentials' | 'mfa_challenge' | 'mfa_offer'
+
+const INPUT_STYLE: React.CSSProperties = {
+  width: '100%', boxSizing: 'border-box', background: '#0c111c',
+  border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+  fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", padding: '11px 14px', outline: 'none',
+}
+const CODE_INPUT_STYLE: React.CSSProperties = {
+  ...INPUT_STYLE, fontSize: 18, letterSpacing: '.2em', textAlign: 'center', fontFamily: "'JetBrains Mono',monospace",
+}
+const LABEL_STYLE: React.CSSProperties = {
+  display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7,
+}
+const PRIMARY_BUTTON_STYLE: React.CSSProperties = {
+  width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
+  background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
+  border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
+  marginBottom: 16, fontFamily: "'IBM Plex Sans',sans-serif",
+}
+const LINK_BUTTON_STYLE: React.CSSProperties = {
+  background: 'none', border: 'none', color: '#9fc2ff', fontWeight: 500, cursor: 'pointer',
+  fontSize: 13, fontFamily: "'IBM Plex Sans',sans-serif", padding: 0,
+}
+const ERROR_STYLE: React.CSSProperties = { marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }
+const NOTE_STYLE: React.CSSProperties = { fontSize: 12.5, lineHeight: 1.6, color: 'rgba(232,236,242,.55)', margin: '0 0 12px' }
+
+function isUnconfirmedEmail(err: { message?: string; code?: string } | null): boolean {
+  return !!err && (err.code === 'email_not_confirmed' || /email not confirmed/i.test(err.message ?? ''))
+}
 
 export default function LoginPage() {
   const router = useRouter()
-  const [mode, setMode] = useState<Mode>('member')
-
+  const [mode, setMode] = useState<Mode>('credentials')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [token, setToken] = useState('')
   const [mfaCode, setMfaCode] = useState('')
   const [mfaFactorId, setMfaFactorId] = useState('')
+  const [enrollment, setEnrollment] = useState<TotpEnrollment | null>(null)
+  const [pendingToken, setPendingToken] = useState('')
+  const [unconfirmed, setUnconfirmed] = useState(false)
+  const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -48,52 +71,85 @@ export default function LoginPage() {
       router.replace('/dashboard')
       return
     }
-    if (localStorage.getItem('workspace_token') || localStorage.getItem('member_session_token')) {
-      router.replace('/dashboard')
+    if (new URLSearchParams(window.location.search).get('verified') === '1') {
+      setNotice('Email verified. Sign in to continue.')
     }
+    if (!isSupabaseConfigured()) return
+    // The verification link signs the user in (supabase-js reads the session
+    // from the URL); carry on from there instead of asking for the password.
+    getSupabaseClient().auth.getSession().then(({ data }) => {
+      if (data.session) afterSignIn(data.session)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
 
-  async function handleMemberSubmit(e: React.FormEvent) {
+  // Where a signed-in member lands depends on their workspace's billing state.
+  async function finishSignIn(accessToken: string) {
+    localStorage.removeItem('workspace_token')
+    localStorage.setItem('member_session_token', accessToken)
+    try {
+      const billing = await getBillingStatus(accessToken)
+      if (billing.subscription_status === 'pending_payment') return router.push('/checkout')
+      if (['canceled', 'suspended'].includes(billing.subscription_status)) return router.push('/billing?locked=1')
+      router.push('/dashboard')
+    } catch (err) {
+      localStorage.removeItem('member_session_token')
+      setMode('credentials')
+      setError(err instanceof ApiError && err.status === 403
+        ? 'This account isn\'t a member of any workspace yet.'
+        : err instanceof Error ? err.message : 'Sign in failed')
+    }
+  }
+
+  async function afterSignIn(session: Session) {
+    const supabase = getSupabaseClient()
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+    const { data: factors } = await supabase.auth.mfa.listFactors()
+    const verified = factors?.totp?.find(f => f.status === 'verified')
+    if (aal && aal.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') {
+      if (!verified) {
+        setError('Two-factor verification is required but no factor was found. Contact your admin.')
+        return
+      }
+      setMfaFactorId(verified.id)
+      setMode('mfa_challenge')
+      return
+    }
+    if (!verified && !session.user.user_metadata?.mfa_offered) {
+      setPendingToken(session.access_token)
+      setMode('mfa_offer')
+      return
+    }
+    await finishSignIn(session.access_token)
+  }
+
+  async function handleSignIn(e: React.FormEvent) {
     e.preventDefault()
     setError('')
+    setUnconfirmed(false)
     if (!email.trim() || !password) {
       setError('Email and password are required')
       return
     }
     if (!isSupabaseConfigured()) {
-      setError('Member sign-in is not available right now — use a workspace token instead.')
+      setError('Sign-in is not available right now. Please try again later.')
       return
     }
     setSubmitting(true)
     try {
-      const supabase = getSupabaseClient()
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+      const { data, error: signInError } = await getSupabaseClient().auth.signInWithPassword({
+        email: email.trim(), password,
       })
+      if (isUnconfirmedEmail(signInError)) {
+        setUnconfirmed(true)
+        setError('Verify your email first — open the link we sent you.')
+        return
+      }
       if (signInError || !data.session) {
         setError(signInError?.message || 'Sign in failed')
         return
       }
-
-      const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-      if (aal && aal.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') {
-        const { data: factorsData } = await supabase.auth.mfa.listFactors()
-        const factor = factorsData?.totp?.find(f => f.status === 'verified')
-        if (!factor) {
-          // Workspace requires MFA but this session hasn't stepped up --
-          // shouldn't happen (nextLevel implied a verified factor exists),
-          // but fail safe rather than silently granting aal1 access.
-          setError('Two-factor verification is required but no factor was found. Contact your admin.')
-          return
-        }
-        setMfaFactorId(factor.id)
-        setMode('mfa_challenge')
-        return
-      }
-
-      localStorage.setItem('member_session_token', data.session.access_token)
-      router.push('/dashboard')
+      await afterSignIn(data.session)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed')
     } finally {
@@ -101,7 +157,17 @@ export default function LoginPage() {
     }
   }
 
-  async function handleMfaSubmit(e: React.FormEvent) {
+  async function handleResend() {
+    setError('')
+    const { error: resendError } = await getSupabaseClient().auth.resend({
+      type: 'signup', email: email.trim(),
+      options: { emailRedirectTo: `${window.location.origin}/login?verified=1` },
+    })
+    setNotice(resendError ? '' : `We sent a new verification link to ${email.trim()}.`)
+    if (resendError) setError(resendError.message)
+  }
+
+  async function handleMfaChallenge(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     if (mfaCode.trim().length !== 6) {
@@ -117,16 +183,13 @@ export default function LoginPage() {
         return
       }
       const { data: verify, error: verifyError } = await supabase.auth.mfa.verify({
-        factorId: mfaFactorId,
-        challengeId: challenge.id,
-        code: mfaCode.trim(),
+        factorId: mfaFactorId, challengeId: challenge.id, code: mfaCode.trim(),
       })
       if (verifyError || !verify) {
         setError(verifyError?.message || 'Incorrect code')
         return
       }
-      localStorage.setItem('member_session_token', verify.access_token)
-      router.push('/dashboard')
+      await finishSignIn(verify.access_token)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Verification failed')
     } finally {
@@ -134,15 +197,47 @@ export default function LoginPage() {
     }
   }
 
-  function handleTokenSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function markMfaOffered() {
+    await getSupabaseClient().auth.updateUser({ data: { mfa_offered: true } })
+  }
+
+  async function handleStartEnrollment() {
     setError('')
-    if (!token.trim()) {
-      setError('Workspace access token is required')
-      return
+    setSubmitting(true)
+    try {
+      setEnrollment(await startTotpEnrollment())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start two-factor setup')
+    } finally {
+      setSubmitting(false)
     }
-    localStorage.setItem('workspace_token', token.trim())
-    router.push('/dashboard')
+  }
+
+  async function handleConfirmEnrollment(e: React.FormEvent) {
+    e.preventDefault()
+    if (!enrollment) return
+    setError('')
+    setSubmitting(true)
+    try {
+      const upgraded = await confirmTotpEnrollment(enrollment.factorId, mfaCode)
+      await markMfaOffered()
+      await finishSignIn(upgraded)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not verify code')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleSkipMfa() {
+    setSubmitting(true)
+    try {
+      await markMfaOffered()
+      const { data } = await getSupabaseClient().auth.getSession()
+      await finishSignIn(data.session?.access_token ?? pendingToken)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -211,172 +306,120 @@ export default function LoginPage() {
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 40px', background: '#070910' }}>
         <div style={{ width: '100%', maxWidth: 400 }}>
           <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 28, letterSpacing: '-.02em', color: '#fff', margin: '0 0 8px' }}>
-            Sign in
+            {mode === 'mfa_offer' ? 'Protect your account' : 'Sign in'}
           </h1>
           <p style={{ fontSize: 14, color: 'rgba(232,236,242,.5)', margin: '0 0 28px' }}>
-            Welcome back. Your queue is waiting.
+            {mode === 'mfa_offer'
+              ? 'Add a second factor with an authenticator app. You can also do this later in Members & Security.'
+              : 'Welcome back. Your queue is waiting.'}
           </p>
+          {notice && (
+            <p style={{ ...NOTE_STYLE, color: '#7fe0a8' }}>{notice}</p>
+          )}
 
-          {mode === 'member' ? (
-            <form onSubmit={handleMemberSubmit}>
+          {mode === 'credentials' && (
+            <form onSubmit={handleSignIn}>
               <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
-                  Email
-                </label>
+                <label style={LABEL_STYLE}>Email</label>
                 <input
-                  type="email"
-                  value={email}
+                  type="email" value={email} placeholder="you@company.com" autoComplete="email" style={INPUT_STYLE}
                   onChange={e => { setEmail(e.target.value); setError('') }}
-                  placeholder="you@company.com"
-                  autoComplete="email"
-                  style={{
-                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
-                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
-                    fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", padding: '11px 14px', outline: 'none',
-                  }}
                 />
               </div>
               <div style={{ marginBottom: 8 }}>
-                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
-                  Password
-                </label>
+                <label style={LABEL_STYLE}>Password</label>
                 <input
-                  type="password"
-                  value={password}
+                  type="password" value={password} placeholder="••••••••••••" autoComplete="current-password"
+                  style={{ ...INPUT_STYLE, fontFamily: "'JetBrains Mono',monospace" }}
                   onChange={e => { setPassword(e.target.value); setError('') }}
-                  placeholder="••••••••••••"
-                  autoComplete="current-password"
-                  style={{
-                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
-                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
-                    fontSize: 14, fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
-                  }}
                 />
-                {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
+                {error && <p style={ERROR_STYLE}>{error}</p>}
+                {unconfirmed && (
+                  <p style={{ marginTop: 6, fontSize: 12.5 }}>
+                    <button type="button" onClick={handleResend} style={LINK_BUTTON_STYLE}>Resend verification email</button>
+                  </p>
+                )}
               </div>
-
               <p style={{ textAlign: 'right', fontSize: 12.5, margin: '0 0 4px' }}>
-                <a href="/forgot-password" style={{ color: '#9fc2ff', textDecoration: 'none' }}>
-                  Forgot password?
-                </a>
+                <a href="/forgot-password" style={{ color: '#9fc2ff', textDecoration: 'none' }}>Forgot password?</a>
               </p>
-
               <button
-                type="submit"
-                disabled={submitting}
-                style={{
-                  width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
-                  background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
-                  border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
-                  marginBottom: 16, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1,
-                  fontFamily: "'IBM Plex Sans',sans-serif",
-                }}
+                type="submit" disabled={submitting}
+                style={{ ...PRIMARY_BUTTON_STYLE, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1 }}
               >
                 {submitting ? 'Signing in…' : 'Sign in →'}
               </button>
-
-              <p style={{ textAlign: 'center', fontSize: 13, margin: '0 0 20px' }}>
-                <button
-                  type="button"
-                  onClick={() => { setMode('token'); setError('') }}
-                  style={{ background: 'none', border: 'none', color: '#9fc2ff', fontWeight: 500, cursor: 'pointer', fontSize: 13, fontFamily: "'IBM Plex Sans',sans-serif" }}
-                >
-                  Use a workspace access token instead
-                </button>
-              </p>
             </form>
-          ) : mode === 'mfa_challenge' ? (
-            <form onSubmit={handleMfaSubmit}>
-              <div style={{ marginBottom: 8 }}>
-                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
-                  6-digit code
-                </label>
-                <p style={{ fontSize: 12.5, color: 'rgba(232,236,242,.5)', margin: '0 0 10px' }}>
-                  Enter the code from your authenticator app.
-                </p>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={mfaCode}
-                  onChange={e => { setMfaCode(e.target.value.replace(/\D/g, '')); setError('') }}
-                  placeholder="123456"
-                  autoComplete="one-time-code"
-                  style={{
-                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
-                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
-                    fontSize: 18, letterSpacing: '.2em', textAlign: 'center',
-                    fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
-                  }}
-                />
-                {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
-              </div>
+          )}
 
+          {mode === 'mfa_challenge' && (
+            <form onSubmit={handleMfaChallenge}>
+              <div style={{ marginBottom: 8 }}>
+                <label style={LABEL_STYLE}>6-digit code</label>
+                <p style={NOTE_STYLE}>Enter the code from your authenticator app.</p>
+                <input
+                  type="text" inputMode="numeric" maxLength={6} value={mfaCode} placeholder="123456"
+                  autoComplete="one-time-code" style={CODE_INPUT_STYLE}
+                  onChange={e => { setMfaCode(e.target.value.replace(/\D/g, '')); setError('') }}
+                />
+                {error && <p style={ERROR_STYLE}>{error}</p>}
+              </div>
               <button
-                type="submit"
-                disabled={submitting}
-                style={{
-                  width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
-                  background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
-                  border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
-                  marginBottom: 16, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1,
-                  fontFamily: "'IBM Plex Sans',sans-serif",
-                }}
+                type="submit" disabled={submitting}
+                style={{ ...PRIMARY_BUTTON_STYLE, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1 }}
               >
                 {submitting ? 'Verifying…' : 'Verify →'}
               </button>
             </form>
-          ) : (
-            <form onSubmit={handleTokenSubmit}>
-              <div style={{ marginBottom: 8 }}>
-                <label style={{ display: 'block', fontSize: 12.5, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 7 }}>
-                  Workspace access token
-                </label>
-                <input
-                  type="password"
-                  value={token}
-                  onChange={e => { setToken(e.target.value); setError('') }}
-                  placeholder="cd_ws_••••••••••••••••••••••••••••••••"
-                  autoComplete="current-password"
-                  style={{
-                    width: '100%', boxSizing: 'border-box', background: '#0c111c',
-                    border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
-                    fontSize: 14, fontFamily: "'JetBrains Mono',monospace", padding: '11px 14px', outline: 'none',
-                  }}
-                />
-                {error && <p style={{ marginTop: 6, fontSize: 12.5, color: '#ff8a7a' }}>{error}</p>}
-              </div>
+          )}
 
+          {mode === 'mfa_offer' && !enrollment && (
+            <div>
+              {error && <p style={ERROR_STYLE}>{error}</p>}
               <button
-                type="submit"
-                style={{
-                  width: '100%', fontSize: 14, fontWeight: 600, color: '#06101f',
-                  background: 'linear-gradient(180deg,#5a96ff,#2f6fe6)', padding: 13, borderRadius: 10,
-                  border: 'none', boxShadow: '0 10px 28px -10px rgba(61,125,255,.65)', marginTop: 20,
-                  marginBottom: 16, cursor: 'pointer', fontFamily: "'IBM Plex Sans',sans-serif",
-                }}
+                type="button" disabled={submitting} onClick={handleStartEnrollment}
+                style={{ ...PRIMARY_BUTTON_STYLE, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1 }}
               >
-                Sign in →
+                Set up two-factor authentication →
               </button>
-
-              <p style={{ textAlign: 'center', fontSize: 13, margin: '0 0 20px' }}>
-                <button
-                  type="button"
-                  onClick={() => { setMode('member'); setError('') }}
-                  style={{ background: 'none', border: 'none', color: '#9fc2ff', fontWeight: 500, cursor: 'pointer', fontSize: 13, fontFamily: "'IBM Plex Sans',sans-serif" }}
-                >
-                  Sign in with email instead
+              <p style={{ textAlign: 'center', margin: '0 0 20px' }}>
+                <button type="button" disabled={submitting} onClick={handleSkipMfa} style={LINK_BUTTON_STYLE}>
+                  Skip for now
                 </button>
               </p>
+            </div>
+          )}
+
+          {mode === 'mfa_offer' && enrollment && (
+            <form onSubmit={handleConfirmEnrollment}>
+              <p style={NOTE_STYLE}>Scan this with your authenticator app, then enter the 6-digit code it shows.</p>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={enrollment.qrCode} alt="Authenticator QR code" width={168} height={168}
+                style={{ display: 'block', margin: '0 auto 10px', background: '#fff', borderRadius: 8, padding: 6 }} />
+              <p style={{ ...NOTE_STYLE, textAlign: 'center', fontFamily: "'JetBrains Mono',monospace", fontSize: 11.5, wordBreak: 'break-all' }}>
+                {enrollment.secret}
+              </p>
+              <input
+                type="text" inputMode="numeric" maxLength={6} value={mfaCode} placeholder="123456"
+                autoComplete="one-time-code" style={CODE_INPUT_STYLE}
+                onChange={e => { setMfaCode(e.target.value.replace(/\D/g, '')); setError('') }}
+              />
+              {error && <p style={ERROR_STYLE}>{error}</p>}
+              <button
+                type="submit" disabled={submitting}
+                style={{ ...PRIMARY_BUTTON_STYLE, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.7 : 1 }}
+              >
+                {submitting ? 'Verifying…' : 'Turn on two-factor →'}
+              </button>
             </form>
           )}
 
-          <p style={{ textAlign: 'center', fontSize: 13.5, color: 'rgba(232,236,242,.5)', margin: 0 }}>
-            No account?{' '}
-            <a href="/signup" style={{ color: '#9fc2ff', fontWeight: 500, textDecoration: 'none' }}>
-              Create one
-            </a>
-          </p>
+          {mode === 'credentials' && (
+            <p style={{ textAlign: 'center', fontSize: 13.5, color: 'rgba(232,236,242,.5)', margin: 0 }}>
+              No account?{' '}
+              <a href="/signup" style={{ color: '#9fc2ff', fontWeight: 500, textDecoration: 'none' }}>Create one</a>
+            </p>
+          )}
         </div>
       </div>
     </div>

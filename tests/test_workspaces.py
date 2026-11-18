@@ -60,6 +60,11 @@ def _make_app_with_db(fetchrow_result=None):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=fetchrow_result)
     conn.execute = AsyncMock(return_value=None)
+    tx = AsyncMock()
+    tx.__aenter__ = AsyncMock(return_value=tx)
+    tx.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=tx)
+
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)
     pool_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -69,32 +74,68 @@ def _make_app_with_db(fetchrow_result=None):
     return request, conn
 
 
+OWNER = uuid4()
+
+
+def _signup(**kw):
+    fields = dict(company_name="Acme Engineering", contact_email="ops@acme.com", tos_accepted=True,
+                  owner_supabase_user_id=OWNER)
+    fields.update(kw)
+    return workspaces.CreateWorkspaceRequest(**fields)
+
+
+@pytest.fixture
+def verified_owner():
+    with patch.object(workspaces, "verify_new_owner", new=AsyncMock()) as verify:
+        yield verify
+
+
 class TestCreateWorkspace:
-    async def test_hash_written_matches_returned_token(self):
+    async def test_creates_workspace_and_owner_admin_member_without_returning_a_token(self, verified_owner):
         fake_id = uuid4()
         request, conn = _make_app_with_db(fetchrow_result={"id": fake_id})
 
-        result = await workspaces.create_workspace(
-            workspaces.CreateWorkspaceRequest(
-                company_name="Acme Engineering", contact_email="ops@acme.com", tos_accepted=True,
-            ),
-            request,
-        )
+        result = await workspaces.create_workspace(_signup(), request)
 
         assert result.id == str(fake_id)
-        assert result.workspace_token.startswith("cd_ws_")
-        assert "not be shown again" in result.warning
+        assert not hasattr(result, "workspace_token")
+        assert "verify" in result.message.lower()
+        verified_owner.assert_awaited_once_with(str(OWNER), "ops@acme.com")
 
-        # [0]: the INSERT. A later fetchrow is the best-effort signup_completed
-        # funnel event (migration 060); [:4] skips the optional signup_* attribution args.
+        # [0]: the workspace INSERT; [:4] skips the optional signup_* attribution args.
         sql, company_name, token_hash, contact_email = conn.fetchrow.await_args_list[0].args[:4]
-        assert "INSERT INTO workspaces" in sql
-        assert "tos_accepted_at" in sql
-        assert company_name == "Acme Engineering"
-        assert token_hash == _hash_token(result.workspace_token)
-        # never store the raw token
-        assert token_hash != result.workspace_token
-        assert contact_email == "ops@acme.com"
+        assert "INSERT INTO workspaces" in sql and "tos_accepted_at" in sql
+        assert company_name == "Acme Engineering" and contact_email == "ops@acme.com"
+        assert len(token_hash) == 64  # a sha256 of a token nobody is given
+
+        member_sql, ws_id, owner_id, email = conn.execute.await_args.args
+        assert "INSERT INTO workspace_members" in member_sql
+        assert "'admin', 'active'" in member_sql
+        assert (ws_id, owner_id, email) == (fake_id, OWNER, "ops@acme.com")
+        conn.transaction.assert_called_once()
+
+    async def test_owner_that_fails_verification_is_a_400_and_nothing_is_written(self):
+        request, conn = _make_app_with_db(fetchrow_result={"id": uuid4()})
+        from core.owner_signup import OwnerVerificationError
+        with patch.object(workspaces, "verify_new_owner",
+                          new=AsyncMock(side_effect=OwnerVerificationError("This email already has an account. Log in instead."))):
+            with pytest.raises(HTTPException) as exc:
+                await workspaces.create_workspace(_signup(), request)
+        assert exc.value.status_code == 400 and "Log in" in exc.value.detail
+        conn.fetchrow.assert_not_awaited()
+        conn.execute.assert_not_awaited()
+
+    async def test_account_that_already_owns_a_workspace_is_a_409(self, verified_owner):
+        import asyncpg
+        request, conn = _make_app_with_db(fetchrow_result={"id": uuid4()})
+        conn.execute = AsyncMock(side_effect=asyncpg.UniqueViolationError("duplicate"))
+        with pytest.raises(HTTPException) as exc:
+            await workspaces.create_workspace(_signup(), request)
+        assert exc.value.status_code == 409
+
+    async def test_owner_account_is_required(self):
+        with pytest.raises(ValidationError):
+            workspaces.CreateWorkspaceRequest(company_name="Acme", contact_email="ops@acme.com", tos_accepted=True)
 
     async def test_missing_company_name_fails_validation(self):
         with pytest.raises(ValidationError):
@@ -120,16 +161,10 @@ class TestCreateWorkspace:
                 company_name="Acme Engineering", contact_email="ops@acme.com", tos_accepted=False,
             )
 
-    async def test_contact_email_normalized_lowercase_and_trimmed(self):
-        fake_id = uuid4()
-        request, conn = _make_app_with_db(fetchrow_result={"id": fake_id})
+    async def test_contact_email_normalized_lowercase_and_trimmed(self, verified_owner):
+        request, conn = _make_app_with_db(fetchrow_result={"id": uuid4()})
 
-        await workspaces.create_workspace(
-            workspaces.CreateWorkspaceRequest(
-                company_name="Acme", contact_email="  OPS@Acme.COM  ", tos_accepted=True,
-            ),
-            request,
-        )
+        await workspaces.create_workspace(_signup(contact_email="  OPS@Acme.COM  "), request)
 
         _, _, _, contact_email = conn.fetchrow.await_args_list[0].args[:4]
         assert contact_email == "ops@acme.com"

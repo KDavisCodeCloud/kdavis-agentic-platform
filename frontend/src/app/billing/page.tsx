@@ -46,7 +46,7 @@ function BillingContent() {
   const [portalLoading, setPortalLoading] = useState(false)
 
   useEffect(() => {
-    const t = MOCK_MODE ? DEMO_TOKEN : localStorage.getItem('workspace_token')
+    const t = MOCK_MODE ? DEMO_TOKEN : localStorage.getItem('member_session_token')
     if (!t) {
       router.replace('/login')
       return
@@ -73,7 +73,6 @@ function BillingContent() {
 
   function handleCompleteSignup() {
     if (!token) return
-    sessionStorage.setItem('pending_workspace_token', token)
     router.push('/checkout')
   }
 
@@ -156,10 +155,10 @@ function BillingContent() {
               {status.subscription_status === 'pending_payment' && (
                 <>
                   <p className="text-sm text-zinc-400">
-                    Your workspace was created but checkout was never completed. Finish signing up to unlock access.
+                    Your workspace was created but payment was never completed. Finish payment to unlock access.
                   </p>
                   <Button className="mt-4 w-full" onClick={handleCompleteSignup}>
-                    Complete signup →
+                    Finish payment →
                   </Button>
                 </>
               )}

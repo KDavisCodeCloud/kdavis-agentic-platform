@@ -49,10 +49,13 @@ export function isPaywallError(err: unknown): err is ApiError {
 // component needs to know about billing state. /billing itself reads
 // status through get_workspace_any_status, which never 402s, so this can't
 // loop back on itself.
-function redirectToBilling() {
+// A workspace that has never paid (pending_payment) goes to /checkout to
+// finish payment; a canceled/suspended one goes to /billing.
+function redirectToBilling(detail?: string) {
   if (typeof window === 'undefined') return
-  if (window.location.pathname === '/billing') return
-  window.location.href = '/billing?locked=1'
+  const target = detail?.includes('pending_payment') ? '/checkout' : '/billing'
+  if (window.location.pathname === target) return
+  window.location.href = target === '/checkout' ? '/checkout' : '/billing?locked=1'
 }
 
 // A raw workspace token always starts with 'cd_ws_' (api/routes/
@@ -103,7 +106,7 @@ async function request<T>(
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }))
     const err = new ApiError(res.status, body.detail ?? `HTTP ${res.status}`)
-    if (res.status === 402) redirectToBilling()
+    if (res.status === 402) redirectToBilling(String(body.detail ?? ''))
     throw err
   }
 
@@ -756,17 +759,20 @@ export async function createWorkspace(
   companyName: string,
   contactEmail: string,
   tosAccepted: boolean,
+  // Owner account at signup: the founder's Supabase Auth user id, from
+  // supabase.auth.signUp() just before this call. No workspace token comes
+  // back -- it's never a login; the owner generates one in Settings.
+  ownerSupabaseUserId: string,
   // Migration 060: outreach ref / UTM / per-tab visitor id, all optional.
   attribution: { ref?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string; visitor_id?: string } = {},
-): Promise<{
-  id: string
-  workspace_token: string
-  warning: string
-}> {
+): Promise<{ id: string; message: string }> {
   const res = await fetch(`${API_URL}/api/v1/workspaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company_name: companyName, contact_email: contactEmail, tos_accepted: tosAccepted, ...attribution }),
+    body: JSON.stringify({
+      company_name: companyName, contact_email: contactEmail, tos_accepted: tosAccepted,
+      owner_supabase_user_id: ownerSupabaseUserId, ...attribution,
+    }),
   })
 
   if (!res.ok) {

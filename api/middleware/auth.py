@@ -47,7 +47,7 @@ _WORKSPACE_SELECT_COLUMNS = (
     "workspace_token_last4, workspace_token_rotated_at, "
     "workspace_token_last_used_at, workspace_token_expires_at, require_mfa, "
     "previous_workspace_token_expires_at, downgrade_blocked_reason, contact_email, "
-    "aws_connection_mode, azure_connection_mode, comped_at"
+    "aws_connection_mode, azure_connection_mode, comped_at, workspace_token_issued_at"
 )
 
 # 24-gap-closure Phase 4 -- fire-and-forget: a token-authenticated request
@@ -285,7 +285,7 @@ async def _get_workspace_row_by_id(conn, workspace_id) -> Optional[dict]:
     return dict(row) if row else None
 
 
-async def get_workspace_member(request: Request) -> dict:
+async def _get_workspace_member(request: Request, blocked_statuses: tuple[str, ...]) -> dict:
     """
     FastAPI dependency: validates a Supabase session JWT
     (Authorization: Bearer <token>) and resolves it to a workspace via
@@ -375,7 +375,7 @@ async def get_workspace_member(request: Request) -> dict:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
 
     status_val = workspace_row["stripe_subscription_status"]
-    if status_val in _BLOCKED_SUBSCRIPTION_STATUSES:
+    if status_val in blocked_statuses:
         log.warning(
             "[Auth] Workspace %s blocked (member session) — subscription status: %s",
             workspace_row["id"], status_val,
@@ -417,6 +417,34 @@ async def get_workspace_member(request: Request) -> dict:
     return workspace_row
 
 
+async def get_workspace_member(request: Request) -> dict:
+    """Member session (Supabase JWT) for a workspace whose subscription isn't blocked; see _get_workspace_member."""
+    return await _get_workspace_member(request, _BLOCKED_SUBSCRIPTION_STATUSES)
+
+
+def _uses_token_header(request: Request) -> bool:
+    return bool(request.headers.get("X-Workspace-Token") or request.headers.get("X-MCP-Service-Key"))
+
+
+async def get_workspace_or_member_allow_pending_payment(request: Request) -> dict:
+    """
+    get_workspace_allow_pending_payment for EITHER credential. Owner-account
+    signup (2026-11-18): the founder logs in before paying, so the one route
+    that ends pending_payment (POST /billing/checkout) has to accept their
+    member session too.
+    """
+    if _uses_token_header(request):
+        return await get_workspace_allow_pending_payment(request)
+    return await _get_workspace_member(request, ("canceled", "suspended"))
+
+
+async def get_workspace_or_member_any_status(request: Request) -> dict:
+    """get_workspace_any_status for EITHER credential: reading billing status only."""
+    if _uses_token_header(request):
+        return await get_workspace_any_status(request)
+    return await _get_workspace_member(request, ())
+
+
 async def get_workspace_or_member(request: Request) -> dict:
     """
     Accepts EITHER credential: X-Workspace-Token/X-MCP-Service-Key
@@ -431,7 +459,7 @@ async def get_workspace_or_member(request: Request) -> dict:
     support a logged-in human member session, not just the shared
     workspace token.
     """
-    if request.headers.get("X-Workspace-Token") or request.headers.get("X-MCP-Service-Key"):
+    if _uses_token_header(request):
         return await get_workspace(request)
     return await get_workspace_member(request)
 

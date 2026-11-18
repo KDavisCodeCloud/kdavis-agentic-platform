@@ -251,9 +251,7 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [k8sCaCert, setK8sCaCert] = useState('')
   const [k8sBusy, setK8sBusy] = useState(false)
 
-  // LLM key (BYOK) -- previously only settable via the disconnected/stale
-  // OnboardingWizard, which re-creates a whole new workspace if reached from
-  // an already-logged-in session. This is the real, safe home for it.
+  // LLM key (BYOK) -- set here, in Settings → Connections.
   const [llmProvider, setLlmProvider] = useState<'anthropic' | 'openai'>('anthropic')
   const [llmApiKey, setLlmApiKey] = useState('')
   const [llmBusy, setLlmBusy] = useState(false)
@@ -528,7 +526,7 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
       const result = await rotateWorkspaceToken(token)
       setRotatedToken(result.workspace_token)
       setRotationChecklist(result.alert_source_checklist)
-      setTokenStatus({ last4: result.last4, rotated_at: result.rotated_at, grace_period_ends_at: result.grace_period_ends_at })
+      setTokenStatus({ last4: result.last4, rotated_at: result.rotated_at, grace_period_ends_at: result.grace_period_ends_at, issued: true })
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not rotate the workspace token')
     } finally {
@@ -1145,18 +1143,19 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
           <SectionCard
             icon={KeyRound}
             title="Workspace Token"
-            description="Authenticates every request this workspace makes. There is no way to view the token after it was issued -- only rotate it for a new one."
-            connected={!!tokenStatus}
+            description="For alert webhooks and MCP — never for signing in. It's shown once when you generate it; after that you can only rotate it for a new one."
+            connected={!!tokenStatus?.issued}
           >
             {rotatedToken ? (
               <div className="space-y-2">
                 <p className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                  Save this token now — it won&apos;t be shown again. The old token stays valid for 72 hours
+                  Save this token now — it won&apos;t be shown again.
                   {tokenStatus?.grace_period_ends_at && (
-                    <> (until {new Date(tokenStatus.grace_period_ends_at).toLocaleString()})</>
-                  )}, so nothing breaks while you update it everywhere below.
+                    <> The old token stays valid until {new Date(tokenStatus.grace_period_ends_at).toLocaleString()},
+                    so nothing breaks while you update it everywhere below.</>
+                  )}
                 </p>
-                <CodeBlock label="New workspace token" code={rotatedToken} />
+                <CodeBlock label="Workspace token" code={rotatedToken} />
                 <div className="rounded border border-zinc-800 bg-zinc-950/50 p-3">
                   <p className="mb-1.5 text-[11px] font-medium text-zinc-400">Update this token in:</p>
                   <ul className="list-inside list-disc space-y-0.5 text-[11px] text-zinc-500">
@@ -1175,7 +1174,9 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                   </p>
                 )}
                 <p className="font-mono text-xs text-zinc-400">
-                  {tokenStatus?.last4 ? `cd_ws_••••••••${tokenStatus.last4}` : 'cd_ws_•••••••• (no hint available yet -- rotate to get one)'}
+                  {tokenStatus?.issued === false
+                    ? 'No token yet — generate one when you set up alert webhooks or MCP.'
+                    : tokenStatus?.last4 ? `cd_ws_••••••••${tokenStatus.last4}` : 'cd_ws_•••••••• (no hint available yet -- rotate to get one)'}
                 </p>
                 {tokenStatus?.rotated_at && (
                   <p className="text-[11px] text-zinc-600">
@@ -1192,8 +1193,11 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
                     ? `Expires ${new Date(tokenStatus.expires_at).toLocaleString()}`
                     : 'Never expires'}
                 </p>
-                <Button size="sm" variant="warning" disabled={tokenBusy} loading={tokenBusy} onClick={handleRotateToken}>
-                  Rotate token
+                <Button
+                  size="sm" variant={tokenStatus?.issued === false ? 'default' : 'warning'}
+                  disabled={tokenBusy} loading={tokenBusy} onClick={handleRotateToken}
+                >
+                  {tokenStatus?.issued === false ? 'Generate token' : 'Rotate token'}
                 </Button>
 
                 <div className="flex items-center gap-2 border-t border-zinc-800 pt-2">

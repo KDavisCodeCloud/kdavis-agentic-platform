@@ -788,3 +788,57 @@ else: reword.").
 
   As before, the app's own DB role has `bypassrls`, so RLS here is defence in
   depth; the application's workspace filters remain the boundary.
+
+## 2026-11-18 — Owner account at signup; the workspace token is never a login
+
+Kelvin, before design partners: "/signup collects email + password and creates
+the founder as admin member (Supabase auth) BEFORE checkout … Workspace token
+shown once in Settings with copy + rotate — never the login mechanism. Design
+partner discounts via Stripe coupon codes, not comps."
+
+**Signup.**
+- `/signup` takes company, work email and password.
+- `supabase.auth.signUp` runs in the browser. It creates the login and sends
+  the verification email; the password never reaches this API.
+- `POST /workspaces` then requires `owner_supabase_user_id`.
+  `core/owner_signup.py` checks that account exists, matches the email, and
+  is under 30 minutes old, so nobody can attach someone else's account.
+- The workspace and an `admin`/`active` `workspace_members` row are created
+  in one transaction. A second workspace for the same account returns 409.
+- No token is returned. The workspace gets a hash of a token nobody holds
+  (migration 071, `workspace_token_issued_at` NULL).
+
+**Login.**
+- Email and password only; the token login is removed from `/login`, the
+  dashboard and `/billing`.
+- An unconfirmed email gets "Resend verification email".
+- On first login without a factor, two-factor setup is offered and can be
+  skipped. Being offered is recorded in the user's Supabase metadata, so it
+  happens once.
+- The workspace's billing state decides the landing page:
+  - `pending_payment` → `/checkout` ("Finish payment")
+  - canceled/suspended → `/billing`
+  - anything else → dashboard
+- Supporting this:
+  - `get_workspace_or_member_allow_pending_payment` and `_any_status` let a
+    member session reach checkout and billing status on a locked workspace.
+  - Checkout and the billing portal are admin-only for members.
+  - Any 402 for `pending_payment` routes to `/checkout`.
+  - The dashboard keeps the stored session current as supabase-js refreshes it.
+
+**After payment.**
+- The checkout-success gate no longer reveals a token; it sends the owner to
+  `/onboarding`.
+- `/onboarding` is replaced by a guided three-step page plus the live setup
+  checklist.
+- The old `OnboardingWizard` is deleted. It created a second workspace and
+  handed out the token as a login.
+
+**Token.**
+- Settings → Connections shows "No token yet — Generate token".
+- The token is shown once with copy. The first generation has no 72h grace
+  window, since nobody held the old one; previously issued tokens keep theirs.
+
+**Discounts.** Checkout already sets `allow_promotion_codes`. Design partners
+use a Stripe coupon plus promotion code, entered on Stripe's page; the comp
+flag stays for internal workspaces only.

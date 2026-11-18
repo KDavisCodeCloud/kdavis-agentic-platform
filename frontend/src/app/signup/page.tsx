@@ -1,60 +1,78 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { createWorkspace, ApiError } from '@/lib/api'
 import { getAttribution, getVisitorId } from '@/lib/attribution'
+import { getSupabaseClient } from '@/lib/supabase'
 
 // Real /signup route, recreating signup.dc.html's 2-column layout and its
 // "Create account -> Add payment method -> Connect your stack" progress
 // indicator (step 1 of 3) -- which now maps to the real flow exactly,
 // since checkout is a required step, not optional.
 //
-// Collects company name + a contact email -- the two real fields
-// POST /workspaces takes. Email exists so Cloud Decoded's own code has
-// somewhere to send a welcome/confirmation email and an Enterprise MCP
-// invite alert, and so an admin can identify a workspace without going to
-// Stripe's dashboard. No first/last name or password -- there's no
-// per-user account system to store them in, and the handoff's SSO buttons
-// are skipped for the same reason as /login.
-//
-// The new workspace's token comes back locked (pending_payment) and
-// useless until checkout completes, so it's carried to /checkout in
-// sessionStorage rather than shown to the user here.
+// Owner account at signup (Kelvin, 2026-11-18): collects company, work email
+// and a password. supabase.auth.signUp creates the founder's login and sends
+// the verification email (the password never reaches Cloud Decoded's API);
+// POST /workspaces then creates the workspace with that account as its admin
+// member. No workspace token is handed out here -- it's never a login. After
+// verifying, the founder logs in and is sent to checkout to finish payment.
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const MIN_PASSWORD_LENGTH = 12
+
+const INPUT_STYLE: React.CSSProperties = {
+  width: '100%', boxSizing: 'border-box', background: '#0c111c',
+  border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
+  fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", padding: '10px 13px', outline: 'none',
+}
+const LABEL_STYLE: React.CSSProperties = {
+  display: 'block', fontSize: 12, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 6,
+}
 
 export default function SignupPage() {
-  const router = useRouter()
   const [companyName, setCompanyName] = useState('')
   const [contactEmail, setContactEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [agreed, setAgreed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [sentTo, setSentTo] = useState<string | null>(null)
+
+  function validate(): string {
+    if (!companyName.trim()) return 'Company name is required'
+    if (!EMAIL_RE.test(contactEmail.trim())) return 'A valid work email is required'
+    if (password.length < MIN_PASSWORD_LENGTH) return `Use a password of at least ${MIN_PASSWORD_LENGTH} characters`
+    if (!agreed) return 'Please agree to the Terms of Service and Privacy Policy'
+    return ''
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!companyName.trim()) {
-      setError('Company name is required')
-      return
-    }
-    if (!EMAIL_RE.test(contactEmail.trim())) {
-      setError('A valid work email is required')
-      return
-    }
-    if (!agreed) {
-      setError('Please agree to the Terms of Service and Privacy Policy')
+    const problem = validate()
+    if (problem) {
+      setError(problem)
       return
     }
     setSubmitting(true)
     setError('')
+    const email = contactEmail.trim()
     try {
-      const result = await createWorkspace(companyName.trim(), contactEmail.trim(), agreed, {
+      const { data, error: signUpError } = await getSupabaseClient().auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: `${window.location.origin}/login?verified=1` },
+      })
+      // Supabase returns a user with no identities when the email already has
+      // an account (it doesn't say so, to avoid leaking which emails exist).
+      if (signUpError || !data.user || (data.user.identities ?? []).length === 0) {
+        setError(signUpError?.message || 'This email already has an account. Sign in instead.')
+        return
+      }
+      await createWorkspace(companyName.trim(), email, agreed, data.user.id, {
         ...getAttribution(),
         visitor_id: getVisitorId(),
       })
-      sessionStorage.setItem('pending_workspace_token', result.workspace_token)
-      router.push('/checkout')
+      setSentTo(email)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create your account. Try again.')
     } finally {
@@ -144,16 +162,31 @@ export default function SignupPage() {
       {/* RIGHT: form */}
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 40px', background: '#070910', overflowY: 'auto' }}>
         <div style={{ width: '100%', maxWidth: 420 }}>
+          {sentTo ? (
+            <div>
+              <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 26, letterSpacing: '-.02em', color: '#fff', margin: '0 0 10px' }}>
+                Check your email
+              </h1>
+              <p style={{ fontSize: 14, lineHeight: 1.6, color: 'rgba(232,236,242,.6)', margin: '0 0 22px' }}>
+                We sent a verification link to <strong style={{ color: '#f0f3f8' }}>{sentTo}</strong>. Open it, then
+                sign in with your email and password to pick your plan.
+              </p>
+              <a href="/login" style={{ color: '#9fc2ff', fontWeight: 500, textDecoration: 'none', fontSize: 14 }}>
+                Go to sign in →
+              </a>
+            </div>
+          ) : (
+          <>
           <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 600, fontSize: 26, letterSpacing: '-.02em', color: '#fff', margin: '0 0 6px' }}>
             Create your account
           </h1>
           <p style={{ fontSize: 14, color: 'rgba(232,236,242,.5)', margin: '0 0 26px' }}>
-            Pick your plan on the next step. Cancel anytime.
+            Verify your email, then pick your plan. Cancel anytime.
           </p>
 
           <form onSubmit={handleSubmit}>
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 6 }}>
+              <label style={LABEL_STYLE}>
                 Company
               </label>
               <input
@@ -162,16 +195,12 @@ export default function SignupPage() {
                 onChange={e => { setCompanyName(e.target.value); setError('') }}
                 placeholder="Acme Corp"
                 autoComplete="organization"
-                style={{
-                  width: '100%', boxSizing: 'border-box', background: '#0c111c',
-                  border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
-                  fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", padding: '10px 13px', outline: 'none',
-                }}
+                style={INPUT_STYLE}
               />
             </div>
 
             <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: 'rgba(232,236,242,.6)', marginBottom: 6 }}>
+              <label style={LABEL_STYLE}>
                 Work email
               </label>
               <input
@@ -180,11 +209,21 @@ export default function SignupPage() {
                 onChange={e => { setContactEmail(e.target.value); setError('') }}
                 placeholder="you@acmecorp.com"
                 autoComplete="email"
-                style={{
-                  width: '100%', boxSizing: 'border-box', background: '#0c111c',
-                  border: '1px solid rgba(255,255,255,.11)', borderRadius: 9, color: '#f0f3f8',
-                  fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", padding: '10px 13px', outline: 'none',
-                }}
+                style={INPUT_STYLE}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={LABEL_STYLE}>
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError('') }}
+                placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+                autoComplete="new-password"
+                style={INPUT_STYLE}
               />
             </div>
 
@@ -220,7 +259,7 @@ export default function SignupPage() {
                 fontFamily: "'IBM Plex Sans',sans-serif",
               }}
             >
-              {submitting ? 'Creating account…' : 'Continue to payment →'}
+              {submitting ? 'Creating account…' : 'Create account →'}
             </button>
           </form>
 
@@ -230,6 +269,8 @@ export default function SignupPage() {
               Sign in
             </a>
           </p>
+          </>
+          )}
         </div>
       </div>
     </div>

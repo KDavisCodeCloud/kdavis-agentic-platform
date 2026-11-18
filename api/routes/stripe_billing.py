@@ -33,7 +33,9 @@ import stripe.error
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from api.middleware.auth import get_workspace, get_workspace_allow_pending_payment, get_workspace_any_status
+from api.middleware.auth import (
+    get_workspace_or_member, get_workspace_or_member_allow_pending_payment, get_workspace_or_member_any_status,
+)
 from core.compliance import WorkspaceComplianceGuard
 from core.funnel_events import record_workspace_server_event
 from core.email import EmailError, downgrade_deactivation_html, payment_failed_dunning_html, send_email, welcome_email_html
@@ -200,7 +202,7 @@ async def _workspace_id_for_customer(db_pool, stripe_customer_id: str) -> Option
 async def create_checkout_session(
     body: CheckoutRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace_allow_pending_payment),
+    workspace: dict = Depends(get_workspace_or_member_allow_pending_payment),
 ) -> CheckoutResponse:
     """
     Create a Stripe Checkout Session for the requested tier.
@@ -212,11 +214,15 @@ async def create_checkout_session(
     Frontend should poll GET /billing/status after success redirect
     to confirm the tier has been applied.
 
-    Uses get_workspace_allow_pending_payment, not get_workspace: every
-    brand-new signup is 'pending_payment' until this exact call succeeds
-    and its checkout completes -- get_workspace's normal block would make
-    this endpoint permanently unreachable for the one case it exists for.
+    Uses get_workspace_or_member_allow_pending_payment, not get_workspace:
+    every brand-new signup is 'pending_payment' until this exact call
+    succeeds and its checkout completes -- get_workspace's normal block
+    would make this endpoint permanently unreachable for the one case it
+    exists for. Since owner-account signup (2026-11-18) the founder reaches
+    it with their member session; only a workspace admin may start checkout.
     """
+    if workspace.get("member_role") not in (None, "admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only a workspace admin can start checkout")
     tier = body.tier.lower()
     if tier not in _VALID_TIERS:
         raise HTTPException(
@@ -353,7 +359,7 @@ async def stripe_webhook(request: Request) -> dict:
 @router.post("/portal", response_model=PortalResponse)
 async def create_customer_portal(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> PortalResponse:
     """
     Create a Stripe Customer Portal session for self-service billing.
@@ -363,8 +369,10 @@ async def create_customer_portal(
     — open this in the user's browser (new tab or redirect).
 
     Requires that the workspace has completed Checkout at least once
-    (stripe_customer_id must be set).
+    (stripe_customer_id must be set). Workspace admin only.
     """
+    if workspace.get("member_role") not in (None, "admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only a workspace admin can manage billing")
     customer_id = workspace.get("stripe_customer_id")
     if not customer_id:
         raise HTTPException(
@@ -394,7 +402,7 @@ async def create_customer_portal(
 
 @router.get("/status", response_model=BillingStatusResponse)
 async def billing_status(
-    workspace: dict = Depends(get_workspace_any_status),
+    workspace: dict = Depends(get_workspace_or_member_any_status),
 ) -> BillingStatusResponse:
     """
     Return current billing tier and subscription status for the workspace.

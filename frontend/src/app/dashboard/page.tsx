@@ -1,8 +1,8 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck, Check, Copy, KeyRound, UserCog, Coins, ShieldAlert } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Zap, LogOut, Settings, Activity, Shield, CreditCard, FileText, Users, Plug, ClipboardList, DollarSign, ShieldCheck, Check, KeyRound, UserCog, Coins, ShieldAlert } from 'lucide-react'
 import { IncidentConsole } from '@/components/IncidentConsole'
 import { ContentPipeline } from '@/components/ContentPipeline'
 import OutreachPipeline from '@/components/OutreachPipeline'
@@ -20,6 +20,7 @@ import { ContactEmailBanner } from '@/components/ContactEmailBanner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { claimGithubAppInstallation, getBillingStatus } from '@/lib/api'
+import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase'
 
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
@@ -27,42 +28,23 @@ const DEMO_TOKEN = 'ws-test-001'
 type DashTab = 'hitl' | 'content' | 'outreach' | 'integrations' | 'audit' | 'finops-agent' | 'compliance-agent' | 'connections' | 'members' | 'llm-usage' | 'policies'
 
 // Stripe's success_url (api/routes/stripe_billing.py) redirects here with
-// ?checkout_success=1 -- the workspace only exists as a locked
-// (pending_payment) sessionStorage token up to this point (see /signup,
-// /checkout), since it's useless until Stripe's webhook actually fires.
-// This polls briefly to absorb the race between the browser landing here
-// and the webhook arriving, then promotes the token to a real logged-in
-// session and reveals it once for the user to save.
-function CheckoutSuccessGate({ onReady }: { onReady: (token: string) => void }) {
-  const searchParams = useSearchParams()
+// ?checkout_success=1. The founder is already signed in (owner account at
+// signup, 2026-11-18), so this only polls briefly to absorb the race
+// between the browser landing here and Stripe's webhook arriving, then
+// sends them to /onboarding. No workspace token is revealed here -- it's
+// never a login; the owner generates one in Settings when they need it.
+function CheckoutSuccessGate({ token }: { token: string }) {
   const router = useRouter()
-  const isCheckoutSuccess = searchParams.get('checkout_success') === '1'
-  const [state, setState] = useState<'confirming' | 'ready' | 'error' | 'skip'>('confirming')
-  const [revealedToken, setRevealedToken] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [state, setState] = useState<'confirming' | 'ready' | 'error'>('confirming')
 
   useEffect(() => {
-    if (!isCheckoutSuccess) {
-      setState('skip')
-      return
-    }
-    const pending = sessionStorage.getItem('pending_workspace_token')
-    if (!pending) {
-      setState('skip')
-      return
-    }
-
     let cancelled = false
     async function poll() {
       for (let attempt = 0; attempt < 10; attempt++) {
         try {
-          const status = await getBillingStatus(pending as string)
+          const status = await getBillingStatus(token)
           if (status.subscription_status !== 'pending_payment') {
-            if (cancelled) return
-            localStorage.setItem('workspace_token', pending as string)
-            sessionStorage.removeItem('pending_workspace_token')
-            setRevealedToken(pending)
-            setState('ready')
+            if (!cancelled) setState('ready')
             return
           }
         } catch {
@@ -74,17 +56,7 @@ function CheckoutSuccessGate({ onReady }: { onReady: (token: string) => void }) 
     }
     poll()
     return () => { cancelled = true }
-  }, [isCheckoutSuccess])
-
-  if (state === 'skip') return null
-
-  function finish() {
-    if (revealedToken) onReady(revealedToken)
-    // Land directly on Connections instead of a bare dashboard -- there was
-    // previously no guided path from "just paid" to "has a working connected
-    // workspace" at all.
-    router.replace('/dashboard?tab=connections&welcome=1')
-  }
+  }, [token])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/95 backdrop-blur-sm">
@@ -104,27 +76,14 @@ function CheckoutSuccessGate({ onReady }: { onReady: (token: string) => void }) 
             </p>
           </>
         )}
-        {state === 'ready' && revealedToken && (
+        {state === 'ready' && (
           <>
             <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full border border-emerald-500/40 bg-emerald-500/10">
               <Check className="h-6 w-6 text-emerald-400" />
             </div>
             <h2 className="text-lg font-semibold text-zinc-100">Subscription active — you&apos;re in.</h2>
-            <p className="mt-2 text-sm text-zinc-500">Save your workspace access token now — it won&apos;t be shown again.</p>
-            <div className="mt-4 flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 p-3">
-              <code className="flex-1 truncate font-mono text-xs text-blue-300">{revealedToken}</code>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(revealedToken)
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 2000)
-                }}
-                className="shrink-0 rounded border border-zinc-700 bg-zinc-800 p-1.5 text-zinc-400 hover:text-zinc-200"
-              >
-                {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
-            </div>
-            <Button className="mt-5 w-full" onClick={finish}>Connect your stack →</Button>
+            <p className="mt-2 text-sm text-zinc-500">Next: connect your cloud, repository and alerts.</p>
+            <Button className="mt-5 w-full" onClick={() => router.replace('/onboarding')}>Set up your workspace →</Button>
           </>
         )}
       </div>
@@ -140,6 +99,7 @@ export default function DashboardPage() {
   const router                        = useRouter()
   const [token, setToken]             = useState<string | null>(null)
   const [hydrated, setHydrated]       = useState(false)
+  const [isCheckoutSuccess, setIsCheckoutSuccess] = useState(false)
   const [activeTab, setActiveTab]     = useState<DashTab>('hitl')
   const [showWelcome, setShowWelcome] = useState(false)
   const [githubNotice, setGithubNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null)
@@ -182,45 +142,39 @@ export default function DashboardPage() {
       setHydrated(true)
       return
     }
-    // Membership plan, Phase A: workspace_token (existing) takes priority
-    // when both are present, matching lib/api.ts's request() -- but a
-    // member-only login (no workspace token ever issued to that human)
-    // must still reach the dashboard on their Supabase session alone.
-    const stored = localStorage.getItem('workspace_token') || localStorage.getItem('member_session_token')
+    // Owner account at signup (2026-11-18): the dashboard is reached with a
+    // member session only -- the workspace token is never a login.
+    const stored = localStorage.getItem('member_session_token')
     if (!stored) {
-      // A fresh checkout-success redirect hasn't promoted its sessionStorage
-      // token to localStorage yet -- let CheckoutSuccessGate handle it
-      // instead of bouncing straight back to the marketing page.
-      const isCheckoutSuccess = new URLSearchParams(window.location.search).get('checkout_success') === '1'
-      const hasPending = !!sessionStorage.getItem('pending_workspace_token')
-      if (isCheckoutSuccess && hasPending) {
-        setHydrated(true)
-        return
-      }
       router.replace('/login')
       return
     }
     setToken(stored)
+    setIsCheckoutSuccess(new URLSearchParams(window.location.search).get('checkout_success') === '1')
     setHydrated(true)
+    // Keep the stored access token current as supabase-js refreshes the
+    // session, so a long-open dashboard doesn't start failing with 401s.
+    if (!isSupabaseConfigured()) return
+    const { data: sub } = getSupabaseClient().auth.onAuthStateChange((_event, session) => {
+      if (!session) return
+      localStorage.setItem('member_session_token', session.access_token)
+      setToken(session.access_token)
+    })
+    return () => sub.subscription.unsubscribe()
   }, [router])
 
   function handleLogout() {
     localStorage.removeItem('workspace_token')
     localStorage.removeItem('member_session_token')
+    if (isSupabaseConfigured()) getSupabaseClient().auth.signOut().catch(() => undefined)
     router.replace('/')
   }
 
-  if (!hydrated) return null
-  if (!token) {
-    return (
-      <Suspense fallback={null}>
-        <CheckoutSuccessGate onReady={setToken} />
-      </Suspense>
-    )
-  }
+  if (!hydrated || !token) return null
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950">
+      {isCheckoutSuccess && <CheckoutSuccessGate token={token} />}
       {/* Top nav */}
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-5">
         <div className="flex items-center gap-2.5">
@@ -255,11 +209,7 @@ export default function DashboardPage() {
             size="icon"
             className="h-8 w-8"
             title="Settings"
-            // Used to route to /onboarding -- OnboardingWizard independently
-            // creates a NEW workspace when reached from an already-logged-in
-            // session, since it has no notion of the current session. The
-            // Connections tab (LLM key included) is the real, safe settings
-            // surface.
+            // Settings = the Connections tab (credentials, LLM key, workspace token).
             onClick={() => setActiveTab('connections')}
           >
             <Settings className="h-3.5 w-3.5" />

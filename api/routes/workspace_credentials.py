@@ -181,6 +181,8 @@ class WorkspaceTokenStatusResponse(BaseModel):
     # reload still shows the banner correctly, not just the response
     # from the rotate call itself in that one session.
     grace_period_ends_at: str | None = None
+    # Migration 071: False until the owner first generates a token in Settings.
+    issued: bool = True
 
 
 # 24-gap-closure Phase 5 -- every place the workspace token appears in a
@@ -201,7 +203,7 @@ class RotateWorkspaceTokenResponse(BaseModel):
     workspace_token: str
     last4: str
     rotated_at: str
-    grace_period_ends_at: str
+    grace_period_ends_at: str | None  # None on a first generation (nothing to keep valid)
     alert_source_checklist: list[str] = Field(default_factory=lambda: list(_ALERT_SOURCE_CHECKLIST))
 
 
@@ -313,6 +315,7 @@ async def get_workspace_token_status(
         last_used_at=last_used_at.isoformat() if last_used_at else None,
         expires_at=expires_at.isoformat() if expires_at else None,
         grace_period_ends_at=grace_ends_at.isoformat() if grace_ends_at else None,
+        issued=workspace.get("workspace_token_issued_at") is not None,
     )
 
 
@@ -350,10 +353,15 @@ async def rotate_workspace_token_self_serve(
     async with request.app.state.db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "UPDATE workspaces SET "
-            "previous_workspace_token_hash = workspace_token, "
-            "previous_workspace_token_expires_at = NOW() + INTERVAL '72 hours', "
+            # A token that was never issued (migration 071) has no holder to
+            # protect, so its first generation gets no grace window.
+            "previous_workspace_token_hash = CASE WHEN workspace_token_issued_at IS NULL "
+            "THEN NULL ELSE workspace_token END, "
+            "previous_workspace_token_expires_at = CASE WHEN workspace_token_issued_at IS NULL "
+            "THEN NULL ELSE NOW() + INTERVAL '72 hours' END, "
             "workspace_token = $1, workspace_token_last4 = $2, "
             "workspace_token_rotated_at = NOW(), workspace_token_last_used_at = NULL, "
+            "workspace_token_issued_at = NOW(), "
             "updated_at = NOW() "
             "WHERE id = $3 "
             "RETURNING workspace_token_rotated_at, previous_workspace_token_expires_at",
@@ -374,7 +382,10 @@ async def rotate_workspace_token_self_serve(
         workspace_token=raw_token,
         last4=last4,
         rotated_at=row["workspace_token_rotated_at"].isoformat(),
-        grace_period_ends_at=row["previous_workspace_token_expires_at"].isoformat(),
+        grace_period_ends_at=(
+            row["previous_workspace_token_expires_at"].isoformat()
+            if row["previous_workspace_token_expires_at"] else None
+        ),
     )
 
 
