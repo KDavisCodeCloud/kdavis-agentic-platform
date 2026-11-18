@@ -49,6 +49,7 @@ async def register_github_app(request: Request, admin: dict = Depends(get_intern
         callback_url=f"{base_url}/api/v1/internal/github-app/callback",
         webhook_url=f"{base_url}/api/v1/webhooks/github-app",
         setup_url=f"{base_url}/api/v1/workspace/credentials/github-app/callback",
+        user_callback_url=f"{base_url}/api/v1/workspace/credentials/github-app/callback",
     )
     return {
         "manifest": manifest,

@@ -26,7 +26,9 @@ workspace route -- a real paying customer uses the same routes Kelvin does.
 import logging
 import os
 import secrets
+from urllib.parse import quote
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -34,7 +36,11 @@ from pydantic import BaseModel, Field
 
 from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
 from core.audit import write_audit_event
-from core.github_app import build_install_url, sign_workspace_state, verify_workspace_state
+from core.github_app import (
+    GitHubAppError, build_install_url, exchange_user_code, sign_installation_claim, sign_workspace_state,
+    user_can_access_installation, verify_installation_claim, verify_workspace_state,
+)
+from core.github_app_events import record_unclaimed
 from core.workspace_credentials import (
     AssumeRoleError,
     AzureConnectError,
@@ -48,7 +54,7 @@ from core.workspace_credentials import (
     verify_role,
     verify_service_principal,
 )
-from security.encryption import encrypt
+from security.encryption import decrypt, encrypt
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/workspace/credentials", tags=["workspace-credentials"])
@@ -461,49 +467,105 @@ async def get_github_app_install_url(
 
 
 @router.get("/github-app/callback")
-async def github_app_install_callback(request: Request, installation_id: str, state: str):
+async def github_app_install_callback(
+    request: Request,
+    installation_id: str,
+    state: Optional[str] = None,
+    code: Optional[str] = None,
+    setup_action: Optional[str] = None,
+):
     """
-    Public route -- GitHub redirects the customer's own browser here after
-    they click "Install" (this is the App's configured setup_url), with no
-    auth header we control. The signed `state` param (minted by
-    get_github_app_install_url) is the only thing tying this redirect back
-    to a real workspace; verify it instead of trusting installation_id alone.
+    Public route -- GitHub sends the customer's own browser here after they
+    install the App (setup URL, and the user-authorization callback since the
+    App requests OAuth during installation). No auth header we control.
 
-    Returns a real browser redirect back into the dashboard, not bare JSON --
-    this is the customer's actual browser navigating here (GitHub's setup_url
-    flow), not an API call a frontend can read a JSON body from. A JSON
-    response would just render as a blank page. Same /dashboard?connected=X
-    convention api/routes/content.py's LinkedIn/X OAuth callbacks already use.
+    Linking needs two separate proofs (Kelvin, 2026-11-17):
+      - ownership: GitHub's OAuth `code` is exchanged for the installing
+        user's token, and installation_id must be among the installations
+        that user can access (GET /user/installations). installation_id alone
+        is a query param anyone can type -- without this, a workspace could
+        claim someone else's installation and get tokens for their repos.
+        Unverified = recorded as unclaimed, never linked.
+      - workspace: our signed `state` from get_github_app_install_url. If
+        GitHub didn't carry it through, the browser gets a short-lived signed
+        claim for the verified installation instead, and the logged-in
+        dashboard redeems it (POST /github-app/claim) -- the session proves
+        the workspace.
+
+    Always ends in a browser redirect back to the dashboard, never bare JSON.
     """
-    workspace_id = verify_workspace_state(state)
+    db = request.app.state.db_pool
+    async with db.acquire() as conn:
+        app_row = await conn.fetchrow(
+            "SELECT client_id, client_secret_encrypted FROM github_app_config WHERE id = 'singleton'"
+        )
+
+    verified = False
+    if code and app_row:
+        try:
+            user_token = await exchange_user_code(app_row["client_id"], decrypt(app_row["client_secret_encrypted"]),
+                                                  code)
+            verified = await user_can_access_installation(user_token, installation_id)
+        except GitHubAppError as exc:
+            log.warning("[WorkspaceCredentials] GitHub App install ownership check failed installation=%s: %s",
+                        installation_id, exc)
+
+    if not verified:
+        async with db.acquire() as conn:
+            await record_unclaimed(conn, installation_id)
+        log.warning("[WorkspaceCredentials] GitHub App install NOT linked installation=%s: ownership unverified "
+                    "(code %s)", installation_id, "present" if code else "missing")
+        return RedirectResponse(f"{_FRONTEND_URL}/dashboard?tab=integrations&github=unverified")
+
+    workspace_id = verify_workspace_state(state) if state else None
     if not workspace_id:
-        raise HTTPException(status_code=400, detail="Invalid or expired state -- restart the install flow")
+        claim = sign_installation_claim(installation_id)
+        return RedirectResponse(f"{_FRONTEND_URL}/dashboard?tab=integrations&github_claim={quote(claim)}")
 
-    async with request.app.state.db_pool.acquire() as conn:
-        # The signed state proves which workspace started the flow, not who
-        # owns installation_id (it's a plain query param). Never move an
-        # installation another workspace already holds -- that would hand
-        # this workspace tokens for someone else's repos.
-        holder = await conn.fetchval(
-            "SELECT id FROM workspaces WHERE github_app_installation_id = $1", installation_id,
-        )
-        if holder and str(holder) != str(workspace_id):
-            log.warning("[WorkspaceCredentials] refused GitHub App claim: installation=%s already linked to "
-                        "another workspace (claimant=%s)", installation_id, workspace_id)
-            raise HTTPException(status_code=409, detail="This GitHub App installation is linked to another workspace")
-
-        await conn.execute(
-            "UPDATE workspaces SET github_app_installation_id = $1, github_app_installed_at = NOW() "
-            "WHERE id = $2",
-            installation_id,
-            workspace_id,
-        )
-        await conn.execute(
-            "DELETE FROM github_app_unclaimed_installations WHERE installation_id = $1", installation_id,
-        )
-
-    log.info("[WorkspaceCredentials] GitHub App installed workspace=%s installation=%s", workspace_id, installation_id)
+    async with db.acquire() as conn:
+        await _link_installation(conn, workspace_id, installation_id)
     return RedirectResponse(f"{_FRONTEND_URL}/dashboard?connected=github")
+
+
+class GithubAppClaimRequest(BaseModel):
+    claim: str
+
+
+@router.post("/github-app/claim")
+async def claim_github_app_installation(
+    body: GithubAppClaimRequest, request: Request, workspace: dict = Depends(get_workspace),
+) -> dict:
+    """Links an installation GitHub already verified the installing user can
+    access (the signed claim from the install callback) to the caller's own
+    workspace."""
+    installation_id = verify_installation_claim(body.claim)
+    if not installation_id:
+        raise HTTPException(status_code=400, detail="Invalid or expired GitHub install claim -- install again")
+    async with request.app.state.db_pool.acquire() as conn:
+        await _link_installation(conn, str(workspace["id"]), installation_id)
+    return {"status": "linked", "installation_id": installation_id}
+
+
+async def _link_installation(conn, workspace_id: str, installation_id: str) -> None:
+    # Never move an installation another workspace already holds.
+    holder = await conn.fetchval(
+        "SELECT id FROM workspaces WHERE github_app_installation_id = $1", installation_id,
+    )
+    if holder and str(holder) != str(workspace_id):
+        log.warning("[WorkspaceCredentials] refused GitHub App claim: installation=%s already linked to "
+                    "another workspace (claimant=%s)", installation_id, workspace_id)
+        raise HTTPException(status_code=409, detail="This GitHub App installation is linked to another workspace")
+
+    await conn.execute(
+        "UPDATE workspaces SET github_app_installation_id = $1, github_app_installed_at = NOW() "
+        "WHERE id = $2",
+        installation_id,
+        workspace_id,
+    )
+    await conn.execute(
+        "DELETE FROM github_app_unclaimed_installations WHERE installation_id = $1", installation_id,
+    )
+    log.info("[WorkspaceCredentials] GitHub App installed workspace=%s installation=%s", workspace_id, installation_id)
 
 
 @router.post("/aws-role/setup", response_model=AwsRoleSetupResponse)

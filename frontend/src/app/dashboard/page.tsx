@@ -19,7 +19,7 @@ import { PastDueBanner } from '@/components/PastDueBanner'
 import { ContactEmailBanner } from '@/components/ContactEmailBanner'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { getBillingStatus } from '@/lib/api'
+import { claimGithubAppInstallation, getBillingStatus } from '@/lib/api'
 
 const MOCK_MODE  = process.env.NEXT_PUBLIC_MOCK_MODE === 'true'
 const DEMO_TOKEN = 'ws-test-001'
@@ -142,6 +142,7 @@ export default function DashboardPage() {
   const [hydrated, setHydrated]       = useState(false)
   const [activeTab, setActiveTab]     = useState<DashTab>('hitl')
   const [showWelcome, setShowWelcome] = useState(false)
+  const [githubNotice, setGithubNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null)
 
   useEffect(() => {
     // Read once on mount, plain window.location like the checkout_success
@@ -153,7 +154,27 @@ export default function DashboardPage() {
       setActiveTab(requestedTab as DashTab)
     }
     if (params.get('welcome') === '1') setShowWelcome(true)
+    if (params.get('github') === 'unverified') {
+      setGithubNotice({ tone: 'warn', text:
+        "GitHub didn't confirm you have access to that installation, so it wasn't linked. Install again from " +
+        'Integrations and approve the authorization step GitHub shows after installing.' })
+    }
   }, [])
+
+  // GitHub install redirect with a verified-ownership claim (no workspace
+  // state came back): link it to the workspace this session belongs to.
+  useEffect(() => {
+    if (!token) return
+    const params = new URLSearchParams(window.location.search)
+    const claim = params.get('github_claim')
+    if (!claim) return
+    params.delete('github_claim')
+    window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params}` : ''}`)
+    claimGithubAppInstallation(token, claim)
+      .then(() => setGithubNotice({ tone: 'ok', text: 'GitHub connected.' }))
+      .catch((err: unknown) => setGithubNotice({ tone: 'warn', text:
+        `GitHub installation not linked: ${err instanceof Error ? err.message : 'claim failed'}` }))
+  }, [token])
 
   useEffect(() => {
     if (MOCK_MODE) {
@@ -395,6 +416,20 @@ export default function DashboardPage() {
           </span>
         )}
       </div>
+
+      {githubNotice && (
+        <div className={cn(
+          'flex shrink-0 items-center justify-between gap-3 border-b px-5 py-2.5 text-xs',
+          githubNotice.tone === 'ok'
+            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200'
+            : 'border-amber-500/20 bg-amber-500/10 text-amber-200',
+        )}>
+          <span>{githubNotice.text}</span>
+          <button onClick={() => setGithubNotice(null)} className="shrink-0 opacity-80 hover:opacity-100">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {showWelcome && activeTab === 'connections' && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-500/20 bg-blue-500/10 px-5 py-2.5 text-xs text-blue-200">

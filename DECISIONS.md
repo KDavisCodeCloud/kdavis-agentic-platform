@@ -568,9 +568,22 @@ apply options.
   - The callback refuses an installation already held by another workspace;
     the signed state proves the claimant's workspace, not ownership of
     `installation_id`.
-  - Open item: full ownership proof needs "Request user authorization
-    (OAuth) during installation" so the callback can check the user's
-    installations.
+  - **Ownership proof (Kelvin: build it now).** The manifest sets
+    `request_oauth_on_install` and `callback_urls`. The callback exchanges
+    GitHub's `code` for the installing user's token, used once and never
+    stored, and links only if `installation_id` is in that user's
+    `GET /user/installations`.
+    - No code, a refused code, or an installation not listed: recorded as
+      unclaimed, never linked. This includes a hand-completed callback like
+      the lab run-2 workaround.
+    - The workspace is proven by the signed state. GitHub's docs don't
+      promise that state survives the OAuth-on-install redirect, so if it's
+      missing the browser gets a 15-minute signed claim for the verified
+      installation. The logged-in dashboard redeems it via
+      `POST /github-app/claim`, and the session proves the workspace.
+    - The registered App needs "Request user authorization (OAuth) during
+      installation" turned on and the callback URL set by hand. Until then,
+      new installs stay unclaimed.
 - **Merged fix PR → `fix_merged`** ("Fix merged — awaiting verification"):
   - Set by the `pull_request` closed event on both the App and the
     per-workspace webhooks.

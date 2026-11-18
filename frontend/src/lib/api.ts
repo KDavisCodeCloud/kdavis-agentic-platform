@@ -981,6 +981,17 @@ export async function getGithubAppInstallUrl(token: string): Promise<{ install_u
   return request<{ install_url: string }>('/workspace/credentials/github-app/install-url', token)
 }
 
+// The install callback hands back a signed claim when GitHub verified the
+// installing user owns the installation but didn't carry our workspace state;
+// redeeming it here links that installation to the signed-in workspace.
+export async function claimGithubAppInstallation(token: string, claim: string): Promise<{ status: string }> {
+  if (MOCK_MODE) return { status: 'linked' }
+  return request<{ status: string }>('/workspace/credentials/github-app/claim', token, {
+    method: 'POST',
+    body: JSON.stringify({ claim }),
+  })
+}
+
 export async function setupAwsRole(token: string): Promise<AwsRoleSetup> {
   if (MOCK_MODE) return mockSetupAwsRole()
   return request<AwsRoleSetup>('/workspace/credentials/aws-role/setup', token, { method: 'POST' })

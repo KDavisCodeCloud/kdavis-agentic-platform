@@ -65,25 +65,30 @@ async def handle_installation_event(conn, payload: dict) -> dict:
         return {"status": "ignored", "reason": "installation already linked"}
 
     account = installation.get("account") or {}
-    await conn.execute(
-        """
-        INSERT INTO github_app_unclaimed_installations
-            (installation_id, account_login, account_type, sender_login, repository_count)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (installation_id) DO UPDATE SET received_at = NOW()
-        """,
-        installation_id,
-        account.get("login"),
-        account.get("type"),
-        (payload.get("sender") or {}).get("login"),
-        len(payload.get("repositories") or []),
-    )
+    await record_unclaimed(conn, installation_id, account.get("login"), account.get("type"),
+                           (payload.get("sender") or {}).get("login"), len(payload.get("repositories") or []))
     log.warning(
         "[GitHubAppEvents] installation %s (account=%s) created with no workspace claim -- recorded as "
         "unclaimed; the customer finishes linking from Settings → Integrations",
         installation_id, account.get("login"),
     )
     return {"status": "accepted", "message": "installation recorded as unclaimed; not linked"}
+
+
+async def record_unclaimed(conn, installation_id: str, account_login=None, account_type=None,
+                           sender_login=None, repository_count=None) -> None:
+    """An installation no workspace has proven it owns (migration 062)."""
+    await conn.execute(
+        """
+        INSERT INTO github_app_unclaimed_installations
+            (installation_id, account_login, account_type, sender_login, repository_count)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (installation_id) DO UPDATE SET
+            received_at = NOW(),
+            account_login = COALESCE(EXCLUDED.account_login, github_app_unclaimed_installations.account_login)
+        """,
+        installation_id, account_login, account_type, sender_login, repository_count,
+    )
 
 
 async def handle_fix_pr_closed(conn, workspace_id, payload: dict) -> dict:
