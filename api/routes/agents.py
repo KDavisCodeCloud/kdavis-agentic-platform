@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_approver, get_workspace_or_member
 from api.middleware.rate_limiter import limiter, _tier_limit
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 
@@ -41,7 +41,7 @@ async def run_agent(
     body: AgentRunRequest,
     request: Request,
     background_tasks: BackgroundTasks,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_approver),
 ) -> AgentRunResponse:
     """
     Manually trigger an agent with a custom payload.
@@ -264,7 +264,7 @@ async def run_agent(
 @limiter.limit(_tier_limit)
 async def list_agents(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_or_member),
 ) -> dict:
     """List agents available to this workspace based on product tier."""
     tier = workspace.get("product_tier", "starter")

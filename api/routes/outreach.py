@@ -32,7 +32,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_admin
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 from core.security import shield
 from db.outreach_models import (
@@ -324,7 +324,7 @@ async def create_lead(
     body: OutreachLeadCreate,
     request: Request,
     background_tasks: BackgroundTasks,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """
     Add a new lead and kick off the qualify → assess → propose pipeline.
@@ -367,7 +367,7 @@ async def create_lead(
 async def list_leads(
     request: Request,
     status_filter: Optional[str] = None,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> list:
     """List leads for this workspace, newest first."""
     workspace_id = str(workspace["id"])
@@ -413,7 +413,7 @@ async def list_leads(
 async def get_lead(
     lead_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Get full lead detail including pipeline outputs."""
     workspace_id = str(workspace["id"])
@@ -463,7 +463,7 @@ async def get_lead(
 async def mark_sent(
     lead_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """
     Mark that the operator has manually sent a connection request for this lead.
@@ -505,7 +505,7 @@ async def update_lead_status(
     lead_id: str,
     body: OutreachLeadStatusUpdate,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """
     Update acceptance status after manually sending a connection request.
@@ -537,7 +537,7 @@ async def update_lead_status(
 @router.get("/pacing", response_model=PacingStatus)
 async def get_pacing(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> PacingStatus:
     """
     Current pacing status — daily/weekly send counts, warnings, acceptance rate.

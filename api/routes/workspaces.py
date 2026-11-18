@@ -34,7 +34,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
+from api.middleware.auth import _hash_token, get_workspace_admin, get_workspace_or_member
 from api.middleware.rate_limiter import limiter
 from core.funnel_events import (
     clean_ref, clean_utm, clean_visitor_id, record_workspace_server_event,
@@ -194,7 +194,7 @@ async def create_workspace(
 async def save_llm_key(
     body: SaveLlmKeyRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> SaveLlmKeyResponse:
     if body.provider not in _VALID_PROVIDERS:
         raise HTTPException(

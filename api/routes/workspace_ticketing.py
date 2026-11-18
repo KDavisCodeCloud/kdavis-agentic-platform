@@ -41,7 +41,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_admin
 from core.ticketing import TICKETING_CHANNEL_TYPES
 from security.encryption import encrypt
 
@@ -166,7 +166,7 @@ async def _upsert_ticketing_channel(request: Request, workspace_id, channel_type
 async def connect_jira(
     body: ConnectJiraRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> TicketingChannelStatusResponse:
     workspace_id = workspace["id"]
     await _assert_no_conflicting_ticketing_channel(request, workspace_id, "jira")
@@ -190,7 +190,7 @@ async def connect_jira(
 async def connect_linear(
     body: ConnectLinearRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> TicketingChannelStatusResponse:
     workspace_id = workspace["id"]
     await _assert_no_conflicting_ticketing_channel(request, workspace_id, "linear")
@@ -209,7 +209,7 @@ async def connect_linear(
 async def connect_github_issues(
     body: ConnectGithubIssuesRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> TicketingChannelStatusResponse:
     workspace_id = workspace["id"]
     await _assert_no_conflicting_ticketing_channel(request, workspace_id, "github_issues")
@@ -228,7 +228,7 @@ async def connect_github_issues(
 async def connect_servicenow(
     body: ConnectServiceNowRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> TicketingChannelStatusResponse:
     """Enterprise tier only -- 402 on starter/growth, checked before the
     one-ticketing-channel conflict check so a blocked workspace gets the
@@ -256,7 +256,7 @@ async def connect_servicenow(
 @router.get("", response_model=TicketingStatusResponse)
 async def get_ticketing_status(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> TicketingStatusResponse:
     """
     Read-only channel status for the Connections settings page. Never

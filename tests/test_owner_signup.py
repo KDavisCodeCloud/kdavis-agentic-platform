@@ -107,3 +107,36 @@ class TestBillingAdminOnly:
                                                              "stripe_subscription_status": "pending_payment",
                                                              "member_role": "admin"})
         assert out.subscription_status == "pending_payment"
+
+
+class TestRoleDependencies:
+    @pytest.mark.parametrize("dep,role,allowed", [
+        (auth.get_workspace_admin, "admin", True),
+        (auth.get_workspace_admin, "approver", False),
+        (auth.get_workspace_admin, "viewer", False),
+        (auth.get_workspace_approver, "admin", True),
+        (auth.get_workspace_approver, "approver", True),
+        (auth.get_workspace_approver, "viewer", False),
+        (auth.get_workspace_admin, None, True),  # workspace token / MCP caller: full trust
+    ])
+    async def test_roles(self, dep, role, allowed):
+        ws = {"id": uuid4(), "member_role": role}
+        with patch.object(auth, "get_workspace_or_member", new=AsyncMock(return_value=ws)):
+            if allowed:
+                assert await dep(_request({})) is ws
+            else:
+                with pytest.raises(HTTPException) as exc:
+                    await dep(_request({}))
+                assert exc.value.status_code == 403
+
+
+def test_no_dashboard_route_accepts_only_the_workspace_token():
+    """The member session is the only dashboard login, so no route may depend on token-only get_workspace."""
+    import pathlib
+    import re
+    offenders = [
+        f"{p.name}:{i}" for p in pathlib.Path("api/routes").glob("*.py")
+        for i, line in enumerate(p.read_text().splitlines(), 1)
+        if re.search(r"Depends\(get_workspace\)", line)
+    ]
+    assert offenders == []

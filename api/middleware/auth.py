@@ -464,6 +464,34 @@ async def get_workspace_or_member(request: Request) -> dict:
     return await get_workspace_member(request)
 
 
+_ADMIN_ROLES = frozenset({"admin"})
+_APPROVER_ROLES = frozenset({"admin", "approver"})
+
+
+def _require_member_role(workspace: dict, allowed: frozenset, action: str) -> dict:
+    # A token/MCP caller has no member_role and keeps full trust, the same
+    # convention every role check in this codebase uses.
+    role = workspace.get("member_role")
+    if role is not None and role not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Only a workspace {action} can do this")
+    return workspace
+
+
+async def get_workspace_admin(request: Request) -> dict:
+    """
+    Token, or a member session with the admin role. Owner account at signup
+    (2026-11-18) made the member session the only dashboard login, so every
+    settings/credential route that used to accept only the workspace token
+    takes this instead.
+    """
+    return _require_member_role(await get_workspace_or_member(request), _ADMIN_ROLES, "admin")
+
+
+async def get_workspace_approver(request: Request) -> dict:
+    """Token, or a member session that may approve/dismiss findings (admin or approver)."""
+    return _require_member_role(await get_workspace_or_member(request), _APPROVER_ROLES, "admin or approver")
+
+
 async def _get_workspace_by_demo_session(request: Request) -> dict:
     """
     24-gap-closure Phase 6 -- public demo sandbox (core/demo_sandbox.py).

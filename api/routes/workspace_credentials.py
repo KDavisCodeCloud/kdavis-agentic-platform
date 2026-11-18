@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from api.middleware.auth import _hash_token, get_workspace, get_workspace_or_member
+from api.middleware.auth import _hash_token, get_workspace_admin, get_workspace_or_member
 from core.audit import write_audit_event
 from core.github_app import (
     GitHubAppError, build_install_url, exchange_user_code, sign_installation_claim, sign_workspace_state,
@@ -437,7 +437,7 @@ async def set_workspace_token_expiry(
 async def connect_github(
     body: ConnectGithubRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ConnectGithubResponse:
     """
     Retired as of the item 4 GitHub App migration (decided 2026-09-13):
@@ -461,7 +461,7 @@ async def connect_github(
 @router.get("/github-app/install-url")
 async def get_github_app_install_url(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Returns a one-time install URL for this workspace. The signed state
     param ties GitHub's install-callback redirect back to this exact
@@ -544,7 +544,7 @@ class GithubAppClaimRequest(BaseModel):
 
 @router.post("/github-app/claim")
 async def claim_github_app_installation(
-    body: GithubAppClaimRequest, request: Request, workspace: dict = Depends(get_workspace),
+    body: GithubAppClaimRequest, request: Request, workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Links an installation GitHub already verified the installing user can
     access (the signed claim from the install callback) to the caller's own
@@ -582,7 +582,7 @@ async def _link_installation(conn, workspace_id: str, installation_id: str) -> N
 @router.post("/aws-role/setup", response_model=AwsRoleSetupResponse)
 async def setup_aws_role(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> AwsRoleSetupResponse:
     platform_aws_account_id = os.environ.get("CLOUD_DECODED_AWS_ACCOUNT_ID")
     if not platform_aws_account_id:
@@ -615,7 +615,7 @@ async def setup_aws_role(
 async def connect_aws_role(
     body: ConnectAwsRoleRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> CredentialStatusResponse:
     """
     24-gap-closure Phase 5 note: unlike connect_azure/connect_azure_devops
@@ -664,7 +664,7 @@ async def connect_aws_role(
 async def connect_azure(
     body: ConnectAzureRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> CredentialStatusResponse:
     try:
         await verify_service_principal(body.azure_tenant_id, body.client_id, body.client_secret, body.subscription_id)
@@ -703,7 +703,7 @@ async def connect_azure(
 async def connect_azure_devops(
     body: ConnectAzureDevOpsRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> ConnectAzureDevOpsResponse:
     """
     Verify-then-store a workspace's Azure DevOps PAT (item 5, migration 024).
@@ -765,7 +765,7 @@ async def connect_azure_devops(
 async def connect_k8s(
     body: ConnectK8sRequest,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> CredentialStatusResponse:
     """
     Verify-then-store a workspace's Kubernetes cluster credentials

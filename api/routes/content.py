@@ -36,7 +36,7 @@ from cryptography.fernet import Fernet
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from api.middleware.auth import get_workspace
+from api.middleware.auth import get_workspace_admin
 from core.compliance import WorkspaceComplianceGuard, SubscriptionError
 from core.security import shield
 from db.content_models import (
@@ -309,7 +309,7 @@ async def generate_draft(
     body: ContentDraftCreate,
     request: Request,
     background_tasks: BackgroundTasks,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """
     Start the brief → draft → review pipeline for a new piece of content.
@@ -356,7 +356,7 @@ async def generate_draft(
 async def list_drafts(
     request: Request,
     status_filter: Optional[str] = None,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> list:
     """List content drafts for this workspace, newest first."""
     workspace_id = str(workspace["id"])
@@ -399,7 +399,7 @@ async def list_drafts(
 async def get_draft(
     draft_id: str,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """Get a single content draft with full pipeline output."""
     workspace_id = str(workspace["id"])
@@ -434,7 +434,7 @@ async def approve_draft(
     body: ContentDraftApprove,
     request: Request,
     background_tasks: BackgroundTasks,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """
     Approve a content draft and trigger publishing.
@@ -519,7 +519,7 @@ async def reject_draft(
     draft_id: str,
     body: ContentDraftReject,
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> dict:
     """
     Reject a draft with feedback. Optionally re-run the draft agent with the feedback.
@@ -584,7 +584,7 @@ async def _publish_draft(app, draft_id: str, workspace_id: str,
 @router.get("/connect/linkedin")
 async def connect_linkedin(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> RedirectResponse:
     """
     Start LinkedIn OAuth 2.0 flow. Redirects user to LinkedIn authorization page.
@@ -690,7 +690,7 @@ async def linkedin_callback(
 @router.get("/connect/x")
 async def connect_x(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> RedirectResponse:
     """
     Start X OAuth 2.0 PKCE flow. Redirects user to X authorization page.
@@ -800,7 +800,7 @@ async def x_callback(
 @router.get("/connections")
 async def list_connections(
     request: Request,
-    workspace: dict = Depends(get_workspace),
+    workspace: dict = Depends(get_workspace_admin),
 ) -> list:
     """List connected social accounts (tokens not exposed)."""
     workspace_id = str(workspace["id"])
