@@ -748,3 +748,43 @@ apply options.
   payloads.
 - **Still open:** manually resolving a `verification_failed` incident files a
   new resolution ticket rather than re-closing the reopened one.
+
+## 2026-11-18 — Claims-audit builds: Read-Only by default, no execution-policy toggle, alert payload retention + RLS
+
+Kelvin's step-3 decisions after the claims audit ("Build: read-only default,
+delete auto_execution_enabled, alert_ingestion_log retention + RLS. Everything
+else: reword.").
+
+- **Read-Only by default (migration 067).** New AWS/Azure connections start in
+  Read-Only. The column default changes, and workspaces that haven't connected
+  that provider yet are flipped. **Workspaces already connected keep their
+  current mode**, because flipping them would silently revoke write access a
+  customer granted (the same reasoning as migration 050). The UI and the status
+  API now fall back to `read_only`, never `execute`.
+- **`auto_execution_enabled` removed.** The toggle was read by nothing, and its
+  existence contradicted "approval can't be turned off". The following are
+  deleted:
+  - `GET /workspace/policies`
+  - `PATCH /workspace/policies/execution`
+  - `core/execution_policy.py`
+  - the Policies-page toggle, and the column from the auth SELECT
+
+  Settings → Policies now states plainly that every fix needs an approval. **The
+  column itself is dropped in a follow-up migration**, after this deploy is
+  live. Dropping it in the same deploy would break the old workers' auth SELECT
+  during the rolling switchover.
+- **`alert_ingestion_log` (migration 068 + `core/retention.py`).**
+  - RLS: the same service-role + `workspace_isolation` pair as migration 031.
+  - Retention: raw webhook payloads are deleted after **30 days** on every
+    tier. They're only needed while an alert is processed.
+  - Each workspace's first row is kept with its payload replaced, because the
+    setup checklist reads `MIN(received_at)` to show the alert source as
+    verified.
+  - Proved on a real Postgres:
+    - migrations through `db/migrate.py`
+    - an unscoped non-bypass role sees 0 rows
+    - the purge keeps exactly the first row, scrubbed
+    - a second pass is a no-op
+
+  As before, the app's own DB role has `bypassrls`, so RLS here is defence in
+  depth; the application's workspace filters remain the boundary.

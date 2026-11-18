@@ -121,6 +121,7 @@ class BillingStatusResponse(BaseModel):
     tier: str
     subscription_status: str
     has_billing_account: bool
+    comped: bool = False  # migration 069: a complimentary plan, no Stripe billing
 
 
 # ── Database helpers ──────────────────────────────────────────────────────────
@@ -409,6 +410,7 @@ async def billing_status(
         tier=workspace.get("product_tier", "starter"),
         subscription_status=workspace.get("stripe_subscription_status", "trialing"),
         has_billing_account=bool(workspace.get("stripe_customer_id")),
+        comped=bool(workspace.get("comped_at")),
     )
 
 

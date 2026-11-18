@@ -197,6 +197,13 @@ function BillingContent() {
                       Your last payment failed. Update your payment method to avoid losing access.
                     </p>
                   )}
+                  {status.comped ? (
+                    <p className="text-sm text-zinc-400">
+                      Complimentary {status.tier.charAt(0).toUpperCase() + status.tier.slice(1)} plan — no payment
+                      method on file and nothing is billed.
+                    </p>
+                  ) : (
+                  <>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm text-zinc-400">
                       <CreditCard className="h-4 w-4" />
@@ -211,6 +218,8 @@ function BillingContent() {
                   >
                     {MOCK_MODE ? 'Manage billing (disabled in demo)' : portalLoading ? 'Opening…' : 'Manage billing →'}
                   </Button>
+                  </>
+                  )}
                 </>
               )}
             </div>

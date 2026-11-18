@@ -10,7 +10,7 @@ import type {
   IncidentFilters, WorkspaceMembersResponse, WorkspaceMember, IncidentComment, BulkIncidentActionType, BulkIncidentActionResponse,
   ExhaustedRetriesResponse, SetTokenExpiryResult, RequireMfaResult,
   SetupChecklist, ConnectionTestResult, LlmUsage,
-  ExecutionPolicy, ResourceExemption, IncidentAuditEntry, RepoMapping,
+  ResourceExemption, IncidentAuditEntry, RepoMapping,
 } from './types'
 import {
   getMockIncidents, mockApprove, mockResolveManually, getMockAuditSubmissions, getMockAuditReport, mockActionAuditItem,
@@ -348,19 +348,6 @@ export async function exemptResourceFromIncident(
 
 // ── Settings → Policies (migrations 048/049/050) — admin-only ──────────
 
-export async function getExecutionPolicy(token: string): Promise<ExecutionPolicy> {
-  if (MOCK_MODE) return { auto_execution_enabled: false, aws_connection_mode: 'execute', azure_connection_mode: 'execute' }
-  return request<ExecutionPolicy>('/workspace/policies', token)
-}
-
-export async function setExecutionPolicy(token: string, autoExecutionEnabled: boolean): Promise<ExecutionPolicy> {
-  if (MOCK_MODE) return { auto_execution_enabled: autoExecutionEnabled, aws_connection_mode: 'execute', azure_connection_mode: 'execute' }
-  return request<ExecutionPolicy>('/workspace/policies/execution', token, {
-    method: 'PATCH',
-    body: JSON.stringify({ auto_execution_enabled: autoExecutionEnabled }),
-  })
-}
-
 export async function listResourceExemptions(token: string): Promise<ResourceExemption[]> {
   if (MOCK_MODE) return []
   const res = await request<{ exemptions: ResourceExemption[] }>('/workspace/policies/exemptions', token)
@@ -436,6 +423,7 @@ export interface BillingStatus {
   tier: string
   subscription_status: string
   has_billing_account: boolean
+  comped?: boolean
 }
 
 export async function getBillingStatus(token: string): Promise<BillingStatus> {

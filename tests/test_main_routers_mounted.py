@@ -43,5 +43,13 @@ def test_every_imported_router_is_mounted(module):
 def test_policies_routes_are_served():
     from api.main import app
     paths = {getattr(r, "path", "") for r in app.routes}
-    assert {"/api/v1/workspace/policies", "/api/v1/workspace/policies/exemptions",
+    assert {"/api/v1/workspace/policies/exemptions",
             "/api/v1/incidents/{incident_id}/exempt-resource"} <= paths
+
+
+def test_no_execution_policy_toggle_is_served():
+    """Approval can't be turned off: the auto_execution_enabled toggle was removed (2026-11-18)."""
+    from api.main import app
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/api/v1/workspace/policies" not in paths
+    assert "/api/v1/workspace/policies/execution" not in paths

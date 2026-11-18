@@ -168,8 +168,8 @@ function ConnectionModeToggle({
       </div>
       <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-600">
         {mode === 'read_only'
-          ? 'Monitoring and diagnosis still run. No write API call is ever attempted — HITL cards steer to manual resolution instead.'
-          : 'Approved remediations may write to this connection, same as before.'}
+          ? 'The default for every new connection. Monitoring and diagnosis still run; no write API call is ever attempted, and fix cards steer to manual resolution instead.'
+          : 'Approved fixes may write to this connection. Each one still needs its own approval.'}
         {!connected && ' Takes effect once this connection is verified below.'}
       </p>
       {mode === 'execute' && showRequiredRoles && (
@@ -223,9 +223,9 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
   const [awsBusy, setAwsBusy] = useState(false)
 
   // Settings → Policies, Step 3 (migration 050) -- per-connection mode.
-  const [awsMode, setAwsMode] = useState<'read_only' | 'execute'>('execute')
+  const [awsMode, setAwsMode] = useState<'read_only' | 'execute'>('read_only')
   const [awsModeBusy, setAwsModeBusy] = useState(false)
-  const [azureMode, setAzureMode] = useState<'read_only' | 'execute'>('execute')
+  const [azureMode, setAzureMode] = useState<'read_only' | 'execute'>('read_only')
   const [azureModeBusy, setAzureModeBusy] = useState(false)
 
   // Azure
@@ -281,8 +281,8 @@ export function ConnectionsPanel({ token }: ConnectionsPanelProps) {
         getTicketingStatus(token),
       ])
       setStatus(connections)
-      setAwsMode(connections.aws_connection_mode ?? 'execute')
-      setAzureMode(connections.azure_connection_mode ?? 'execute')
+      setAwsMode(connections.aws_connection_mode ?? 'read_only')
+      setAzureMode(connections.azure_connection_mode ?? 'read_only')
       setTicketingStatus(ticketing)
 
       // Token status is admin-only server-side (403 for viewer/approver

@@ -14,7 +14,16 @@ verifies live post-deploy (see GAPS.md #20's same caveat for RLS).
 
 from unittest.mock import AsyncMock, MagicMock
 
-from core.retention import _RETAINED_TABLES, run_retention_cleanup
+from core.retention import ALERT_PAYLOAD_RETENTION_DAYS, _RETAINED_TABLES, run_retention_cleanup
+
+
+def _tier_deletes(conn):
+    """The tier-scoped incidents/audit_events DELETEs (they join workspaces)."""
+    return [c for c in conn.execute.await_args_list if "USING workspaces w" in c.args[0]]
+
+
+def _ingestion_calls(conn):
+    return [c for c in conn.execute.await_args_list if "alert_ingestion_log" in c.args[0]]
 
 
 def _mock_pool(fetchval_return=True, execute_return="DELETE 0"):
@@ -68,10 +77,7 @@ class TestRunRetentionCleanup:
 
         await run_retention_cleanup(pool)
 
-        tier_params = [
-            call.args[1] for call in conn.execute.await_args_list
-            if "DELETE FROM" in call.args[0]
-        ]
+        tier_params = [call.args[1] for call in _tier_deletes(conn)]
         assert "enterprise" not in tier_params
 
     async def test_uses_starter_and_growth_retention_days(self):
@@ -79,11 +85,7 @@ class TestRunRetentionCleanup:
 
         await run_retention_cleanup(pool)
 
-        calls_by_tier = {
-            call.args[1]: call.args[2]
-            for call in conn.execute.await_args_list
-            if "DELETE FROM" in call.args[0]
-        }
+        calls_by_tier = {call.args[1]: call.args[2] for call in _tier_deletes(conn)}
         assert calls_by_tier["starter"] == "90"
         assert calls_by_tier["growth"] == "365"
 
@@ -96,10 +98,52 @@ class TestRunRetentionCleanup:
         # 3 rows each = 6 per table.
         assert result["incidents"] == 6
         assert result["audit_events"] == 6
+        # alert_ingestion_log: one tier-independent delete + one scrub, 3 rows each.
+        assert result["alert_ingestion_log"] == 3
+        assert result["alert_ingestion_log_scrubbed"] == 3
 
     async def test_zero_deletions_returns_zero_counts_not_error(self):
         pool, conn = _mock_pool(execute_return="DELETE 0")
 
         result = await run_retention_cleanup(pool)
 
-        assert result == {"incidents": 0, "audit_events": 0}
+        assert result == {"incidents": 0, "audit_events": 0,
+                          "alert_ingestion_log": 0, "alert_ingestion_log_scrubbed": 0}
+
+
+class TestAlertIngestionLogRetention:
+    async def test_deletes_old_rows_but_keeps_each_workspace_first_row(self):
+        pool, conn = _mock_pool()
+
+        await run_retention_cleanup(pool)
+
+        delete, scrub = _ingestion_calls(conn)
+        assert delete.args[0].lstrip().startswith("DELETE FROM alert_ingestion_log")
+        assert "id NOT IN" in delete.args[0] and "DISTINCT ON (workspace_id)" in delete.args[0]
+        assert delete.args[1] == str(ALERT_PAYLOAD_RETENTION_DAYS) == "30"
+
+    async def test_scrubs_the_kept_first_rows_payload(self):
+        pool, conn = _mock_pool()
+
+        await run_retention_cleanup(pool)
+
+        _, scrub = _ingestion_calls(conn)
+        assert scrub.args[0].lstrip().startswith("UPDATE alert_ingestion_log")
+        assert "SET raw_payload = $2::text::jsonb" in scrub.args[0]
+        assert "id IN" in scrub.args[0]
+        assert scrub.args[1] == "30"
+        assert "removed" in scrub.args[2]
+
+    async def test_not_tier_scoped(self):
+        pool, conn = _mock_pool()
+
+        await run_retention_cleanup(pool)
+
+        for call in _ingestion_calls(conn):
+            assert "product_tier" not in call.args[0]
+
+    async def test_skipped_when_lock_not_acquired(self):
+        pool, conn = _mock_pool(fetchval_return=False)
+
+        assert await run_retention_cleanup(pool) == {}
+        assert _ingestion_calls(conn) == []
