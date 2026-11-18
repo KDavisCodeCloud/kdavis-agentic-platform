@@ -122,7 +122,7 @@ class TestSendPagerDutyResolveEvent:
 
         with patch("core.notifications.httpx.AsyncClient", return_value=client):
             await notifications.send_pagerduty_resolve_event("routing-key-123", incident_summary)
-        resolve_dedup_key = client.post.await_args.kwargs["json"]["dedup_key"]
+        resolve_dedup_key = client.post.await_args_list[0].kwargs["json"]["dedup_key"]
 
         client2, _ = _mock_httpx_client()
         with patch("core.notifications.httpx.AsyncClient", return_value=client2):
@@ -130,6 +130,15 @@ class TestSendPagerDutyResolveEvent:
         trigger_dedup_key = client2.post.await_args.kwargs["json"]["dedup_key"]
 
         assert resolve_dedup_key == trigger_dedup_key == "abc-123"
+
+    async def test_also_resolves_the_fix_failed_alert(self):
+        """Item 5: a verification_failed alert has its own dedup key; resolving the
+        incident must clear that one too."""
+        client, _ = _mock_httpx_client()
+        with patch("core.notifications.httpx.AsyncClient", return_value=client):
+            await notifications.send_pagerduty_resolve_event("rk", {"incident_id": "abc"})
+        keys = [c.kwargs["json"]["dedup_key"] for c in client.post.await_args_list]
+        assert keys == ["abc", "abc:fix-failed"]
 
     async def test_no_payload_block(self):
         """Unlike a trigger event, PagerDuty's resolve/acknowledge events

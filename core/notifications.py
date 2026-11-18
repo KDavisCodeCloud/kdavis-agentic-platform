@@ -44,6 +44,28 @@ _PAGERDUTY_TIMEOUT_SECONDS = 10.0
 _PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
 
 
+STATUS_VERIFICATION_FAILED = "verification_failed"
+
+
+def fix_failed_dedup_key(incident_id) -> str:
+    """PagerDuty dedup key for "your fix didn't work". Separate from the
+    incident's own key: that alert may still be open (a PR that merged was
+    never a resolution), and PagerDuty folds a repeat trigger on an open key
+    into the existing alert without paging anyone."""
+    return f"{incident_id}:fix-failed"
+
+
+def _headline(status) -> str:
+    """One headline per notification kind, shared by Slack, email and PagerDuty."""
+    if status == STATUS_VERIFICATION_FAILED:
+        return "Cloud Decoded — your fix didn't work"
+    if status == "failed":
+        return "Cloud Decoded — run failed"
+    if status == "digest":
+        return "Cloud Decoded — quiet hours digest"
+    return "Cloud Decoded — incident needs approval"
+
+
 async def send_slack_notification(webhook_url: str, incident_summary: dict) -> None:
     """
     POST a Slack incoming-webhook-compatible message. Raises on failure —
@@ -73,11 +95,16 @@ async def send_pagerduty_notification(routing_key: str, incident_summary: dict) 
     yet — HITL approval doesn't currently emit one) can correlate back to
     this same PagerDuty alert instead of opening a new one.
     """
-    severity = "critical" if incident_summary.get("execution_status") == "failed" else "warning"
+    status = incident_summary.get("execution_status")
+    # verification_failed: a fix ran or merged and the problem is still there --
+    # the most important alert this product sends, so it pages as critical.
+    severity = "critical" if status in ("failed", STATUS_VERIFICATION_FAILED) else "warning"
+    dedup_key = (fix_failed_dedup_key(incident_summary.get("incident_id"))
+                 if status == STATUS_VERIFICATION_FAILED else incident_summary.get("incident_id"))
     body = {
         "routing_key": routing_key,
         "event_action": "trigger",
-        "dedup_key": incident_summary.get("incident_id"),
+        "dedup_key": dedup_key,
         "payload": {
             "summary": incident_summary.get("summary") or "Cloud Decoded incident",
             "source": incident_summary.get("agent_id") or "cloud-decoded",
@@ -101,12 +128,7 @@ async def send_email_notification(to_address: str, incident_summary: dict) -> No
     """
     from core.email import send_email
 
-    status = incident_summary.get("execution_status")
-    subject = (
-        "Cloud Decoded — run failed" if status == "failed"
-        else "Cloud Decoded — quiet hours digest" if status == "digest"
-        else "Cloud Decoded — incident needs approval"
-    )
+    subject = _headline(incident_summary.get("execution_status"))
     body_lines = [incident_summary.get("summary", "")]
     if incident_summary.get("resource_name"):
         body_lines.append(f"Resource: {incident_summary['resource_name']}")
@@ -128,21 +150,19 @@ async def send_pagerduty_resolve_event(routing_key: str, incident_summary: dict)
     events take only routing_key + event_action + dedup_key. Raises on
     failure -- callers (core/ticketing.py's notify_resolution) catch.
     """
-    body = {
-        "routing_key": routing_key,
-        "event_action": "resolve",
-        "dedup_key": incident_summary.get("incident_id"),
-    }
+    incident_id = incident_summary.get("incident_id")
     async with httpx.AsyncClient(timeout=_PAGERDUTY_TIMEOUT_SECONDS) as client:
-        response = await client.post(_PAGERDUTY_EVENTS_URL, json=body)
-        response.raise_for_status()
+        # Also resolves a "your fix didn't work" alert, if one was raised (no-op otherwise).
+        for dedup_key in (incident_id, fix_failed_dedup_key(incident_id)):
+            response = await client.post(_PAGERDUTY_EVENTS_URL, json={
+                "routing_key": routing_key, "event_action": "resolve", "dedup_key": dedup_key,
+            })
+            response.raise_for_status()
 
 
 def _format_slack_text(incident_summary: dict) -> str:
-    status = incident_summary.get("execution_status")
-    header = "Cloud Decoded — run failed" if status == "failed" else "Cloud Decoded — incident needs approval"
     lines = [
-        f"*{header}*",
+        f"*{_headline(incident_summary.get('execution_status'))}*",
         f"Agent: {incident_summary.get('agent_id', 'unknown')}",
         f"Summary: {incident_summary.get('summary', '')}",
     ]

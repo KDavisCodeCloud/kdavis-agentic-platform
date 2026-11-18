@@ -282,7 +282,7 @@ class TestBulkIncidentAction:
         )
 
         assert result.results[0].outcome == "applied"
-        audit_calls = [c for c in conn.execute.await_args_list if "bulk_manual_resolution" in c.args[0]]
+        audit_calls = [c for c in conn.execute.await_args_list if "bulk_manual_resolution" in c.args]
         assert len(audit_calls) == 1
 
     async def test_writes_one_audit_row_per_incident_not_one_for_the_batch(self):
@@ -467,3 +467,56 @@ def test_frontend_status_rules_match_the_backend():
 
     assert ts_list("REJECTABLE_STATUSES") == set(REJECTABLE_STATUSES)
     assert ts_list("MANUALLY_RESOLVABLE_STATUSES") == set(MANUALLY_RESOLVABLE_STATUSES)
+
+
+# ── Item 5: bulk resolve fires ticketing through the single endpoint's path ──
+
+def _resolvable_row(incident_id):
+    return {"id": incident_id, "agent_id": "agent_08_drift_detection", "execution_status": "proposed",
+            "resource_name": "sg-123", "resource_group": "rg", "metric_name": None, "parsed_error": "port 22 open",
+            "cloud_provider": "aws", "severity": "high"}
+
+
+async def test_bulk_and_single_resolve_send_the_same_ticketing_payload():
+    single_id, bulk_id = uuid4(), uuid4()
+    with patch("core.ticketing.schedule_resolution_notification") as ticketing:
+        request, _ = _make_request(fetchrow_return=_resolvable_row(single_id))
+        await incidents.resolve_incident_manually(
+            str(single_id), IncidentResolveManuallyRequest(resolution_note="merged"), request,
+            workspace={"id": uuid4(), "member_id": "m-1"})
+        request, _ = _make_request(fetchrow_side_effect=[_resolvable_row(bulk_id)])
+        await incidents.bulk_incident_action(
+            BulkIncidentActionRequest(incident_ids=[str(bulk_id)], action="resolve_manually", resolution_note="merged"),
+            request, workspace={"id": uuid4(), "member_id": "m-1"})
+
+    assert ticketing.call_count == 2
+    (single_ws, single_summary), single_kw = ticketing.call_args_list[0]
+    (bulk_ws, bulk_summary), bulk_kw = ticketing.call_args_list[1]
+    assert single_summary["incident_id"] == str(single_id) and bulk_summary["incident_id"] == str(bulk_id)
+    strip = lambda d: {k: v for k, v in d.items() if k not in ("incident_id", "resolved_at")}  # noqa: E731
+    assert strip(single_summary) == strip(bulk_summary)
+    assert bulk_summary["execution_status"] == "resolved_manually"
+    assert single_kw == bulk_kw == {"resolved_by": "m-1"}
+
+
+async def test_bulk_resolve_skipped_incident_fires_no_ticketing():
+    incident_id = uuid4()
+    row = {**_resolvable_row(incident_id), "execution_status": "executed"}  # not manually resolvable
+    with patch("core.ticketing.schedule_resolution_notification") as ticketing:
+        request, _ = _make_request(fetchrow_side_effect=[row])
+        result = await incidents.bulk_incident_action(
+            BulkIncidentActionRequest(incident_ids=[str(incident_id)], action="resolve_manually"),
+            request, workspace={"id": uuid4()})
+    assert result.results[0].outcome == "not_pending"
+    ticketing.assert_not_called()
+
+
+async def test_bulk_dismiss_fires_no_ticketing():
+    incident_id = uuid4()
+    row = {**_resolvable_row(incident_id), "execution_status": "pending_approval"}
+    with patch("core.ticketing.schedule_resolution_notification") as ticketing:
+        request, _ = _make_request(fetchrow_side_effect=[row])
+        await incidents.bulk_incident_action(
+            BulkIncidentActionRequest(incident_ids=[str(incident_id)], action="dismiss"),
+            request, workspace={"id": uuid4()})
+    ticketing.assert_not_called()

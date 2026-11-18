@@ -670,3 +670,81 @@ apply options.
   - **Runs** as an in-process loop every 60 seconds. Every uvicorn worker
     runs it, so due rows are claimed with `FOR UPDATE SKIP LOCKED` plus a
     10-minute lease.
+
+## 2026-11-17 — Break-It Lab item 5: regression linking (G2), source-resolved ingest (G3), "your fix didn't work" alerts, bulk-resolve ticketing
+
+- **G2: a fixed problem that comes back says so.** Lab step 6 re-injected
+  every fixed problem. Each came back as a fresh incident with no link, and
+  agents 05, 06 and 08 stored no resource identity to link on.
+  - Each agent now passes a deterministic `regression_key` (never LLM text),
+    built in `core/regression.py`:
+
+    | Agent | Key |
+    |---|---|
+    | 05 AWS | the policy ARN |
+    | 05 Azure | the scope plus the principal |
+    | 06 | the sorted set of instances / VMs recommended for stopping |
+    | 08 | the drifted resource (08 also stores `resource_id` now; its exemptions already keyed on it) |
+    | 11 | the resource plus the alert rule |
+
+  - `create_incident` links the new incident to the most recent earlier one
+    with the same workspace, agent and key (`previous_incident_id`). It sets
+    `is_regression` only when that earlier incident was fixed or claimed to
+    be (`executed`, `fix_merged`, `verified`, `resolved_manually`). A
+    recurrence of something never fixed is linked, but it isn't a regression.
+  - When a regression arrives, the notification leads with "REGRESSION". If
+    the earlier incident is still awaiting verification, its check is pulled
+    forward to now.
+  - **Not changed:** 05 and 06 still store no `resource_id`. Exemptions key
+    on it and those agents don't honour exemptions, so setting it would
+    offer an "Exempt" button that does nothing. 05, 06 and 08 still have no
+    open-incident dedup: a second manual trigger while the first incident is
+    pending creates a second, linked incident.
+- **G3: the alert source's "resolved" is no longer dropped.** CloudWatch `OK`
+  and Azure Monitor `Resolved` now take Agent 11's existing source-resolution
+  path (Alertmanager/Grafana already did). It never diagnoses and never
+  creates an incident.
+  - It matches open incidents and also ones awaiting verification
+    (`executed`, `proposed`, `fix_merged`). Lab Z1's alert auto-resolved
+    after its incident said "executed".
+  - It records `source_resolved_at` and pulls that incident's verification
+    forward. The source's word alone never closes anything; verification
+    re-reads live state.
+  - `source_resolved_at` and the regression fields are now returned by the
+    API and shown on the dashboard.
+  - **Known limit:** Agent 11's verification check *is* the alarm state. A
+    lab-Z1-style auto-resolve (CPU credits exhausted, the stress loop still
+    running) would verify as fixed. Alarm state is the only deterministic
+    signal Agent 11 has.
+  - The AKS route (Agent 02) still drops resolved alerts. It's out of the
+    lab's scope.
+- **verification_failed is "your fix didn't work", the most important alert
+  this product sends.** It goes to every notification channel (Slack,
+  PagerDuty, email) with that headline.
+  - It's sent at severity `critical` so no channel's severity floor filters
+    it out. The incident's own severity is unchanged and travels along as
+    `incident_severity`. Quiet hours still apply because they're the
+    customer's explicit choice.
+  - PagerDuty pages critical on its own dedup key (`<incident>:fix-failed`).
+    The incident's original alert may still be open (a merged PR was never a
+    resolution), and PagerDuty folds a repeat trigger on an open key into
+    that alert without paging. A later resolve clears both keys.
+  - The resolution ticket, if one was filed (the incident's successful
+    `ticket_created` audit event), is reopened with a comment:
+
+    | Provider | Reopen |
+    |---|---|
+    | GitHub | reopen |
+    | Jira | transition out of a Done-category status |
+    | Linear | move to the team's unstarted (else started) state |
+    | ServiceNow | work note plus the same literal-state caveat as creation |
+
+  - A failed reopen is audited and retried through the notification retry
+    queue (`send_kind = 'reopen'`, migration 065).
+- **Bulk resolve fires ticketing through the single endpoint's path.**
+  `_record_manual_resolution` is the one path for both: it writes the status,
+  the per-incident audit row and the resolution ticketing / PagerDuty
+  resolve. A test asserts that single and bulk send identical ticketing
+  payloads.
+- **Still open:** manually resolving a `verification_failed` incident files a
+  new resolution ticket rather than re-closing the reopened one.

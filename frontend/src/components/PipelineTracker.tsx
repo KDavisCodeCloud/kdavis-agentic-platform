@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
 import { SEVERITY_META, MANUALLY_RESOLVABLE_STATUSES } from '@/lib/types'
+import { RegressionBadge } from '@/components/IncidentHistory'
 
 interface PipelineTrackerProps {
   incidents: Incident[]
@@ -162,6 +163,7 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
               {severityMeta.label}
             </span>
           )}
+          <RegressionBadge incident={incident} />
         </div>
         <span className="shrink-0 text-xs text-zinc-600">
           {incident.created_at ? timeAgo(incident.created_at) : '—'}

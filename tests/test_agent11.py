@@ -1086,14 +1086,16 @@ class TestHITLGateNode:
         state["remediation_options"] = [{"id": "opt_1"}]
 
         incident_uuid = uuid4()
-        mock_db.fetchrow.return_value = {"id": incident_uuid}
+        mock_db.fetchrow.side_effect = [{"id": incident_uuid}, None]  # INSERT, then G2's predecessor lookup
 
         with patch("agents.agent_11_resource_health.workflow.interrupt") as mock_interrupt:
             mock_interrupt.return_value = {"id": "opt_1"}
             result = await wf._hitl_gate_node(state)
 
-        mock_db.fetchrow.assert_called_once()
-        assert "INSERT INTO incidents" in mock_db.fetchrow.call_args.args[0]
+        insert = mock_db.fetchrow.call_args_list[0].args
+        assert "INSERT INTO incidents" in insert[0]
+        assert "alert:" in insert[-1]  # G2 regression_key: alert on this resource
+        assert "regression_key = $3" in mock_db.fetchrow.call_args_list[1].args[0]
         mock_interrupt.assert_called_once()
         assert result["incident_id"] == str(incident_uuid)
 
@@ -1107,13 +1109,13 @@ class TestHITLGateNode:
         state["parsed_error"] = "High CPU on acme-prod-vm"
         state["remediation_options"] = [{"id": "opt_1"}]
 
-        mock_db.fetchrow.return_value = {"id": uuid4()}
         mock_db.fetchrow.reset_mock()
+        mock_db.fetchrow.side_effect = [{"id": uuid4()}, None]
 
         with patch("agents.agent_11_resource_health.workflow.interrupt", return_value={"id": "opt_1"}):
             await wf._hitl_gate_node(state)
 
-        args = mock_db.fetchrow.call_args.args
+        args = mock_db.fetchrow.call_args_list[0].args
         assert "medium" in args
         assert "Sev2" not in args
 

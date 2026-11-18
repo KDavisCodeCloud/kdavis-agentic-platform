@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
+from core.regression import link_previous, regression_summary
+
 log = logging.getLogger(__name__)
 
 # Execution status values — keep in sync with db/schema.sql
@@ -45,6 +47,13 @@ STATUS_VERIFICATION_FAILED = "verification_failed"  # G4: still not fixed at the
 REJECTABLE_STATUSES = frozenset({STATUS_PENDING})
 MANUALLY_RESOLVABLE_STATUSES = frozenset({STATUS_PENDING, STATUS_PROPOSED, STATUS_FIX_MERGED,
                                           STATUS_VERIFICATION_FAILED})
+
+
+# G3: an alert source's own "resolved" (CloudWatch OK, Azure Resolved,
+# Alertmanager/Grafana resolved) is recorded on the open incident, or on one
+# whose fix ran, was proposed or merged and still awaits verification.
+SOURCE_RESOLVABLE_STATUSES = (STATUS_PENDING, STATUS_EXECUTING, STATUS_EXECUTED, STATUS_PROPOSED,
+                              STATUS_FIX_MERGED)
 
 
 def rejection_allowed(status: str) -> bool:
@@ -94,6 +103,7 @@ class HITLGate:
         metric_threshold: Optional[float] = None,
         alert_name: Optional[str] = None,
         severity: str = "medium",
+        regression_key: Optional[str] = None,
     ) -> str:
         """
         Persist a new incident in pending_approval state and write to audit log.
@@ -122,6 +132,10 @@ class HITLGate:
         (GAPS.md scale-readiness build, migration 029). Agents 01-10 never
         pass them and their incidents simply get NULL in these columns,
         exactly as before this change.
+
+        regression_key: deterministic "what was wrong, where" (G2,
+        core/regression.py). When set, the new incident is linked to the
+        most recent earlier one with the same workspace + agent + key.
         """
         raw_log_hash = hashlib.sha256(raw_log.encode()).hexdigest()
         now = datetime.now(timezone.utc)
@@ -142,9 +156,9 @@ class HITLGate:
                     tokens_used, estimated_duration_seconds,
                     resource_id, resource_name, resource_group,
                     metric_name, metric_current_value, metric_threshold,
-                    alert_name, last_seen_at, severity
+                    alert_name, last_seen_at, severity, regression_key
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                          $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 ON CONFLICT (id) DO NOTHING
                 RETURNING id
                 """,
@@ -167,6 +181,7 @@ class HITLGate:
                 alert_name,
                 now,
                 severity,
+                regression_key,
             )
         else:
             row = await self._db.fetchrow(
@@ -177,9 +192,9 @@ class HITLGate:
                     tokens_used, estimated_duration_seconds,
                     resource_id, resource_name, resource_group,
                     metric_name, metric_current_value, metric_threshold,
-                    alert_name, last_seen_at, severity
+                    alert_name, last_seen_at, severity, regression_key
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                          $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                          $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                 RETURNING id
                 """,
                 workspace_id,
@@ -200,6 +215,7 @@ class HITLGate:
                 alert_name,
                 now,
                 severity,
+                regression_key,
             )
         if row is None:
             # ON CONFLICT DO NOTHING fired -- this incident already exists
@@ -214,8 +230,11 @@ class HITLGate:
             f"[HITL] Incident {created_id} created — awaiting operator approval",
             extra={"workspace_id": workspace_id, "agent_id": agent_id, "incident_id": created_id},
         )
+        link = await link_previous(self._db, workspace_id, agent_id, regression_key, created_id)
+        if link and link["is_regression"]:
+            self._write_audit_entry(workspace_id, agent_id, created_id, "regression_detected", 0)
         self._fire_notification(
-            workspace_id, agent_id, created_id, STATUS_PENDING, parsed_error,
+            workspace_id, agent_id, created_id, STATUS_PENDING, regression_summary(parsed_error, link),
             alert_name=alert_name, resource_name=resource_name,
         )
         return created_id
@@ -225,6 +244,7 @@ class HITLGate:
         workspace_id: str,
         resource_id: Optional[str],
         alert_name: Optional[str],
+        statuses=(STATUS_PENDING, STATUS_EXECUTING),
     ) -> Optional[dict]:
         """
         Dedup lookup (Phase 3, GAPS.md scale-readiness build): an OPEN
@@ -239,6 +259,9 @@ class HITLGate:
         match against, and a bare "unknown"=="unknown" match would
         incorrectly collapse unrelated alerts from different resources
         that both failed to parse a real identifier.
+
+        statuses: which statuses count. Dedup uses the default (open only);
+        a source-reported resolution (G3) also matches SOURCE_RESOLVABLE_STATUSES.
         """
         if not resource_id or resource_id == "unknown" or not alert_name or alert_name == "unknown":
             return None
@@ -257,7 +280,7 @@ class HITLGate:
             workspace_id,
             resource_id,
             alert_name,
-            [STATUS_PENDING, STATUS_EXECUTING],
+            list(statuses),
         )
         return dict(row) if row else None
 
@@ -297,8 +320,13 @@ class HITLGate:
         path," and this is exactly that other path: source-reported, not
         operator-reported.
         """
+        # G3 + G4: the source says the condition cleared. If a fix is awaiting
+        # verification, check it now -- verification re-reads live state itself,
+        # so a premature or flapping "resolved" can't close anything on its own.
         await self._db.execute(
-            "UPDATE incidents SET source_resolved_at = $2 WHERE id = $1",
+            "UPDATE incidents SET source_resolved_at = $2, "
+            "verification_next_at = CASE WHEN verification_next_at IS NOT NULL THEN $2 "
+            "ELSE verification_next_at END WHERE id = $1",
             UUID(str(incident_id)),
             datetime.now(timezone.utc),
         )

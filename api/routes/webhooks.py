@@ -521,10 +521,13 @@ async def resource_health_alert_webhook(
 
     if is_azure_monitor:
         condition = payload["data"]["essentials"].get("monitorCondition", "")
-        if condition != "Fired":
-            return {"status": "ignored", "reason": f"monitorCondition='{condition}' — only 'Fired' triggers triage"}
+        # G3: 'Resolved' is no longer dropped -- Agent 11 records it on the matching
+        # incident (and pulls its post-fix verification forward); it never diagnoses.
+        if condition not in ("Fired", "Resolved"):
+            return {"status": "ignored", "reason": f"monitorCondition='{condition}' — only 'Fired' or 'Resolved' are handled"}
 
-        log.info("[Webhooks] Resource health alert received — workspace=%s format=azure_monitor", workspace["id"])
+        log.info("[Webhooks] Resource health alert received — workspace=%s format=azure_monitor condition=%s",
+                 workspace["id"], condition)
         async with db.acquire() as conn:
             log_id = await log_alert_received(conn, workspace["id"], payload)
         background_tasks.add_task(
@@ -550,10 +553,12 @@ async def resource_health_alert_webhook(
         except json.JSONDecodeError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SNS Message was not valid JSON")
 
-        if alarm.get("NewStateValue") != "ALARM":
-            return {"status": "ignored", "reason": f"NewStateValue='{alarm.get('NewStateValue')}' — only 'ALARM' triggers triage"}
+        # G3: OK is the alarm's own "resolved" -- handled like Azure 'Resolved' above.
+        if alarm.get("NewStateValue") not in ("ALARM", "OK"):
+            return {"status": "ignored", "reason": f"NewStateValue='{alarm.get('NewStateValue')}' — only 'ALARM' or 'OK' are handled"}
 
-        log.info("[Webhooks] Resource health alert received — workspace=%s format=aws_cloudwatch", workspace["id"])
+        log.info("[Webhooks] Resource health alert received — workspace=%s format=aws_cloudwatch state=%s",
+                 workspace["id"], alarm.get("NewStateValue"))
         async with db.acquire() as conn:
             log_id = await log_alert_received(conn, workspace["id"], {"cloudwatch_alarm": alarm})
         background_tasks.add_task(

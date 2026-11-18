@@ -63,7 +63,9 @@ from agents.agent_11_resource_health.tools import ResourceHealthTools
 from agents.agent_11_resource_health.tools import option_catalog
 from core.hcl_edit import HclEditError
 from core.iac_fix import attach_diff, iac_prompt_block, load_iac_file, prepare_proposal
+from core.hitl import SOURCE_RESOLVABLE_STATUSES
 from core.option_catalog import bind_options, catalog_prompt_block
+from core.regression import alert_key
 from core.security import shield
 from core.severity import normalize_severity
 
@@ -541,6 +543,8 @@ class ResourceHealthWorkflow(BaseAgent):
 
             resource_name, resource_group = _parse_arm_resource(resource_id)
             metric_name, metric_current_value, metric_threshold = _extract_azure_metric_context(payload)
+            if essentials.get("monitorCondition") == "Resolved":  # G3
+                alert_status = "resolved"
 
             log_lines = [
                 f"Alert Rule: {alert_name}",
@@ -571,6 +575,8 @@ class ResourceHealthWorkflow(BaseAgent):
             resource_group = _extract_aws_account_id(alarm)
             metric_name = trigger.get("MetricName")
             reason = alarm.get("NewStateReason", "")
+            if alarm.get("NewStateValue") == "OK":  # G3: the alarm's own resolution
+                alert_status = "resolved"
             metric_current_value, metric_threshold = _extract_aws_metric_context(reason)
 
             log_lines = [
@@ -685,10 +691,13 @@ class ResourceHealthWorkflow(BaseAgent):
         if state.get("alert_status") != "resolved":
             return {}
 
+        # G3: also an incident whose fix ran / proposed / merged and is awaiting
+        # verification -- lab Z1 auto-resolved after its incident said "executed".
         existing = await self.hitl.find_open_incident(
             workspace_id=self.workspace_id,
             resource_id=state.get("resource_id"),
             alert_name=state.get("alert_name"),
+            statuses=SOURCE_RESOLVABLE_STATUSES,
         )
         if not existing:
             log.info(
@@ -910,6 +919,7 @@ class ResourceHealthWorkflow(BaseAgent):
             metric_threshold=state.get("metric_threshold"),
             alert_name=state.get("alert_name"),
             severity=normalize_severity(state.get("severity")),
+            regression_key=alert_key(state.get("resource_id", ""), state.get("alert_name", "")),
         )
 
         await self.record_token_usage(

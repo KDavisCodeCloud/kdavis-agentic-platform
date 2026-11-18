@@ -76,6 +76,14 @@ def _evidence(raw) -> Optional[list]:
         raw = json.loads(raw)
     return raw or None
 
+def _regression_fields(row) -> dict:
+    """G2/G3 fields shared by GET /incidents and GET /incidents/{id}."""
+    prev = row.get("previous_incident_id")
+    return {"previous_incident_id": str(prev) if prev else None,
+            "is_regression": bool(row.get("is_regression")),
+            "source_resolved_at": row.get("source_resolved_at")}
+
+
 def _json_obj(raw) -> Optional[dict]:
     """A JSONB object column, decoded or as a string. None when absent."""
     if raw is None:
@@ -235,7 +243,7 @@ async def get_incident(
             SELECT i.id, i.workspace_id, i.agent_id, i.parsed_error, i.remediation_options,
                    i.selected_option_id, i.execution_status, i.estimated_duration_seconds, i.tokens_used,
                    i.severity, i.resource_id, i.resource_name, i.cloud_provider, i.created_at, i.assigned_to,
-                   i.failure_reason, i.failure_kind, i.evidence, i.verification_result,
+                   i.failure_reason, i.failure_kind, i.evidence, i.verification_result, i.previous_incident_id, i.is_regression, i.source_resolved_at,
                    m.email AS assigned_to_email
             FROM incidents i
             LEFT JOIN workspace_members m ON m.id = i.assigned_to
@@ -276,6 +284,7 @@ async def get_incident(
         failure_kind=row["failure_kind"],
         evidence=_evidence(row.get("evidence")),
         verification_result=_json_obj(row.get("verification_result")),
+        **_regression_fields(row),
     )
 
 
@@ -611,6 +620,59 @@ async def reject_incident(
     }
 
 
+# What a manual resolution needs from the incident row (status guard + ticket narrative).
+_RESOLUTION_COLUMNS = ("id, agent_id, execution_status, resource_name, resource_group, "
+                       "metric_name, parsed_error, cloud_provider, severity")
+
+
+async def _record_manual_resolution(conn, workspace: dict, row: dict, note: Optional[str],
+                                    resolved_at: datetime, audit_action: str) -> None:
+    """The one path a manual resolution takes, single or bulk: mark the incident
+    resolved_manually, write its own audit_events row, and fire resolution
+    ticketing + PagerDuty resolve. Callers have already checked
+    manual_resolution_allowed(); schedule_resolution_notification applies the
+    ticketing guard (RESOLVED_STATUSES). Ticketing is best-effort and never
+    fails the resolution."""
+    await conn.execute(
+        "UPDATE incidents SET execution_status = 'resolved_manually', resolution_note = $1, resolved_at = $2 "
+        "WHERE id = $3",
+        note, resolved_at, row["id"],
+    )
+    # A real audit_events row per incident: "all incidents resolved manually this
+    # month" must be queryable for the customer's own reporting.
+    await conn.execute(
+        """
+        INSERT INTO audit_events (workspace_id, agent_id, incident_id, action, status, metadata)
+        VALUES ($1, $2, $3, $4, 'resolved_manually', $5)
+        """,
+        workspace["id"], row["agent_id"], row["id"], audit_action,
+        json.dumps({"resolution_note": note} if note else {}),
+    )
+    # resolved_by: the acting member's id for a member session, None for a token caller.
+    try:
+        from core.ticketing import schedule_resolution_notification
+
+        schedule_resolution_notification(
+            str(workspace["id"]),
+            {
+                "incident_id": str(row["id"]),
+                "execution_status": "resolved_manually",
+                "agent_id": row["agent_id"],
+                "resource_name": row.get("resource_name"),
+                "resource_group": row.get("resource_group"),
+                "metric_name": row.get("metric_name"),
+                "parsed_error": row.get("parsed_error"),
+                "resolution_note": note,
+                "resolved_at": resolved_at.isoformat(),
+                "cloud_provider": row.get("cloud_provider"),
+                "severity": row.get("severity"),
+            },
+            resolved_by=workspace.get("member_id"),
+        )
+    except Exception as exc:
+        log.warning("[IncidentsRoute] Failed to schedule resolution ticketing for %s: %s", row["id"], exc)
+
+
 @router.post("/{incident_id}/resolve-manually", response_model=ManualResolutionResponse)
 async def resolve_incident_manually(
     incident_id: str,
@@ -642,11 +704,7 @@ async def resolve_incident_manually(
 
     async with db.acquire() as conn:
         row = await conn.fetchrow(
-            """
-            SELECT id, agent_id, execution_status, resource_name, resource_group,
-                   metric_name, parsed_error, cloud_provider, severity
-            FROM incidents WHERE id = $1 AND workspace_id = $2
-            """ + scope_sql,
+            f"SELECT {_RESOLUTION_COLUMNS} FROM incidents WHERE id = $1 AND workspace_id = $2" + scope_sql,
             UUID(incident_id),
             workspace["id"],
             *scope_params,
@@ -670,70 +728,12 @@ async def resolve_incident_manually(
     resolved_at = datetime.now(timezone.utc)
 
     async with db.acquire() as conn:
-        await conn.execute(
-            """
-            UPDATE incidents
-            SET execution_status = 'resolved_manually', resolution_note = $1, resolved_at = $2
-            WHERE id = $3
-            """,
-            note,
-            resolved_at,
-            UUID(incident_id),
-        )
-        # Real audit_events row (not core/hitl.py's operator markdown log) —
-        # this is what makes "all incidents resolved manually this month"
-        # queryable for the customer's own reporting, per the request this
-        # endpoint was built for.
-        await conn.execute(
-            """
-            INSERT INTO audit_events (workspace_id, agent_id, incident_id, action, status, metadata)
-            VALUES ($1, $2, $3, 'manual_resolution', 'resolved_manually', $4)
-            """,
-            workspace["id"],
-            row["agent_id"],
-            UUID(incident_id),
-            json.dumps({"resolution_note": note} if note else {}),
-        )
+        await _record_manual_resolution(conn, workspace, dict(row), note, resolved_at, "manual_resolution")
 
     log.info(
         "[IncidentsRoute] Incident %s resolved manually%s",
         incident_id, " with note" if note else "",
     )
-
-    # Best-effort resolution ticketing (Jira/Linear/GitHub Issues/
-    # ServiceNow) + PagerDuty resolve-sync -- fire-and-forget, never blocks
-    # or raises into this response. resolved_by is the acting workspace
-    # member's id when this call came from a member session (None for a
-    # token-authenticated caller) -- see api/middleware/auth.py's
-    # get_workspace_or_member, which sets member_id in the workspace dict.
-    # Wrapped in try/except at this call site too (belt-and-suspenders,
-    # same double-guard core/hitl.py's _fire_notification/
-    # _fire_ticketing_notification use) even though
-    # schedule_resolution_notification already guards its own
-    # asyncio.create_task scheduling -- a manual resolution response must
-    # never fail because of this best-effort side effect.
-    try:
-        from core.ticketing import schedule_resolution_notification
-
-        schedule_resolution_notification(
-            str(workspace["id"]),
-            {
-                "incident_id": incident_id,
-                "execution_status": "resolved_manually",
-                "agent_id": row["agent_id"],
-                "resource_name": row.get("resource_name"),
-                "resource_group": row.get("resource_group"),
-                "metric_name": row.get("metric_name"),
-                "parsed_error": row.get("parsed_error"),
-                "resolution_note": note,
-                "resolved_at": resolved_at.isoformat(),
-                "cloud_provider": row.get("cloud_provider"),
-                "severity": row.get("severity"),
-            },
-            resolved_by=workspace.get("member_id"),
-        )
-    except Exception as exc:
-        log.warning("[IncidentsRoute] Failed to schedule resolution ticketing for %s: %s", incident_id, exc)
 
     if workspace.get("is_demo_session"):
         await record_demo_server_event(
@@ -786,7 +786,7 @@ async def list_incidents(
         SELECT i.id, i.parsed_error, i.remediation_options, i.execution_status,
                i.estimated_duration_seconds, i.severity, i.agent_id, i.resource_id,
                i.resource_name, i.cloud_provider, i.created_at, i.assigned_to, i.failure_reason, i.failure_kind,
-               i.evidence, i.verification_result,
+               i.evidence, i.verification_result, i.previous_incident_id, i.is_regression, i.source_resolved_at,
                m.email AS assigned_to_email
         FROM incidents i
         LEFT JOIN workspace_members m ON m.id = i.assigned_to
@@ -874,6 +874,7 @@ async def list_incidents(
                 failure_kind=row["failure_kind"],
                 evidence=_evidence(row.get("evidence")),
                 verification_result=_json_obj(row.get("verification_result")),
+                **_regression_fields(row),
             )
         )
     return results
@@ -1181,7 +1182,7 @@ async def bulk_incident_action(
 
         async with db.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, agent_id, execution_status FROM incidents WHERE id = $1 AND workspace_id = $2",
+                f"SELECT {_RESOLUTION_COLUMNS} FROM incidents WHERE id = $1 AND workspace_id = $2",
                 incident_uuid, workspace["id"],
             )
 
@@ -1206,24 +1207,10 @@ async def bulk_incident_action(
                     workspace["id"], row["agent_id"], incident_uuid,
                     json.dumps({"reason": body.reason} if body.reason else {}),
                 )
-            else:  # resolve_manually
+            else:  # resolve_manually -- the same path as the single endpoint, ticketing included
                 note = body.resolution_note.strip() if body.resolution_note and body.resolution_note.strip() else None
-                await conn.execute(
-                    """
-                    UPDATE incidents
-                    SET execution_status = 'resolved_manually', resolution_note = $1, resolved_at = $2
-                    WHERE id = $3
-                    """,
-                    note, resolved_at, incident_uuid,
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO audit_events (workspace_id, agent_id, incident_id, action, status, metadata)
-                    VALUES ($1, $2, $3, 'bulk_manual_resolution', 'resolved_manually', $4)
-                    """,
-                    workspace["id"], row["agent_id"], incident_uuid,
-                    json.dumps({"resolution_note": note} if note else {}),
-                )
+                await _record_manual_resolution(conn, workspace, dict(row), note, resolved_at,
+                                                "bulk_manual_resolution")
 
         results.append(BulkIncidentActionResult(incident_id=raw_id, outcome="applied"))
 

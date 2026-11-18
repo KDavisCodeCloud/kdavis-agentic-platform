@@ -641,7 +641,8 @@ class TestResolveIncidentManually:
         assert audit_call.args[1] == workspace_id
         assert audit_call.args[2] == "agent_06_finops"       # incident's own agent_id
         assert audit_call.args[3] == row["id"]
-        assert json.loads(audit_call.args[4]) == {"resolution_note": "Rotated the key manually in the AWS console."}
+        assert audit_call.args[4] == "manual_resolution"
+        assert json.loads(audit_call.args[5]) == {"resolution_note": "Rotated the key manually in the AWS console."}
 
     async def test_resolves_with_no_note(self):
         workspace_id = uuid4()
@@ -659,7 +660,7 @@ class TestResolveIncidentManually:
         assert result.resolution_note is None
 
         _, audit_call = conn.execute.await_args_list
-        assert json.loads(audit_call.args[4]) == {}
+        assert json.loads(audit_call.args[5]) == {}
 
     async def test_blank_note_normalizes_to_none_not_empty_string(self):
         workspace_id = uuid4()
@@ -676,7 +677,7 @@ class TestResolveIncidentManually:
         assert result.resolution_note is None
         update_call, audit_call = conn.execute.await_args_list
         assert update_call.args[1] is None
-        assert json.loads(audit_call.args[4]) == {}
+        assert json.loads(audit_call.args[5]) == {}
 
     async def test_incident_not_found_raises_404(self):
         request, conn = _make_request(None)

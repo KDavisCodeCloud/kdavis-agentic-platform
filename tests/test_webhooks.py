@@ -500,8 +500,8 @@ class TestResourceHealthAlertWebhook:
         assert len(bg.tasks) == 1
         assert bg.tasks[0].args[-1] == "azure"
 
-    async def test_azure_monitor_not_fired_is_ignored(self):
-        body = {"data": {"essentials": {"monitorCondition": "Resolved"}}}
+    async def test_azure_monitor_unknown_condition_is_ignored(self):
+        body = {"data": {"essentials": {"monitorCondition": "Acknowledged"}}}
         request = _make_request(_workspace_row(), body)
         bg = BackgroundTasks()
 
@@ -509,6 +509,17 @@ class TestResourceHealthAlertWebhook:
 
         assert result["status"] == "ignored"
         assert len(bg.tasks) == 0
+
+    async def test_azure_monitor_resolved_is_accepted(self):
+        """G3 (lab Z1): 'Resolved' used to be dropped; Agent 11 now records it."""
+        body = {"data": {"essentials": {"monitorCondition": "Resolved"}}}
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
+
+        assert result["status"] == "accepted"
+        assert len(bg.tasks) == 1
 
     async def test_prometheus_firing_alert_accepted_and_tagged_aws(self):
         body = {"alerts": [{"status": "firing", "labels": {"alertname": "HighCPU"}}]}
@@ -612,8 +623,25 @@ class TestResourceHealthAlertWebhook:
         payload_arg = bg.tasks[0].args[-2]
         assert payload_arg["cloudwatch_alarm"]["AlarmName"] == "cpu-high"
 
-    async def test_sns_notification_non_alarm_state_ignored(self):
+    async def test_sns_notification_ok_state_accepted(self):
+        """G3 (lab A1): CloudWatch OK is the alarm's own resolution -- no longer dropped."""
         alarm = {"AlarmName": "cpu-high", "NewStateValue": "OK", "Trigger": {"Namespace": "AWS/EC2", "Dimensions": []}}
+        body = {
+            "Type": "Notification", "Message": json.dumps(alarm),
+            "SigningCertURL": "https://sns.us-east-1.amazonaws.com/cert.pem", "Signature": "abc",
+        }
+        request = _make_request(_workspace_row(), body)
+        bg = BackgroundTasks()
+
+        with _patch("core.aws_sns.verify_signature", new=AsyncMock(return_value=True)):
+            result = await webhooks.resource_health_alert_webhook.__wrapped__(request, bg, token="ws-token")
+
+        assert result["status"] == "accepted"
+        assert len(bg.tasks) == 1
+
+    async def test_sns_notification_insufficient_data_ignored(self):
+        alarm = {"AlarmName": "cpu-high", "NewStateValue": "INSUFFICIENT_DATA",
+                 "Trigger": {"Namespace": "AWS/EC2", "Dimensions": []}}
         body = {
             "Type": "Notification", "Message": json.dumps(alarm),
             "SigningCertURL": "https://sns.us-east-1.amazonaws.com/cert.pem", "Signature": "abc",

@@ -119,6 +119,13 @@ export interface Incident {
     checked_at: string
     attempt: number
   } | null
+  // Item 5 (G2, migration 065): the earlier incident for the same problem on the
+  // same resource; is_regression = that one was fixed (or said it was).
+  previous_incident_id?: string | null
+  is_regression?: boolean
+  // G3: when the alert source itself (CloudWatch OK, Azure Resolved,
+  // Alertmanager/Grafana resolved) reported the condition cleared.
+  source_resolved_at?: string | null
 }
 
 // 24-gap-closure Phase 2 — incident search/filter API. All optional;

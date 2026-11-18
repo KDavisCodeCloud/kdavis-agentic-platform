@@ -37,6 +37,7 @@ from agents.agent_08_drift_detection.tools import option_catalog
 from core.hcl_edit import HclEditError
 from core.iac_fix import attach_diff, iac_prompt_block, load_iac_file, prepare_proposal
 from core.option_catalog import bind_options, catalog_prompt_block
+from core.regression import drift_key
 from core.security import shield
 from core.severity import normalize_severity
 
@@ -485,6 +486,8 @@ class DriftWorkflow(BaseAgent):
             cloud_provider=state["cloud_provider"],
             tokens_used=state.get("tokens_used", 0),
             severity=normalize_severity(state.get("drift_severity")),
+            resource_id=state.get("resource_id") or None,  # G2: was never stored; exemptions already key on it
+            regression_key=drift_key(state.get("resource_id", "")),
         )
 
         await self.record_token_usage(

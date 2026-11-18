@@ -134,6 +134,11 @@ async def _attempt_send(row) -> None:
                 await send_email_notification(config["to"], payload)
             else:
                 raise ValueError(f"No 'create' sender for channel_type={channel_type!r}")
+        elif send_kind == "reopen":  # item 5: verification_failed reopens the resolution ticket
+            from core.ticketing import _dispatch_reopen
+            ticket = payload["ticket"]
+            await _dispatch_reopen(channel_type, config, ticket["external_id"], payload,
+                                   conn=cm.conn, workspace_id=str(row["workspace_id"]))
         else:  # resolve
             resolved_by = row["resolved_by"]
             if channel_type == "pagerduty":

@@ -34,6 +34,7 @@ from agents.base_agent import BaseAgent
 from agents.agent_05_iam_minimizer.tools import IAMMinimizeTools, _summarize_permissions
 from agents.agent_05_iam_minimizer.tools import option_catalog
 from core.option_catalog import bind_options, catalog_prompt_block
+from core.regression import iam_key
 from core.security import shield
 from core.severity import normalize_severity
 
@@ -432,6 +433,8 @@ class IAMMinimizeWorkflow(BaseAgent):
             tokens_used=state.get("tokens_used", 0),
             estimated_duration_seconds=state.get("estimated_duration_seconds"),
             severity=normalize_severity(state.get("risk_score")),
+            regression_key=iam_key(state["cloud_provider"], state.get("resource_scope", ""),
+                                   state.get("principal_id", "")),
         )
 
         await self.record_token_usage(
