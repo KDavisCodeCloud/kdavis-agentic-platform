@@ -214,7 +214,20 @@ async def test_agent06_no_cost_data_is_a_failed_check(mock_db, workspace_id, moc
     wf = _make("agent_06_finops", mock_db, workspace_id, mock_router)
     state = _diagnose_state(workspace_id)
     state["cost_data_summary"] = "  "
+    state["resource_inventory"] = "{}"
     with patch.object(wf, "call_llm") as llm:
         out = await wf._diagnose_node(state)
     llm.assert_not_called()
-    assert "No cost data" in out["error"]
+    assert "No cost data or resource inventory" in out["error"]
+
+
+async def test_agent06_idle_inventory_without_cost_data_is_still_analyzed(mock_db, workspace_id, mock_router):
+    """Lab run 3 (A4/Z5): Cost Explorer came back empty (tag not yet active), but the
+    lab sent the idle m5.large in resource_inventory -- that alone is analyzable."""
+    from tests.test_agent06 import _diagnose_state
+    wf = _make("agent_06_finops", mock_db, workspace_id, mock_router)
+    state = _diagnose_state(workspace_id)
+    state["cost_data_summary"] = ""
+    state["resource_inventory"] = '{"instance_ids": ["i-0abc"], "instances": [{"avg_cpu_percent_6h": 0.2}]}'
+    out = await _llm_diagnose(wf, state, _finops_llm(0, [], {"instance_ids": ["i-0abc"]}))
+    assert not out.get("error")

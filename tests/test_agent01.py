@@ -273,6 +273,16 @@ class TestParseJSONResponse:
         with pytest.raises(ValueError, match="LLM did not return valid JSON"):
             agent.parse_llm_json("This is not JSON at all, sorry")
 
+    def test_ignores_text_after_the_json(self, mock_db, workspace_id, mock_router):
+        """Lab run 3, Z1: the diagnosis object was followed by a note -> 'Extra data'."""
+        agent = self._agent(mock_db, workspace_id, mock_router)
+        raw = '```json\n{"key": {"nested": [1, 2]}}\n```\n\nNote: this is a lab scenario {not json}.'
+        assert agent.parse_llm_json(raw) == {"key": {"nested": [1, 2]}}
+
+    def test_ignores_prose_before_the_json(self, mock_db, workspace_id, mock_router):
+        agent = self._agent(mock_db, workspace_id, mock_router)
+        assert agent.parse_llm_json('Here is the analysis:\n{"key": "value"}') == {"key": "value"}
+
     def test_raises_value_error_on_truncated_json(self, mock_db, workspace_id, mock_router):
         agent = self._agent(mock_db, workspace_id, mock_router)
         with pytest.raises(ValueError):

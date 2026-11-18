@@ -214,7 +214,11 @@ class BaseAgent(ABC):
         """Parse JSON from LLM response, stripping markdown fences."""
         clean = response.strip().replace("```json", "").replace("```", "").strip()
         try:
-            return json.loads(clean)
+            # raw_decode: the first complete JSON value wins. LLMs sometimes add a note
+            # after the object (lab run 3, Z1: "Extra data: line 32"), which json.loads rejects.
+            start = min((i for i in (clean.find("{"), clean.find("[")) if i >= 0), default=0)
+            value, _end = json.JSONDecoder().raw_decode(clean, start)
+            return value
         except json.JSONDecodeError as exc:
             log.warning(
                 "[%s] Failed to parse LLM JSON in %s: %s — raw: %s",

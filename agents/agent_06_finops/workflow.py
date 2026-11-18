@@ -90,6 +90,11 @@ class FinOpsState(TypedDict):
 # Prompt loader
 # ──────────────────────────────────────────────
 
+def _has_input(text) -> bool:
+    """True when a normalized input carries something to analyze (not blank or an empty JSON value)."""
+    return (text or "").strip() not in ("", "{}", "[]", "null")
+
+
 def _quick_win_ids(state) -> list:
     """The instances/VMs this incident recommends stopping (G2 regression key)."""
     wins = state.get("quick_win_resources") or {}
@@ -303,9 +308,11 @@ class FinOpsWorkflow(BaseAgent):
         total_spend    = state["total_spend"]
         currency       = state["currency"]
 
-        if not (state.get("cost_data_summary") or "").strip():
-            # "Couldn't check" is a failed incident, never "nothing found" (G15)
-            return {"error": f"No cost data for {cloud} {billing_period}; nothing was analyzed"}
+        if not _has_input(state.get("cost_data_summary")) and not _has_input(state.get("resource_inventory")):
+            # "Couldn't check" is a failed incident, never "nothing found" (G15). Either input
+            # is enough: idle resources are analyzable without spend data (lab run 3, A4/Z5 --
+            # the cost data was empty because the cost-allocation tag wasn't active yet).
+            return {"error": f"No cost data or resource inventory for {cloud} {billing_period}; nothing was analyzed"}
 
         user_message = (
             f"FinOps Cost Optimization Request:\n\n"
