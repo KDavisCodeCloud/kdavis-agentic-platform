@@ -552,11 +552,14 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
         ),
     }
     quick_wins["google"] = quick_wins["gcp"]
+    # G14: no opt_2 once the live-state check has left nothing idle to act on.
+    resources = context.get("quick_win_resources")
+    has_quick_wins = resources is None or any(isinstance(v, list) and v for v in resources.values())
     return catalog_dict(
         OptionSpec("opt_1", "Open a cost report issue",
                    "Creates a GitHub issue with the full cost analysis and recommendations. No resource is changed.",
                    "low", ("create_cost_report_issue",), proposal=True),
-        *([quick_wins[cloud]] if cloud in quick_wins else []),
+        *([quick_wins[cloud]] if cloud in quick_wins and has_quick_wins else []),
         OptionSpec("opt_3", "Post the cost summary to Slack",
                    "Sends the cost summary to the workspace's Slack webhook. No resource is changed.",
                    "low", ("post_slack_alert",), proposal=True),

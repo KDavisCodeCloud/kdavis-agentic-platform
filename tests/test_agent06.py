@@ -777,10 +777,11 @@ class TestExecuteOption:
         assert result["status"] == "quick_wins_applied"
         mock_gce.assert_called_once()
 
-    async def test_opt2_empty_quick_win_resources_returns_skipped(self, tools, aws_context):
+    async def test_opt2_with_nothing_idle_is_not_available(self, tools, aws_context):
+        """G14: with no quick-win resources left there is no stop/clean-up option at all."""
         aws_context["quick_win_resources"] = {"instance_ids": [], "volume_ids": [], "allocation_ids": []}
         result = await tools.execute_option({"id": "opt_2"}, aws_context)
-        assert result["status"] == "skipped"
+        assert result["status"] == "not_available"
 
     async def test_opt3_dispatches_to_post_slack_alert(self, tools, aws_context):
         with patch.object(tools, "post_slack_alert", new=AsyncMock(return_value={"status": "slack_sent"})) as mock_slack:
@@ -902,9 +903,11 @@ class TestDiagnoseNode:
         state = _diagnose_state(workspace_id)
         parsed = json.loads(SAMPLE_LLM_FINOPS_DIAGNOSIS)
 
+        running = {"i-0abc123": "running", "i-0def456": "running"}
         with patch.object(wf, "check_budget", new=AsyncMock()), \
              patch.object(wf, "call_llm", return_value=(SAMPLE_LLM_FINOPS_DIAGNOSIS, 1500)), \
              patch.object(wf, "parse_llm_json", return_value=parsed), \
+             patch("agents.agent_06_finops.workflow.aws_instance_states", new=AsyncMock(return_value=running)), \
              patch.object(wf, "record_token_usage", new=AsyncMock()):
             result = await wf._diagnose_node(state)
 
@@ -1125,3 +1128,78 @@ class TestBuildReportBody:
             recommendations=[], cost_report="",
         )
         assert "Cloud Decoded" in body
+
+
+
+# ── G14 (Break-It Lab A4/Z5): never recommend stopping what's already stopped ──
+
+async def _g14_diagnose(wf, state, states=None, error=None, azure_states=None):
+    from core.live_state import LiveStateError
+    parsed = json.loads(SAMPLE_LLM_FINOPS_DIAGNOSIS)
+    aws = AsyncMock(side_effect=LiveStateError(error)) if error else AsyncMock(return_value=states or {})
+    with patch.object(wf, "check_budget", new=AsyncMock()), \
+         patch.object(wf, "call_llm", return_value=(SAMPLE_LLM_FINOPS_DIAGNOSIS, 1500)), \
+         patch.object(wf, "parse_llm_json", return_value=parsed), \
+         patch("agents.agent_06_finops.workflow.aws_instance_states", new=aws), \
+         patch("agents.agent_06_finops.workflow.azure_vm_power_states",
+               new=AsyncMock(return_value=azure_states or {})), \
+         patch.object(wf, "record_token_usage", new=AsyncMock()):
+        return await wf._diagnose_node(state)
+
+
+async def test_g14_lab_a4_already_stopped_instance_is_not_recommended(mock_db, workspace_id, mock_router):
+    wf = _make_workflow(mock_db, workspace_id, mock_router)
+    state = _diagnose_state(workspace_id)
+    out = await _g14_diagnose(wf, state, {"i-0abc123": "stopped", "i-0def456": "running"})
+    assert out["quick_win_resources"]["instance_ids"] == ["i-0def456"]
+    assert "already stopped: i-0abc123" in out["parsed_error"]
+    assert "opt_2" in [o["id"] for o in out["remediation_options"]]
+
+
+async def test_g14_everything_already_stopped_drops_the_stop_option(mock_db, workspace_id, mock_router):
+    wf = _make_workflow(mock_db, workspace_id, mock_router)
+    state = _diagnose_state(workspace_id)
+    out = await _g14_diagnose(wf, state, {"i-0abc123": "stopped", "i-0def456": "terminated"})
+    assert out["quick_win_resources"]["instance_ids"] == []
+    # volumes / EIPs from the sample are still quick wins, so opt_2 stays for those
+    assert out["quick_win_resources"]["volume_ids"]
+
+
+async def test_g14_unreadable_power_state_keeps_candidates_and_says_so(mock_db, workspace_id, mock_router):
+    wf = _make_workflow(mock_db, workspace_id, mock_router)
+    out = await _g14_diagnose(wf, _diagnose_state(workspace_id), error="AccessDenied")
+    assert out["quick_win_resources"]["instance_ids"] == ["i-0abc123", "i-0def456"]
+    assert "Power state not checked (AccessDenied)" in out["parsed_error"]
+
+
+async def test_g14_lab_z5_already_deallocated_vm_is_not_recommended(mock_db, workspace_id, mock_router):
+    wf = _make_workflow(mock_db, workspace_id, mock_router)
+    state = _diagnose_state(workspace_id)
+    state.update(cloud_provider="azure", account_id="sub-1")
+    parsed = json.loads(SAMPLE_LLM_FINOPS_DIAGNOSIS)
+    parsed["quick_win_resources"] = {"vm_names": ["vm-cdlab-idle", "vm-busy"], "resource_group": "rg-cdlab"}
+    with patch.object(wf, "check_budget", new=AsyncMock()), \
+         patch.object(wf, "call_llm", return_value=(json.dumps(parsed), 10)), \
+         patch.object(wf, "parse_llm_json", return_value=parsed), \
+         patch("agents.agent_06_finops.workflow.azure_vm_power_states", new=AsyncMock(
+             return_value={"vm-cdlab-idle": "PowerState/deallocated", "vm-busy": "PowerState/running"})), \
+         patch.object(wf, "record_token_usage", new=AsyncMock()):
+        out = await wf._diagnose_node(state)
+    assert out["quick_win_resources"]["vm_names"] == ["vm-busy"]
+    assert "already deallocated: vm-cdlab-idle" in out["parsed_error"]
+
+
+async def test_g14_only_idle_candidate_already_deallocated_means_no_stop_option(mock_db, workspace_id, mock_router):
+    wf = _make_workflow(mock_db, workspace_id, mock_router)
+    state = _diagnose_state(workspace_id)
+    state.update(cloud_provider="azure", account_id="sub-1")
+    parsed = json.loads(SAMPLE_LLM_FINOPS_DIAGNOSIS)
+    parsed["quick_win_resources"] = {"vm_names": ["vm-cdlab-idle"], "resource_group": "rg-cdlab"}
+    with patch.object(wf, "check_budget", new=AsyncMock()), \
+         patch.object(wf, "call_llm", return_value=(json.dumps(parsed), 10)), \
+         patch.object(wf, "parse_llm_json", return_value=parsed), \
+         patch("agents.agent_06_finops.workflow.azure_vm_power_states",
+               new=AsyncMock(return_value={"vm-cdlab-idle": "PowerState/deallocated"})), \
+         patch.object(wf, "record_token_usage", new=AsyncMock()):
+        out = await wf._diagnose_node(state)
+    assert "opt_2" not in [o["id"] for o in out["remediation_options"]]
