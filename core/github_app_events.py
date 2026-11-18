@@ -29,6 +29,7 @@ from uuid import UUID
 
 from core.hitl import STATUS_FIX_MERGED, STATUS_PROPOSED
 from core.pr_branch import incident_id_from_branch
+from core.verification import schedule_after_merge
 
 log = logging.getLogger(__name__)
 
@@ -129,7 +130,9 @@ async def handle_fix_pr_closed(conn, workspace_id, payload: dict) -> dict:
         "UPDATE incidents SET execution_status = $1 WHERE id = $2 AND execution_status = $3",
         STATUS_FIX_MERGED, row["id"], STATUS_PROPOSED,
     )
-    await _audit(conn, workspace_id, row["id"], row["agent_id"], "fix_pr_merged", STATUS_FIX_MERGED, details)
+    scheduled = await schedule_after_merge(conn, row["id"])  # G4: item 4 confirms it live
+    await _audit(conn, workspace_id, row["id"], row["agent_id"], "fix_pr_merged", STATUS_FIX_MERGED,
+                 {**details, "verification_scheduled": scheduled})
     log.info("[GitHubAppEvents] incident %s fix PR merged (%s) -> awaiting verification", incident_id,
              details["pr_url"])
     return {"status": "accepted", "message": "incident moved to fix_merged (awaiting verification)"}

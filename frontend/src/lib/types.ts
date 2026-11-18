@@ -8,6 +8,10 @@ export type IncidentStatus =
   | 'proposed'
   // Item 3: the fix PR merged. Not verified live yet -- item 4 closes it.
   | 'fix_merged'
+  // Item 4 (G4): re-read live after the fix. 'verified' = confirmed fixed;
+  // 'verification_failed' = still not fixed at the deadline.
+  | 'verified'
+  | 'verification_failed'
   | 'held'
   | 'failed'
   | 'budget_exceeded'
@@ -21,7 +25,9 @@ export type IncidentStatus =
 // REJECTABLE_STATUSES / MANUALLY_RESOLVABLE_STATUSES (a test pins them equal).
 // Bulk select offers a checkbox for any status bulk resolve accepts.
 export const REJECTABLE_STATUSES: readonly IncidentStatus[] = ['pending_approval']
-export const MANUALLY_RESOLVABLE_STATUSES: readonly IncidentStatus[] = ['pending_approval', 'proposed', 'fix_merged']
+export const MANUALLY_RESOLVABLE_STATUSES: readonly IncidentStatus[] = [
+  'pending_approval', 'proposed', 'fix_merged', 'verification_failed',
+]
 
 export type ImpactLevel = 'low' | 'medium' | 'high'
 
@@ -106,6 +112,13 @@ export interface Incident {
   // not_executed / partial_execution: G1 -- the approved option returned
   // skipped / not_implemented / not_available, or only part of it ran.
   failure_kind?: 'permission_denied' | 'execution_error' | 'not_executed' | 'partial_execution' | null
+  // Item 4 (G4): the last live re-check after the fix (migration 064).
+  verification_result?: {
+    outcome: 'fixed' | 'not_fixed' | 'unknown' | 'unverifiable'
+    detail: string
+    checked_at: string
+    attempt: number
+  } | null
 }
 
 // 24-gap-closure Phase 2 — incident search/filter API. All optional;
@@ -229,6 +242,18 @@ export const STATUS_META: Record<
     color: 'text-blue-400',
     dot:   'bg-blue-400',
     bg:    'bg-blue-400/10 border-blue-400/30',
+  },
+  verified: {
+    label: 'Verified Fixed',
+    color: 'text-emerald-300',
+    dot:   'bg-emerald-300',
+    bg:    'bg-emerald-300/10 border-emerald-300/30',
+  },
+  verification_failed: {
+    label: 'Fix Didn’t Work',
+    color: 'text-red-400',
+    dot:   'bg-red-400',
+    bg:    'bg-red-400/10 border-red-400/30',
   },
   fix_merged: {
     label: 'Fix Merged — Awaiting Verification',

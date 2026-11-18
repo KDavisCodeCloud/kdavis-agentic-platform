@@ -76,6 +76,13 @@ def _evidence(raw) -> Optional[list]:
         raw = json.loads(raw)
     return raw or None
 
+def _json_obj(raw) -> Optional[dict]:
+    """A JSONB object column, decoded or as a string. None when absent."""
+    if raw is None:
+        return None
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -228,7 +235,7 @@ async def get_incident(
             SELECT i.id, i.workspace_id, i.agent_id, i.parsed_error, i.remediation_options,
                    i.selected_option_id, i.execution_status, i.estimated_duration_seconds, i.tokens_used,
                    i.severity, i.resource_id, i.resource_name, i.cloud_provider, i.created_at, i.assigned_to,
-                   i.failure_reason, i.failure_kind, i.evidence,
+                   i.failure_reason, i.failure_kind, i.evidence, i.verification_result,
                    m.email AS assigned_to_email
             FROM incidents i
             LEFT JOIN workspace_members m ON m.id = i.assigned_to
@@ -268,6 +275,7 @@ async def get_incident(
         failure_reason=row["failure_reason"],
         failure_kind=row["failure_kind"],
         evidence=_evidence(row.get("evidence")),
+        verification_result=_json_obj(row.get("verification_result")),
     )
 
 
@@ -778,7 +786,7 @@ async def list_incidents(
         SELECT i.id, i.parsed_error, i.remediation_options, i.execution_status,
                i.estimated_duration_seconds, i.severity, i.agent_id, i.resource_id,
                i.resource_name, i.cloud_provider, i.created_at, i.assigned_to, i.failure_reason, i.failure_kind,
-               i.evidence,
+               i.evidence, i.verification_result,
                m.email AS assigned_to_email
         FROM incidents i
         LEFT JOIN workspace_members m ON m.id = i.assigned_to
@@ -865,6 +873,7 @@ async def list_incidents(
                 failure_reason=row["failure_reason"],
                 failure_kind=row["failure_kind"],
                 evidence=_evidence(row.get("evidence")),
+                verification_result=_json_obj(row.get("verification_result")),
             )
         )
     return results

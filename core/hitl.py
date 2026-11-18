@@ -33,6 +33,8 @@ STATUS_FAILED     = "failed"
 STATUS_BUDGET_EXC = "budget_exceeded"
 STATUS_PROPOSED   = "proposed"       # a PR/issue was opened; nothing live changed yet (G1)
 STATUS_FIX_MERGED = "fix_merged"     # the fix PR merged; not yet verified live (item 3 -> item 4)
+STATUS_VERIFIED   = "verified"            # G4: re-read live and confirmed fixed (core/verification.py)
+STATUS_VERIFICATION_FAILED = "verification_failed"  # G4: still not fixed at the verification deadline
 
 # Which statuses an operator can close out by hand. The single-incident and
 # bulk endpoints both ask these functions, so they can never disagree.
@@ -41,7 +43,8 @@ STATUS_FIX_MERGED = "fix_merged"     # the fix PR merged; not yet verified live 
 #   pending, after a PR/issue was proposed, or after its PR merged and before
 #   verification has closed it.
 REJECTABLE_STATUSES = frozenset({STATUS_PENDING})
-MANUALLY_RESOLVABLE_STATUSES = frozenset({STATUS_PENDING, STATUS_PROPOSED, STATUS_FIX_MERGED})
+MANUALLY_RESOLVABLE_STATUSES = frozenset({STATUS_PENDING, STATUS_PROPOSED, STATUS_FIX_MERGED,
+                                          STATUS_VERIFICATION_FAILED})
 
 
 def rejection_allowed(status: str) -> bool:

@@ -463,7 +463,7 @@ def test_frontend_status_rules_match_the_backend():
     ts = _TYPES_TS.read_text()
 
     def ts_list(name: str) -> set[str]:
-        return set(re.findall(r"'(\w+)'", re.search(rf"export const {name}[^=]*=\s*\[(.*?)\]", ts).group(1)))
+        return set(re.findall(r"'(\w+)'", re.search(rf"export const {name}[^=]*=\s*\[(.*?)\]", ts, re.S).group(1)))
 
     assert ts_list("REJECTABLE_STATUSES") == set(REJECTABLE_STATUSES)
     assert ts_list("MANUALLY_RESOLVABLE_STATUSES") == set(MANUALLY_RESOLVABLE_STATUSES)

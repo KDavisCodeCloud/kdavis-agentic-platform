@@ -435,6 +435,34 @@ class DriftTools:
             "findings": findings,
         }
 
+    async def fetch_live(self, live_fetch: dict) -> Optional[dict]:
+        """The live state named by a payload's `live_fetch` (sop.md "live_fetch
+        payload shapes"); first matching shape wins. None if no shape matches.
+        Used by ingest and by post-fix verification (core/verification.py), so
+        both read the resource the same way."""
+        rg, sub = live_fetch.get("resource_group", ""), live_fetch.get("subscription_id", "")
+        if live_fetch.get("app_name"):
+            fetched = await self.fetch_app_service_state(app_name=live_fetch["app_name"],
+                                                         resource_group=rg, subscription_id=sub)
+            if "error" in fetched:
+                return {"error": fetched["error"]}
+            return {"app_settings": fetched["app_settings"], "files": [f["name"] for f in fetched["files"]]}
+        if live_fetch.get("bucket_name"):
+            return await self.fetch_s3_bucket_state(live_fetch["bucket_name"])
+        if live_fetch.get("storage_account_name"):
+            return await self.fetch_azure_blob_storage_state(
+                storage_account_name=live_fetch["storage_account_name"], resource_group=rg, subscription_id=sub)
+        if live_fetch.get("security_group_id"):
+            return await self.fetch_security_group_state(live_fetch["security_group_id"])
+        if live_fetch.get("nsg_name"):
+            return await self.fetch_nsg_state(nsg_name=live_fetch["nsg_name"], resource_group=rg, subscription_id=sub)
+        if live_fetch.get("route_table_id"):
+            return await self.fetch_route_table_state(live_fetch["route_table_id"])
+        if live_fetch.get("route_table_name"):
+            return await self.fetch_azure_route_table_state(
+                route_table_name=live_fetch["route_table_name"], resource_group=rg, subscription_id=sub)
+        return None
+
     async def fetch_security_group_state(self, group_id: str) -> dict:
         """
         Fetch an AWS Security Group's live inbound/outbound rules for the

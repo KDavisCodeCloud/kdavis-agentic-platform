@@ -526,6 +526,18 @@ class FinOpsWorkflow(BaseAgent):
 
         return {"execution_result": result}
 
+    def _verification_spec(self, state: FinOpsState, exec_result: dict) -> Optional[dict]:
+        """G4 (lab A4/Z5): the instances/VMs opt_2 stopped must read as stopped/deallocated."""
+        if (state.get("selected_option") or {}).get("id") != "opt_2":
+            return None
+        wins = state.get("quick_win_resources") or {}
+        if state.get("cloud_provider") == "aws" and wins.get("instance_ids"):
+            return {"check": "compute_stopped", "cloud": "aws", "instance_ids": wins["instance_ids"]}
+        if state.get("cloud_provider") == "azure" and wins.get("vm_names"):
+            return {"check": "compute_stopped", "cloud": "azure", "vm_names": wins["vm_names"],
+                    "subscription_id": state.get("account_id", ""), "resource_group": wins.get("resource_group", "")}
+        return None
+
     # ──────────────────────────────────────────────
     # Public interface
     # ──────────────────────────────────────────────

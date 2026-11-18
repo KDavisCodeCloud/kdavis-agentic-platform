@@ -211,6 +211,9 @@ class IncidentResponse(BaseModel):
     # execution, or that failed for a reason other than execution.
     failure_reason: Optional[str] = None
     failure_kind: Optional[str] = None  # 'permission_denied' | 'execution_error' | None
+    # migration 064 (G4) -- the last post-fix verification check:
+    # {outcome: fixed|not_fixed|unknown|unverifiable, detail, checked_at, attempt}
+    verification_result: Optional[dict] = None
 
 
 class IncidentAssignRequest(BaseModel):

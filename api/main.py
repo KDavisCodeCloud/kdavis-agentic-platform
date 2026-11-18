@@ -284,6 +284,10 @@ async def lifespan(app: FastAPI):
     # exists. 15-minute cadence per the build spec; pg_try_advisory_xact_lock
     # keeps all 4 --workers processes from double-sending a batch.
     app.state.email_scheduler_task = asyncio.create_task(_email_scheduler_loop(app.state.db_pool))
+    # G4 (item 4): re-read live state after a fix, close as verified /
+    # verification_failed. Every uvicorn worker runs it; rows are claimed
+    # with FOR UPDATE SKIP LOCKED (core/verification.py).
+    app.state.verification_task = asyncio.create_task(_verification_loop(app.state.db_pool))
 
     # Cloud Decoded email lifecycle system -- 24h/72h abandoned-checkout
     # scan (core/email_triggers.py). No Stripe event exists for "still
@@ -323,6 +327,7 @@ async def lifespan(app: FastAPI):
     app.state.social_token_expiry_task.cancel()
     app.state.linkedin_queue_health_task.cancel()
     app.state.email_scheduler_task.cancel()
+    app.state.verification_task.cancel()
     app.state.abandoned_checkout_task.cancel()
     app.state.stall_nudge_task.cancel()
     app.state.demo_reset_task.cancel()
@@ -473,6 +478,22 @@ async def _email_scheduler_loop(pool) -> None:
         except Exception:
             log.exception("[EmailScheduler] Pass failed — will retry next cycle")
         await asyncio.sleep(_EMAIL_SCHEDULER_INTERVAL_SECONDS)
+
+
+_VERIFICATION_INTERVAL_SECONDS = 60
+
+
+async def _verification_loop(pool) -> None:
+    from core.verification import run_verification_pass
+
+    while True:
+        try:
+            await run_verification_pass(pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[Verification] Pass failed — will retry next cycle")
+        await asyncio.sleep(_VERIFICATION_INTERVAL_SECONDS)
 
 
 async def _abandoned_checkout_loop(pool) -> None:

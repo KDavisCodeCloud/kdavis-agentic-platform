@@ -522,6 +522,21 @@ class IAMMinimizeWorkflow(BaseAgent):
 
         return {"execution_result": result}
 
+    def _verification_spec(self, state: IAMMinimizeState, exec_result: dict) -> Optional[dict]:
+        """G4 (lab A3): the AWS policy's live default version must equal the minimized
+        policy; on Azure the removed over-privileged assignments must be gone."""
+        option_id = (state.get("selected_option") or {}).get("id")
+        cloud = state.get("cloud_provider")
+        if cloud == "aws" and option_id in ("opt_1", "opt_2") and state.get("minimized_policy") \
+                and str(state.get("resource_scope", "")).startswith("arn:aws:iam::"):
+            return {"check": "aws_policy", "policy_arn": state["resource_scope"],
+                    "expected": state["minimized_policy"]}
+        if cloud == "azure" and option_id == "opt_1" and state.get("azure_removal_plan"):
+            return {"check": "azure_assignments_removed", "subscription_id": state.get("resource_scope", ""),
+                    "principal_id": state.get("principal_id", ""),
+                    "removed_ids": [a["id"] for a in state["azure_removal_plan"]]}
+        return None
+
     # ──────────────────────────────────────────────
     # Public interface
     # ──────────────────────────────────────────────
