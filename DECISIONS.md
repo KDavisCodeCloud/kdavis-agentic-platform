@@ -629,3 +629,44 @@ apply options.
 - **Found, not fixed (outside scope):** `api/routes/policies.py` is imported
   in `api/main.py` but never mounted, so Settings → Policies (execution
   policy, exemptions, "Exempt this resource") 404s.
+
+## 2026-11-17 — Fix session item 4: post-fix verification (G4) + Agent 06 live state (G14)
+
+- **G14:** Agent 06 reads each idle candidate's live power state
+  (`core/live_state.py`: EC2 DescribeInstances, Azure VM instanceView) and
+  drops the ones already stopped, deallocated or gone, saying so on the card.
+  - If the state can't be read, the candidates stay (stopping a stopped
+    instance is a no-op) and the card says they weren't checked.
+  - opt_2 disappears when nothing idle is left.
+- **G4, statuses:** after an action, the live resource is re-read
+  (`core/verification.py`, migration 064). The incident closes as
+  `verified` ("Verified fixed") or `verification_failed` ("Fix didn't
+  work").
+  - **Deterministic, no LLM.** At execute/complete time each agent records a
+    spec of what to re-read and what "fixed" means:
+
+    | Agent | Verified when |
+    |---|---|
+    | 05 AWS | the policy's live default version equals the minimized policy |
+    | 05 Azure | the removed assignments are gone |
+    | 06 | the stopped instances / deallocated VMs read that way |
+    | 08 | the live reader's security findings at diagnosis are gone (SG, NSG, S3, Azure blob, via the shared `DriftTools.fetch_live`) |
+    | 11 | the CloudWatch alarm is OK / the Azure Monitor alert is Resolved |
+
+  - **When:** a live action (`executed`) is checked from 2 minutes, every
+    5, with a 30-minute deadline. A proposal waits for its PR to merge
+    (`fix_merged`), then from 10 minutes, every 15, with a 24-hour
+    deadline, so the pipeline has time to apply it.
+  - **Can't check** (no credentials, an API error, alarm INSUFFICIENT_DATA)
+    is never reported as fixed or as failed. It retries until the deadline,
+    then stops with outcome `unverifiable` and leaves the status alone.
+  - **Agents with no deterministic check** (01, 02, 03, 04, 07, 09, 10; 05
+    on GCP; 08 without a live reader) record no spec, so their incidents
+    stay `executed` / `fix_merged` rather than claiming `verified`.
+  - **Downstream:** `verified` counts as a resolution for ticketing and
+    PagerDuty, but only notifies when it comes from `fix_merged` (an
+    executed action already notified when it ran). `verification_failed` is
+    not a resolution and can be resolved manually.
+  - **Runs** as an in-process loop every 60 seconds. Every uvicorn worker
+    runs it, so due rows are claimed with `FOR UPDATE SKIP LOCKED` plus a
+    10-minute lease.

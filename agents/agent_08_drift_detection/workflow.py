@@ -64,6 +64,8 @@ class DriftState(TypedDict):
     repository: str          # "owner/repo" for PR/issue creation
     file_path: str           # path to IaC/manifest file for PR commits
     desired_state_text: str  # sanitized desired state (from IaC/Git)
+    live_fetch: Optional[dict]        # G4: how the live state was read, to re-read it after the fix
+    baseline_findings: Optional[list] # G4: the live reader's findings at diagnosis (must be gone to verify)
     actual_state_text: str   # sanitized actual state (live infrastructure)
     # Settings → Policies, Step 2 (migration 049) -- True when ingest
     # routed straight to exempted_complete instead of diagnose.
@@ -275,59 +277,12 @@ class DriftWorkflow(BaseAgent):
         # first live_fetch shape that matches wins -- a given incident is
         # always about exactly one resource.
         live_fetch = payload.get("live_fetch")
-        if not actual_raw and live_fetch and live_fetch.get("app_name"):
-            fetched = await self._tools.fetch_app_service_state(
-                app_name=live_fetch["app_name"],
-                resource_group=live_fetch.get("resource_group", ""),
-                subscription_id=live_fetch.get("subscription_id", ""),
-            )
-            if "error" in fetched:
-                log.warning("[Agent08] live_fetch failed: %s", fetched["error"])
-                actual_raw = {"error": fetched["error"]}
-            else:
-                actual_raw = {"app_settings": fetched["app_settings"], "files": [f["name"] for f in fetched["files"]]}
-
-        elif not actual_raw and live_fetch and live_fetch.get("bucket_name"):
-            actual_raw = await self._tools.fetch_s3_bucket_state(live_fetch["bucket_name"])
-            if "error" in actual_raw:
-                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
-
-        elif not actual_raw and live_fetch and live_fetch.get("storage_account_name"):
-            actual_raw = await self._tools.fetch_azure_blob_storage_state(
-                storage_account_name=live_fetch["storage_account_name"],
-                resource_group=live_fetch.get("resource_group", ""),
-                subscription_id=live_fetch.get("subscription_id", ""),
-            )
-            if "error" in actual_raw:
-                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
-
-        elif not actual_raw and live_fetch and live_fetch.get("security_group_id"):
-            actual_raw = await self._tools.fetch_security_group_state(live_fetch["security_group_id"])
-            if "error" in actual_raw:
-                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
-
-        elif not actual_raw and live_fetch and live_fetch.get("nsg_name"):
-            actual_raw = await self._tools.fetch_nsg_state(
-                nsg_name=live_fetch["nsg_name"],
-                resource_group=live_fetch.get("resource_group", ""),
-                subscription_id=live_fetch.get("subscription_id", ""),
-            )
-            if "error" in actual_raw:
-                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
-
-        elif not actual_raw and live_fetch and live_fetch.get("route_table_id"):
-            actual_raw = await self._tools.fetch_route_table_state(live_fetch["route_table_id"])
-            if "error" in actual_raw:
-                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
-
-        elif not actual_raw and live_fetch and live_fetch.get("route_table_name"):
-            actual_raw = await self._tools.fetch_azure_route_table_state(
-                route_table_name=live_fetch["route_table_name"],
-                resource_group=live_fetch.get("resource_group", ""),
-                subscription_id=live_fetch.get("subscription_id", ""),
-            )
-            if "error" in actual_raw:
-                log.warning("[Agent08] live_fetch failed: %s", actual_raw["error"])
+        if not actual_raw and live_fetch:
+            fetched = await self._tools.fetch_live(live_fetch)
+            if fetched is not None:
+                actual_raw = fetched
+                if "error" in fetched:
+                    log.warning("[Agent08] live_fetch failed: %s", fetched["error"])
 
         desired_text = _normalize_state_text(desired_raw)
         actual_text  = _normalize_state_text(actual_raw)
@@ -349,6 +304,8 @@ class DriftWorkflow(BaseAgent):
             "repository":         repository,
             "file_path":          file_path,
             "desired_state_text": sanitized_desired.sanitized_text,
+            "live_fetch":         live_fetch if isinstance(actual_raw, dict) and "findings" in actual_raw else None,
+            "baseline_findings":  list(actual_raw.get("findings") or []) if isinstance(actual_raw, dict) else [],
             "actual_state_text":  sanitized_actual.sanitized_text,
             "tokens_used":        0,
             # incident_id intentionally NOT returned here -- it's pre-seeded
@@ -607,6 +564,14 @@ class DriftWorkflow(BaseAgent):
         )
 
         return {"execution_result": result}
+
+    def _verification_spec(self, state: DriftState, exec_result: dict) -> Optional[dict]:
+        """G4 (lab A2/Z2/Z4): re-read the resource the same way ingest did; the
+        security findings it had at diagnosis must be gone."""
+        if state.get("live_fetch") and state.get("baseline_findings"):
+            return {"check": "drift_findings", "live_fetch": state["live_fetch"],
+                    "baseline_findings": state["baseline_findings"]}
+        return None
 
     # ──────────────────────────────────────────────
     # Public interface

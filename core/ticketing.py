@@ -624,7 +624,7 @@ async def notify_resolution(workspace_id: str, incident_summary: dict, resolved_
 # (a PR/issue was opened, nothing changed live -- G1) and 'failed' never do;
 # a proposed incident resolves later via resolve-manually (or, from item 3,
 # the merge webhook + item 4 verification).
-RESOLVED_STATUSES = frozenset({"executed", "resolved_manually"})
+RESOLVED_STATUSES = frozenset({"executed", "resolved_manually", "verified"})  # verified: item 4, a merged fix confirmed live
 
 
 def schedule_resolution_notification(workspace_id: str, incident_summary: dict, resolved_by: Optional[str] = None) -> None:

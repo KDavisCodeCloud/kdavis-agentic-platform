@@ -98,7 +98,11 @@ async def test_merged_fix_pr_moves_proposed_to_fix_merged():
     assert audit.args[4:6] == ("fix_pr_merged", "fix_merged")
     assert json.loads(audit.args[6])["pr_url"] == "https://github.com/o/r/pull/7"
     # incident lookup is scoped to the installation's workspace
-    assert conn.fetchrow.await_args.args[1:] == (UUID(INC), WS)
+    assert conn.fetchrow.await_args_list[0].args[1:] == (UUID(INC), WS)
+    # G4: the merge schedules the live re-check (first check after 10 min, 24 h deadline)
+    schedule = conn.fetchrow.await_args_list[1].args
+    assert "verification_next_at" in schedule[0] and schedule[3] == UUID(INC)
+    assert json.loads(audit.args[6])["verification_scheduled"] is True
 
 
 async def test_merging_does_not_resolve():
@@ -177,7 +181,7 @@ async def test_webhook_routes_merged_pr_and_does_not_start_a_review():
     incident = {"id": UUID(INC), "agent_id": "agent_08_drift_detection", "execution_status": "proposed"}
     body = {**_pr(), "installation": {"id": 9}}
     with _patch.dict("os.environ", {"ENCRYPTION_KEY": Fernet.generate_key().decode()}):
-        request, conn = _route_request(body, "pull_request", [workspace, incident])
+        request, conn = _route_request(body, "pull_request", [workspace, incident, {"id": UUID(INC)}])
         bg = BackgroundTasks()
         out = await webhooks.github_app_webhook(request, bg)
     assert "fix_merged" in out["message"]

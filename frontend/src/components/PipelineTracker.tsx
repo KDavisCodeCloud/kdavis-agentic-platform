@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck, GitPullRequest, GitMerge } from 'lucide-react'
+import { GitBranch, Zap, CheckCircle2, XCircle, Loader2, UserCheck, GitPullRequest, GitMerge, ShieldCheck } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn, agentLabel, timeAgo } from '@/lib/utils'
 import type { Incident, IncidentStatus } from '@/lib/types'
@@ -40,6 +40,8 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
     executed:          4,
     proposed:          3, // a PR/issue was opened; the live fix (merge) hasn't happened -- G1
     fix_merged:        4, // merged; the last step (verified live) is still pending -- item 4
+    verified:          4, // re-read live and confirmed fixed (G4)
+    verification_failed: 4, // re-read live: still broken at the deadline (G4)
     held:              2, // stopped at HITL gate — steps 3-4 stay waiting
     failed:            3,
     budget_exceeded:   2,
@@ -49,12 +51,12 @@ function stepsForStatus(status: IncidentStatus): PipelineStep[] {
 
   const active = activeIndex[status] ?? 2
   // Any terminal status: the active step is done, not spinning
-  const isTerminal = ['executed', 'proposed', 'held', 'budget_exceeded', 'resolved_manually', 'rejected'].includes(status)
+  const isTerminal = ['executed', 'proposed', 'held', 'budget_exceeded', 'resolved_manually', 'rejected', 'verified'].includes(status)
 
   return steps.map((s, i) => ({
     ...s,
     status:
-      status === 'failed' && i === active
+      (status === 'failed' || status === 'verification_failed') && i === active
         ? 'error'
         : i < active || (isTerminal && i === active)
         ? 'done'
@@ -134,6 +136,12 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
           {incident.status === 'fix_merged' && (
             <GitMerge className="h-3.5 w-3.5 shrink-0 text-blue-300" />
           )}
+          {incident.status === 'verified' && (
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+          )}
+          {incident.status === 'verification_failed' && (
+            <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+          )}
           {incident.status === 'resolved_manually' && (
             <UserCheck className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
           )}
@@ -202,6 +210,8 @@ function IncidentRow({ incident, isSelected, onClick, checked, onToggleCheck }: 
             executed:          'Executed',
             proposed:          'Fix Proposed',
             fix_merged:        'Fix Merged — Awaiting Verification',
+            verified:          'Verified Fixed',
+            verification_failed: 'Fix Didn’t Work',
             held:              'Held',
             failed:            'Failed',
             budget_exceeded:   'Budget Exceeded',
@@ -228,7 +238,9 @@ export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, o
   // A proposed fix is open work in the customer's repo, not a resolution:
   // its own section, selectable for bulk resolve (MANUALLY_RESOLVABLE_STATUSES).
   const fixInProgress = incidents.filter(i => i.status === 'proposed' || i.status === 'fix_merged')
-  const resolved = incidents.filter(i => ['executed', 'resolved_manually', 'held', 'failed', 'budget_exceeded', 'rejected'].includes(i.status))
+  // G4: a fix that was re-checked live and is still broken needs a person.
+  const fixFailed = incidents.filter(i => i.status === 'verification_failed')
+  const resolved = incidents.filter(i => ['executed', 'verified', 'resolved_manually', 'held', 'failed', 'budget_exceeded', 'rejected'].includes(i.status))
 
   if (incidents.length === 0) {
     return (
@@ -280,6 +292,27 @@ export function PipelineTracker({ incidents, onSelect, selectedId, checkedIds, o
                 incident={inc}
                 isSelected={inc.incident_id === selectedId}
                 onClick={() => onSelect(inc)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {fixFailed.length > 0 && (
+        <section>
+          <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-400">
+            <XCircle className="h-3 w-3" />
+            Fix didn&apos;t work ({fixFailed.length})
+          </h3>
+          <div className="space-y-2">
+            {fixFailed.map(inc => (
+              <IncidentRow
+                key={inc.incident_id}
+                incident={inc}
+                isSelected={inc.incident_id === selectedId}
+                onClick={() => onSelect(inc)}
+                checked={checkedIds?.has(inc.incident_id)}
+                onToggleCheck={onToggleCheck ? () => onToggleCheck(inc.incident_id) : undefined}
               />
             ))}
           </div>

@@ -966,6 +966,18 @@ class ResourceHealthWorkflow(BaseAgent):
 
         return {"execution_result": result}
 
+    def _verification_spec(self, state: ResourceHealthState, exec_result: dict) -> Optional[dict]:
+        """G4 (lab A1/Z1): the alert that raised this incident must clear --
+        CloudWatch back to OK, or the Azure Monitor alert Resolved."""
+        payload = state.get("webhook_payload") or {}
+        alarm_arn = (payload.get("cloudwatch_alarm") or {}).get("AlarmArn") or ""  # unwrapped from SNS at ingest
+        if alarm_arn.startswith("arn:aws:cloudwatch:"):
+            return {"check": "alarm", "cloud": "aws", "alarm_arn": alarm_arn}
+        alert_id = ((payload.get("data") or {}).get("essentials") or {}).get("alertId") or ""
+        if alert_id.startswith("/subscriptions/"):
+            return {"check": "alarm", "cloud": "azure", "alert_id": alert_id}
+        return None
+
     # ──────────────────────────────────────────────
     # Public interface
     # ──────────────────────────────────────────────

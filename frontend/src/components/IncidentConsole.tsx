@@ -31,6 +31,8 @@ const FILTER_TABS: { id: FilterTab; label: string }[] = [
   { id: 'executed',          label: 'Executed' },
   { id: 'proposed',          label: 'Fix Proposed' },
   { id: 'fix_merged',        label: 'Fix Merged' },
+  { id: 'verified',          label: 'Verified' },
+  { id: 'verification_failed', label: 'Fix Didn’t Work' },
   { id: 'resolved_manually', label: 'Resolved Manually' },
   { id: 'failed',            label: 'Failed' },
 ]

@@ -33,6 +33,7 @@ from cryptography.fernet import Fernet
 
 from core.security import shield
 from core.hitl import HITLGate
+from core.verification import record_spec
 from core.compliance import WorkspaceComplianceGuard
 from core.token_budget import TokenBudgetGuard
 from core.resource_exemptions import ResourceExemptionGuard
@@ -365,14 +366,26 @@ class BaseAgent(ABC):
         incident_id = state.get("incident_id")
         if incident_id:
             exec_result = state.get("execution_result") or {}
-            await self.hitl.record_execution(
+            status = await self.hitl.record_execution(
                 incident_id, exec_result, state.get("selected_option"),
                 before_state=self._before_state(exec_result),
             )
+            # G4: say how to confirm the fix live. A live action is checked
+            # right away; a proposal once its PR merges (core/verification.py).
+            spec = self._verification_spec(state, exec_result) if status in ("executed", "proposed") else None
+            if spec:
+                await record_spec(self.db, incident_id, spec, schedule_now=status == "executed")
 
         self._write_audit("complete", "done", incident_id=incident_id)
         log.info("[%s] Workflow complete for incident %s", self.agent_id, incident_id)
         return {}
+
+    def _verification_spec(self, state, exec_result: dict) -> Optional[dict]:
+        """What to re-read to confirm this fix worked (core/verification.py
+        CHECKS). None = this agent has no deterministic live check for it;
+        the incident then stays 'executed'/'fix_merged' rather than claiming
+        'verified'."""
+        return None
 
     def _before_state(self, exec_result: dict) -> Optional[dict]:
         """Snapshot taken before a live change, kept for rollback. Only agents

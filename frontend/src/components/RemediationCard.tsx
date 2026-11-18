@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send, ShieldOff, GitPullRequest, GitMerge } from 'lucide-react'
+import { VerificationNote } from '@/components/VerificationNote'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -502,6 +503,10 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
               ? <GitPullRequest className="h-3 w-3" />
               : incident.status === 'fix_merged'
               ? <GitMerge className="h-3 w-3" />
+              : incident.status === 'verified'
+              ? <ShieldCheck className="h-3 w-3" />
+              : incident.status === 'verification_failed'
+              ? <XCircle className="h-3 w-3" />
               : incident.status === 'resolved_manually'
               ? <UserCheck className="h-3 w-3" />
               : incident.status === 'failed'
@@ -746,14 +751,40 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                 <div className="max-w-sm">
                   <p className="text-sm font-medium text-emerald-400">Action executed</p>
                   <p className="mt-1 text-xs text-zinc-500">
-                    The approved action ran. Cloud Decoded has not re-checked the live resource yet.
+                    The approved action ran. Cloud Decoded re-checks the live resource to confirm it worked.
                   </p>
+                  <VerificationNote result={incident.verification_result} />
                 </div>
               </>
             )}
-            {(incident.status === 'proposed' || incident.status === 'fix_merged') && (
+            {incident.status === 'verified' && (
               <>
-                {incident.status === 'proposed' ? (
+                <ShieldCheck className="h-10 w-10 text-emerald-300" />
+                <div className="max-w-sm">
+                  <p className="text-sm font-medium text-emerald-300">Verified fixed</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Cloud Decoded re-read the live resource after the fix and the problem is gone.
+                  </p>
+                  <VerificationNote result={incident.verification_result} />
+                </div>
+              </>
+            )}
+            {(incident.status === 'proposed' || incident.status === 'fix_merged'
+              || incident.status === 'verification_failed') && (
+              <>
+                {incident.status === 'verification_failed' ? (
+                  <>
+                    <XCircle className="h-10 w-10 text-red-400" />
+                    <div className="max-w-sm">
+                      <p className="text-sm font-medium text-red-400">The fix didn&apos;t work</p>
+                      <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                        Cloud Decoded kept re-reading the live resource until the deadline and the problem is
+                        still there. Investigate, then record what you did here.
+                      </p>
+                      <VerificationNote result={incident.verification_result} />
+                    </div>
+                  </>
+                ) : incident.status === 'proposed' ? (
                   <>
                     <GitPullRequest className="h-10 w-10 text-blue-400" />
                     <div className="max-w-sm">
@@ -770,9 +801,10 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                     <div className="max-w-sm">
                       <p className="text-sm font-medium text-blue-300">Fix merged — awaiting verification</p>
                       <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-                        The fix PR was merged. Cloud Decoded hasn&apos;t confirmed the live resource changed —
-                        that happens once your pipeline applies it. If you&apos;ve confirmed it yourself, record it here.
+                        The fix PR was merged. Cloud Decoded re-checks the live resource until your pipeline has
+                        applied it. If you&apos;ve confirmed it yourself, record it here.
                       </p>
+                      <VerificationNote result={incident.verification_result} />
                     </div>
                   </>
                 )}

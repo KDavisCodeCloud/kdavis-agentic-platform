@@ -35,6 +35,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_06_finops.tools import FinOpsTools, _format_currency
 from agents.agent_06_finops.tools import option_catalog
+from core.live_state import AWS_STOPPED, AZURE_DEALLOCATED, LiveStateError, aws_instance_states, azure_vm_power_states
 from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 
@@ -332,8 +333,14 @@ class FinOpsWorkflow(BaseAgent):
         parsed_error              = diagnosis.get("parsed_error", "Cost optimization analysis complete")
         cost_report               = diagnosis.get("cost_report", "")
         recommendations           = diagnosis.get("recommendations", [])
-        quick_win_resources       = diagnosis.get("quick_win_resources", {})
+        quick_win_resources       = diagnosis.get("quick_win_resources", {}) or {}
         estimated_monthly_savings = float(diagnosis.get("estimated_monthly_savings", 0))
+        # G14 (lab A4/Z5): never recommend stopping what is already stopped.
+        quick_win_resources, live_note = await self._drop_already_stopped(quick_win_resources, cloud, state)
+        if live_note:
+            parsed_error = f"{parsed_error} {live_note}"
+            cost_report = f"{cost_report}\n\n> {live_note}" if cost_report else live_note
+        _catalog = option_catalog({"cloud_provider": cloud, "quick_win_resources": quick_win_resources})
         options                   = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
         duration                  = diagnosis.get("estimated_duration_seconds", 60)
 
@@ -363,6 +370,34 @@ class FinOpsWorkflow(BaseAgent):
             "estimated_duration_seconds": duration,
             "tokens_used": state.get("tokens_used", 0) + estimated_tokens,
         }
+
+    async def _drop_already_stopped(self, quick_wins: dict, cloud: str, state) -> tuple[dict, str]:
+        """G14: read each idle candidate's live power state; drop the ones already
+        stopped/deallocated. If the state can't be read, the candidates stay
+        (stopping a stopped instance is a no-op) and the card says it wasn't checked."""
+        quick_wins = dict(quick_wins)
+        try:
+            if cloud == "aws" and quick_wins.get("instance_ids"):
+                states = await aws_instance_states(self._tools.aws_session, quick_wins["instance_ids"])
+                done = [i for i, s in states.items() if s in AWS_STOPPED or s == "not-found"]
+                kind = "already stopped"
+                quick_wins["instance_ids"] = [i for i in quick_wins["instance_ids"] if i not in done]
+            elif cloud == "azure" and quick_wins.get("vm_names"):
+                states = await azure_vm_power_states(
+                    self._tools.azure_access_token, state.get("account_id", ""),
+                    quick_wins.get("resource_group", ""), quick_wins["vm_names"])
+                done = [n for n, s in states.items() if s in AZURE_DEALLOCATED or s == "not-found"]
+                kind = "already deallocated"
+                quick_wins["vm_names"] = [n for n in quick_wins["vm_names"] if n not in done]
+            else:
+                return quick_wins, ""
+        except LiveStateError as exc:
+            log.warning("[Agent06] live power state unavailable: %s", exc)
+            return quick_wins, f"Power state not checked ({exc}); some listed resources may already be stopped."
+        if not done:
+            return quick_wins, ""
+        self._write_audit("diagnose", "already_stopped_dropped", metadata={"resources": done})
+        return quick_wins, f"Left out, {kind}: {', '.join(done)}."
 
     async def _hitl_gate_node(self, state: FinOpsState) -> dict:
         """
@@ -490,6 +525,18 @@ class FinOpsWorkflow(BaseAgent):
         )
 
         return {"execution_result": result}
+
+    def _verification_spec(self, state: FinOpsState, exec_result: dict) -> Optional[dict]:
+        """G4 (lab A4/Z5): the instances/VMs opt_2 stopped must read as stopped/deallocated."""
+        if (state.get("selected_option") or {}).get("id") != "opt_2":
+            return None
+        wins = state.get("quick_win_resources") or {}
+        if state.get("cloud_provider") == "aws" and wins.get("instance_ids"):
+            return {"check": "compute_stopped", "cloud": "aws", "instance_ids": wins["instance_ids"]}
+        if state.get("cloud_provider") == "azure" and wins.get("vm_names"):
+            return {"check": "compute_stopped", "cloud": "azure", "vm_names": wins["vm_names"],
+                    "subscription_id": state.get("account_id", ""), "resource_group": wins.get("resource_group", "")}
+        return None
 
     # ──────────────────────────────────────────────
     # Public interface
