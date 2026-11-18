@@ -126,7 +126,7 @@ class TestAlertIngestionLogRetention:
 
         _, scrub = _ingestion_calls(conn)
         assert scrub.args[0].lstrip().startswith("UPDATE alert_ingestion_log")
-        assert "SET raw_payload = $2::jsonb" in scrub.args[0]
+        assert "SET raw_payload = $2::text::jsonb" in scrub.args[0]
         assert "id IN" in scrub.args[0]
         assert scrub.args[1] == "30"
         assert "removed" in scrub.args[2]

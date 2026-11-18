@@ -127,10 +127,10 @@ async def _purge_alert_ingestion_log(conn) -> dict:
     scrubbed = await conn.execute(
         f"""
         UPDATE alert_ingestion_log
-        SET raw_payload = $2::jsonb
+        SET raw_payload = $2::text::jsonb
         WHERE received_at < NOW() - ($1 || ' days')::interval
           AND id IN ({first_rows})
-          AND raw_payload <> $2::jsonb
+          AND raw_payload <> $2::text::jsonb
         """,
         days,
         _SCRUBBED_PAYLOAD,

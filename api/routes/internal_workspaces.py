@@ -22,6 +22,8 @@ POST  /internal/workspaces/{id}/suspend        -- ToS-violation path
 POST  /internal/workspaces/{id}/reactivate     -- reverse a suspension
 POST  /internal/workspaces/{id}/rotate-token   -- revoke + reissue
 PATCH /internal/workspaces/{id}/tier           -- set product_tier without Stripe
+POST  /internal/workspaces/{id}/comp           -- comp to a tier: no Stripe, audited
+                                                   (core/workspace_comp.py, migration 069)
 POST  /internal/workspaces/{id}/mcp-invite     -- provision a Supabase Auth account
                                                    for MCP OAuth 2.1 access (Phase 6,
                                                    connectivity roadmap)
@@ -62,6 +64,7 @@ from pydantic import BaseModel
 from api.middleware.auth import _hash_token
 from api.middleware.internal_auth import get_internal_user
 from core.compliance import WorkspaceComplianceGuard
+from core.workspace_comp import CompError, comp_workspace
 from core.email import EmailError, enterprise_alert_html, send_email
 from core.setup_checklist import compute_setup_checklist_detail, compute_setup_checklist_detail_bulk
 from security.encryption import encrypt
@@ -140,6 +143,20 @@ class SetTierRequest(BaseModel):
 class WorkspaceTierResponse(BaseModel):
     id: str
     product_tier: str
+
+
+class CompRequest(BaseModel):
+    tier: str
+    reason: str
+
+
+class CompResponse(BaseModel):
+    id: str
+    product_tier: str
+    subscription_status: str
+    comped_at: str
+    comped_by: str
+    comp_reason: str
 
 
 class PurgeDataRequest(BaseModel):
@@ -340,6 +357,30 @@ async def set_workspace_tier(
         await _send_enterprise_alert(workspace_id, workspace["company_name"], workspace.get("contact_email"))
 
     return WorkspaceTierResponse(id=str(row["id"]), product_tier=row["product_tier"])
+
+
+@router.post("/{workspace_id}/comp", response_model=CompResponse)
+async def comp_workspace_route(
+    workspace_id: str,
+    body: CompRequest,
+    request: Request,
+    admin: dict = Depends(get_internal_user),
+) -> CompResponse:
+    """Comp a workspace to a tier with no Stripe billing; writes a workspace_comped audit row."""
+    async with request.app.state.db_pool.acquire() as conn:
+        await _get_workspace_or_404(conn, workspace_id)
+        try:
+            row = await comp_workspace(conn, workspace_id, body.tier, body.reason, admin["email"])
+        except CompError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CompResponse(
+        id=workspace_id,
+        product_tier=row["product_tier"],
+        subscription_status=row["stripe_subscription_status"],
+        comped_at=row["comped_at"].isoformat(),
+        comped_by=row["comped_by"],
+        comp_reason=row["comp_reason"],
+    )
 
 
 async def _send_enterprise_alert(workspace_id: str, company_name: str, contact_email: str | None) -> None:

@@ -423,6 +423,7 @@ export interface BillingStatus {
   tier: string
   subscription_status: string
   has_billing_account: boolean
+  comped?: boolean
 }
 
 export async function getBillingStatus(token: string): Promise<BillingStatus> {
