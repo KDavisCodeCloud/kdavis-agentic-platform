@@ -165,10 +165,10 @@ class ConnectionsStatusResponse(BaseModel):
     has_contact_email: bool = False
     # Settings → Policies, Step 3 (migration 050) -- 'read_only' | 'execute'.
     # Read only meaningful once the corresponding connection exists; shown
-    # regardless (defaults to 'execute', matching the column default) so
+    # regardless (defaults to 'read_only', matching the column default since migration 067) so
     # ConnectionsPanel can render the mode toggle before a connection is made.
-    aws_connection_mode: str = "execute"
-    azure_connection_mode: str = "execute"
+    aws_connection_mode: str = "read_only"
+    azure_connection_mode: str = "read_only"
 
 
 class WorkspaceTokenStatusResponse(BaseModel):
@@ -280,8 +280,8 @@ async def get_connections_status(
         product_tier=workspace.get("product_tier"),
         require_mfa=bool(workspace.get("require_mfa")),
         has_contact_email=bool(workspace.get("contact_email")),
-        aws_connection_mode=workspace.get("aws_connection_mode") or "execute",
-        azure_connection_mode=workspace.get("azure_connection_mode") or "execute",
+        aws_connection_mode=workspace.get("aws_connection_mode") or "read_only",
+        azure_connection_mode=workspace.get("azure_connection_mode") or "read_only",
     )
 
 

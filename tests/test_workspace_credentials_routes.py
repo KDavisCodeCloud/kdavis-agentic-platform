@@ -661,3 +661,23 @@ class TestRotateWorkspaceTokenSelfServe:
             second = await wc_routes.rotate_workspace_token_self_serve(request, workspace=workspace)
 
         assert first.workspace_token != second.workspace_token
+
+
+class TestConnectionModeDefault:
+    """Migration 067: a connection with no stored mode reads as Read-Only, never Execute."""
+
+    async def test_missing_mode_reports_read_only(self):
+        out = await wc_routes.get_connections_status(workspace={"id": uuid4()})
+        assert out.aws_connection_mode == "read_only"
+        assert out.azure_connection_mode == "read_only"
+
+    async def test_stored_execute_is_reported_as_is(self):
+        out = await wc_routes.get_connections_status(
+            workspace={"id": uuid4(), "aws_connection_mode": "execute", "azure_connection_mode": "read_only"},
+        )
+        assert out.aws_connection_mode == "execute"
+        assert out.azure_connection_mode == "read_only"
+
+    def test_response_model_default_is_read_only(self):
+        assert wc_routes.ConnectionsStatusResponse.model_fields["aws_connection_mode"].default == "read_only"
+        assert wc_routes.ConnectionsStatusResponse.model_fields["azure_connection_mode"].default == "read_only"

@@ -11,8 +11,6 @@ on non-payment or terms violation.
 Settings → Policies (migrations 048/049/050). Admin-only, RBAC-gated, per
 Kelvin's spec:
 
-GET   /workspace/policies                  -- read the execution policy
-PATCH /workspace/policies/execution        -- toggle auto_execution_enabled
 GET   /workspace/policies/exemptions       -- list resource exemptions
 DELETE/workspace/policies/exemptions/{id}  -- revoke ("un-exempt") one
 POST  /incidents/{id}/exempt-resource      -- "Exempt this resource" action
@@ -25,8 +23,12 @@ POST  /incidents/{id}/exempt-resource      -- "Exempt this resource" action
 
 Connection-mode reads (aws_connection_mode/azure_connection_mode) live on
 GET /workspace/credentials/status already (workspace_credentials.py) —
-not duplicated here; this file owns auto_execution_enabled and resource
-exemptions only.
+not duplicated here; this file owns resource exemptions only.
+
+There is deliberately no execution-policy setting. Every execution goes
+through POST /incidents/{id}/approve; the old auto_execution_enabled flag
+was removed (2026-11-18) because a toggle nothing read contradicted
+"approval can't be turned off".
 """
 
 import logging
@@ -72,16 +74,6 @@ def _caller_can_exempt(workspace: dict) -> bool:
 
 # ── Models ───────────────────────────────────────────────────────────────
 
-class ExecutionPolicyResponse(BaseModel):
-    auto_execution_enabled: bool
-    aws_connection_mode: str
-    azure_connection_mode: str
-
-
-class SetExecutionPolicyRequest(BaseModel):
-    auto_execution_enabled: bool
-
-
 class ResourceExemptionResponse(BaseModel):
     id: str
     resource_id: str
@@ -99,87 +91,6 @@ class ExemptionListResponse(BaseModel):
 
 class ExemptResourceRequest(BaseModel):
     reason: str = Field(..., min_length=1)
-
-
-# ── Execution policy ────────────────────────────────────────────────────
-
-@router.get("/workspace/policies", response_model=ExecutionPolicyResponse)
-async def get_execution_policy(
-    request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
-) -> ExecutionPolicyResponse:
-    if not _caller_is_policy_admin(workspace):
-        raise HTTPException(status_code=403, detail="Only a workspace admin can view execution policy")
-
-    async with request.app.state.db_pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT auto_execution_enabled, aws_connection_mode, azure_connection_mode "
-            "FROM workspaces WHERE id = $1",
-            workspace["id"],
-        )
-    if not row:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-
-    return ExecutionPolicyResponse(
-        auto_execution_enabled=row["auto_execution_enabled"],
-        aws_connection_mode=row["aws_connection_mode"],
-        azure_connection_mode=row["azure_connection_mode"],
-    )
-
-
-@router.patch("/workspace/policies/execution", response_model=ExecutionPolicyResponse)
-async def set_execution_policy(
-    body: SetExecutionPolicyRequest,
-    request: Request,
-    workspace: dict = Depends(get_workspace_or_member),
-) -> ExecutionPolicyResponse:
-    """
-    Every change writes an audit_events row (Step 1's requirement) with
-    the before/after value in metadata — this is the one setting on this
-    page that changes what "requires approval" structurally means for the
-    workspace, so its change history has to be reconstructable, not just
-    its current value.
-    """
-    if not _caller_is_policy_admin(workspace):
-        raise HTTPException(status_code=403, detail="Only a workspace admin can change execution policy")
-
-    workspace_id = workspace["id"]
-    async with request.app.state.db_pool.acquire() as conn:
-        before = await conn.fetchrow("SELECT auto_execution_enabled FROM workspaces WHERE id = $1", workspace_id)
-        if not before:
-            raise HTTPException(status_code=404, detail="Workspace not found")
-
-        row = await conn.fetchrow(
-            """
-            UPDATE workspaces
-            SET auto_execution_enabled = $1
-            WHERE id = $2
-            RETURNING auto_execution_enabled, aws_connection_mode, azure_connection_mode
-            """,
-            body.auto_execution_enabled,
-            workspace_id,
-        )
-
-    log.info(
-        "[Policies] workspace=%s auto_execution_enabled %s -> %s",
-        workspace_id, before["auto_execution_enabled"], body.auto_execution_enabled,
-    )
-    await write_audit_event(
-        workspace_id=str(workspace_id),
-        action="execution_policy_changed",
-        status="success",
-        metadata={
-            "before": {"auto_execution_enabled": before["auto_execution_enabled"]},
-            "after": {"auto_execution_enabled": body.auto_execution_enabled},
-            "changed_by": workspace.get("member_email"),
-        },
-    )
-
-    return ExecutionPolicyResponse(
-        auto_execution_enabled=row["auto_execution_enabled"],
-        aws_connection_mode=row["aws_connection_mode"],
-        azure_connection_mode=row["azure_connection_mode"],
-    )
 
 
 # ── Resource exemptions ─────────────────────────────────────────────────

@@ -40,6 +40,14 @@ _RETENTION_LOCK_ID = 592_014_773
 
 _RETAINED_TABLES = ("incidents", "audit_events")
 
+# alert_ingestion_log holds raw, unsanitized webhook payloads (migration 030).
+# They're only needed while an alert is being processed, so they get a short,
+# tier-independent window (2026-11-18 claims audit decision). Each workspace's
+# FIRST row is kept, with its payload replaced, because core/setup_checklist.py
+# reads MIN(received_at) / existence to show the alert source as verified.
+ALERT_PAYLOAD_RETENTION_DAYS = 30
+_SCRUBBED_PAYLOAD = '{"removed": "raw payload deleted after the retention window"}'
+
 
 async def run_retention_cleanup(pool: asyncpg.Pool) -> dict:
     """
@@ -81,6 +89,8 @@ async def run_retention_cleanup(pool: asyncpg.Pool) -> dict:
                     count = int(result.split()[-1])
                     deleted[table] += count
 
+            deleted.update(await _purge_alert_ingestion_log(conn))
+
             total = sum(deleted.values())
             if total:
                 log.info(
@@ -92,3 +102,40 @@ async def run_retention_cleanup(pool: asyncpg.Pool) -> dict:
                 log.info("[Retention] Cleanup pass — nothing past retention this cycle")
 
             return deleted
+
+
+async def _purge_alert_ingestion_log(conn) -> dict:
+    """
+    Delete alert_ingestion_log rows older than ALERT_PAYLOAD_RETENTION_DAYS,
+    except each workspace's first row, whose raw payload is replaced instead.
+    Unprocessed rows are included: a payload that old was never going to be
+    retried. Runs inside run_retention_cleanup's locked transaction.
+    """
+    days = str(ALERT_PAYLOAD_RETENTION_DAYS)
+    first_rows = (
+        "SELECT DISTINCT ON (workspace_id) id FROM alert_ingestion_log "
+        "WHERE workspace_id IS NOT NULL ORDER BY workspace_id, received_at, id"
+    )
+    deleted = await conn.execute(
+        f"""
+        DELETE FROM alert_ingestion_log
+        WHERE received_at < NOW() - ($1 || ' days')::interval
+          AND id NOT IN ({first_rows})
+        """,
+        days,
+    )
+    scrubbed = await conn.execute(
+        f"""
+        UPDATE alert_ingestion_log
+        SET raw_payload = $2::jsonb
+        WHERE received_at < NOW() - ($1 || ' days')::interval
+          AND id IN ({first_rows})
+          AND raw_payload <> $2::jsonb
+        """,
+        days,
+        _SCRUBBED_PAYLOAD,
+    )
+    return {
+        "alert_ingestion_log": int(deleted.split()[-1]),
+        "alert_ingestion_log_scrubbed": int(scrubbed.split()[-1]),
+    }

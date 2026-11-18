@@ -418,12 +418,6 @@ export interface ConnectionsStatus {
 }
 
 // Settings → Policies (migrations 048/049/050)
-export interface ExecutionPolicy {
-  auto_execution_enabled: boolean
-  aws_connection_mode: 'read_only' | 'execute'
-  azure_connection_mode: 'read_only' | 'execute'
-}
-
 export interface ResourceExemption {
   id: string
   resource_id: string
