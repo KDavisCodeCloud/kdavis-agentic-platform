@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send, ShieldOff, GitPullRequest } from 'lucide-react'
+import { ExternalLink, ShieldCheck, Clock, ChevronDown, ChevronUp, AlertTriangle, Loader2, CheckCircle2, XCircle, UserCheck, MessageSquare, Send, ShieldOff, GitPullRequest, GitMerge } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -500,6 +500,8 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
               ? <CheckCircle2 className="h-3 w-3" />
               : incident.status === 'proposed'
               ? <GitPullRequest className="h-3 w-3" />
+              : incident.status === 'fix_merged'
+              ? <GitMerge className="h-3 w-3" />
               : incident.status === 'resolved_manually'
               ? <UserCheck className="h-3 w-3" />
               : incident.status === 'failed'
@@ -749,16 +751,31 @@ export function RemediationCard({ incident, token, onApproved, onResolvedManuall
                 </div>
               </>
             )}
-            {incident.status === 'proposed' && (
+            {(incident.status === 'proposed' || incident.status === 'fix_merged') && (
               <>
-                <GitPullRequest className="h-10 w-10 text-blue-400" />
-                <div className="max-w-sm">
-                  <p className="text-sm font-medium text-blue-400">Fix proposed — nothing changed live yet</p>
-                  <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-                    A pull request, issue or alert was created. The live resource stays as it is until
-                    someone merges or acts on it. Once that&apos;s done, record it here.
-                  </p>
-                </div>
+                {incident.status === 'proposed' ? (
+                  <>
+                    <GitPullRequest className="h-10 w-10 text-blue-400" />
+                    <div className="max-w-sm">
+                      <p className="text-sm font-medium text-blue-400">Fix proposed — nothing changed live yet</p>
+                      <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                        A pull request, issue or alert was created. The live resource stays as it is until
+                        someone merges or acts on it. Once that&apos;s done, record it here.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <GitMerge className="h-10 w-10 text-blue-300" />
+                    <div className="max-w-sm">
+                      <p className="text-sm font-medium text-blue-300">Fix merged — awaiting verification</p>
+                      <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                        The fix PR was merged. Cloud Decoded hasn&apos;t confirmed the live resource changed —
+                        that happens once your pipeline applies it. If you&apos;ve confirmed it yourself, record it here.
+                      </p>
+                    </div>
+                  </>
+                )}
                 <div className="w-full max-w-sm space-y-2 text-left">
                   <textarea
                     value={manualNote}

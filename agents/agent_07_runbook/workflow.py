@@ -414,6 +414,7 @@ class RunbookWorkflow(BaseAgent):
             ),
         }
 
+        context["incident_id"] = state.get("incident_id")  # G17: fix branches are named for it
         try:
             result = await self._tools.execute_option(selected, context)
         except (EnvironmentError, RuntimeError, httpx.HTTPError) as exc:

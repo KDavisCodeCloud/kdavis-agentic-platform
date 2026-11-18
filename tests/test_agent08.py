@@ -1069,67 +1069,60 @@ class TestClusterFlagPriority:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestCreateDriftPR:
-    # Phase 2 (connectivity gaps): create_drift_pr used to be its own direct
-    # 5-step GitHub REST implementation (the one core.repo_tools.GitHubRepoTools
-    # was originally lifted from); it now delegates to core.repo_tools,
-    # selected by DriftTools._repo_tools(). These tests exercise that
-    # delegation boundary -- RepoTools' own httpx-level behavior is covered
-    # by tests/test_repo_tools.py.
+    # G16: create_drift_pr opens a PR that changes only the reviewed resource
+    # block, via core.iac_fix.open_fix_pr (re-check, terraform gate, then
+    # branch/commit/PR). The pipeline itself is covered in tests/test_iac_fix.py;
+    # these tests pin Agent 08's boundary.
 
     @pytest.fixture
     def tools(self):
         return DriftTools(github_token="gh_test_token")
 
     @pytest.fixture
+    def proposal(self):
+        from core.iac_fix import prepare_proposal
+        from core.repo_mapping import RepoTarget
+        from tests.test_hcl_edit import FIXED_SG, STACK
+        target = RepoTarget("acme", "infra", "main", "terraform/main.tf", "alert")
+        return prepare_proposal(target, STACK, "aws_security_group.web", FIXED_SG).to_dict()
+
+    @pytest.fixture
     def mock_repo_tools(self):
+        from tests.test_hcl_edit import STACK
         rt = MagicMock()
+        rt.read_file = AsyncMock(return_value=STACK)
+        rt.list_files = AsyncMock(return_value=["terraform/main.tf"])
         rt.create_branch = AsyncMock(return_value=None)
         rt.push_commit = AsyncMock(return_value="commit_sha_abc")
-        rt.create_pr = AsyncMock(return_value={
-            "pr_url": "https://github.com/acme/infra/pull/42", "pr_number": 42,
-        })
+        rt.create_pr = AsyncMock(return_value={"pr_url": "https://github.com/acme/infra/pull/42", "pr_number": 42})
         return rt
 
-    async def test_raises_without_any_credential_configured(self):
+    async def test_raises_without_any_credential_configured(self, proposal):
         no_creds = DriftTools()
         with pytest.raises(NoRepoCredentialError):
-            await no_creds.create_drift_pr("acme", "infra", "drift-fix", "tf/sg.tf", "content", "body")
+            await no_creds.create_drift_pr(proposal, "cloud-decoded/drift/x", "body")
 
-    async def test_delegates_branch_commit_and_pr_to_repo_tools(self, tools, mock_repo_tools):
+    async def test_commits_only_the_reviewed_block_after_the_gate_passes(self, tools, proposal, mock_repo_tools):
+        from core.terraform_gate import GateResult
+        from tests.test_hcl_edit import FIXED_SG, STACK
+        branch = "cloud-decoded/drift/11111111-1111-1111-1111-111111111111"
+        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools), \
+             patch("core.iac_fix.check_terraform", new=AsyncMock(return_value=GateResult(True, stage="done"))):
+            result = await tools.create_drift_pr(proposal, branch, "## Drift Report")
+
+        assert result["status"] == "pr_created" and result["pr_number"] == 42
+        (owner, repo, br, files, message), _ = mock_repo_tools.push_commit.await_args
+        assert (owner, repo, br) == ("acme", "infra", branch)
+        assert files["terraform/main.tf"].count("from_port   = 22") == 0
+        assert 'resource "aws_instance" "app"' in files["terraform/main.tf"]
+        assert "aws_security_group.web" in message
+        assert FIXED_SG in files["terraform/main.tf"] and STACK.startswith(files["terraform/main.tf"][:40])
+
+    async def test_without_a_reviewed_change_nothing_is_opened(self, tools, mock_repo_tools):
         with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
-            result = await tools.create_drift_pr(
-                "acme", "infra", "drift-correction/sg-abc123",
-                "terraform/security_groups.tf",
-                'resource "aws_security_group" "web" {}',
-                "## Drift Report",
-            )
-
-        assert result["status"] == "pr_created"
-        assert result["pr_number"] == 42
-        assert "acme/infra/pull/42" in result["pr_url"]
-        assert result["branch"] == "drift-correction/sg-abc123"
-
-        mock_repo_tools.create_branch.assert_awaited_once_with("acme", "infra", "drift-correction/sg-abc123", "main")
-        mock_repo_tools.push_commit.assert_awaited_once_with(
-            "acme", "infra", "drift-correction/sg-abc123",
-            {"terraform/security_groups.tf": 'resource "aws_security_group" "web" {}'},
-            "fix(drift): restore terraform/security_groups.tf to desired state [Cloud Decoded Agent 08]",
-        )
-        mock_repo_tools.create_pr.assert_awaited_once_with(
-            "acme", "infra", "drift-correction/sg-abc123",
-            "fix(drift): restore terraform/security_groups.tf to desired state",
-            "## Drift Report",
-            base="main",
-        )
-
-    async def test_propagates_repo_tools_errors(self, tools, mock_repo_tools):
-        mock_repo_tools.push_commit = AsyncMock(side_effect=RuntimeError("Could not commit corrected file"))
-        with patch.object(tools, "_repo_tools", return_value=mock_repo_tools):
-            with pytest.raises(RuntimeError, match="Could not commit corrected file"):
-                await tools.create_drift_pr(
-                    "acme", "infra", "drift-new-file/sg-new",
-                    "terraform/new_sg.tf", "content", "body",
-                )
+            result = await tools.create_drift_pr(None, "cloud-decoded/drift/x", "body")
+        assert result["status"] == "failed"
+        mock_repo_tools.create_branch.assert_not_awaited()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1179,6 +1172,7 @@ class TestExecuteOption:
     @pytest.fixture
     def tf_context(self):
         return {
+            "incident_id": "11111111-1111-1111-1111-111111111111",
             "drift_source":      "terraform",
             "resource_id":       "sg-abc123",
             "resource_type":     "aws_security_group",
@@ -1188,6 +1182,7 @@ class TestExecuteOption:
             "repo":              "infra",
             "file_path":         "terraform/security_groups.tf",
             "corrected_content": 'resource "aws_security_group" "web" {}',
+            "iac_proposal":      {"address": "aws_security_group.web", "file_path": "terraform/main.tf"},
             "drift_summary":     "Security group has critical drift",
             "report_body":       "## Drift Report",
             "issue_title":       "Drift: sg-abc123",
@@ -1210,10 +1205,11 @@ class TestExecuteOption:
         assert result["status"] == "pr_created"
         mock_pr.assert_called_once()
 
-    async def test_opt1_without_repository_returns_skipped(self, tools, tf_context):
-        ctx = {**tf_context, "owner": "", "repo": ""}
+    async def test_opt1_without_a_reviewed_change_is_not_available(self, tools, tf_context):
+        """G16: no one-block proposal from diagnose, no PR option -- never a whole-file write."""
+        ctx = {**tf_context, "iac_proposal": None}
         result = await tools.execute_option({"id": "opt_1"}, ctx)
-        assert result["status"] == "skipped"
+        assert result["status"] == "not_available"
 
     async def test_opt2_with_kubernetes_calls_apply_k8s_manifest(self, tools, k8s_context):
         expected = {"status": "ok", "exit_code": 0, "stdout": "deployment configured", "stderr": ""}

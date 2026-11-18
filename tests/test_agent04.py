@@ -354,12 +354,13 @@ class TestMigrationToolsCreatePR:
                 owner="acme", repo="backend", file_path="src/api/routes.py",
                 new_content="from fastapi import FastAPI",
                 pr_title="chore: migrate routes.py", pr_body="## Plan\nMigrate Flask to FastAPI",
+                branch_name="cloud-decoded/migration/11111111-1111-1111-1111-111111111111",
             )
 
         assert result["status"] == "pr_opened"
         assert result["pr_number"] == 99
         assert "github.com" in result["pr_url"]
-        assert "cloud-decoded/migrate-" in result["branch"]
+        assert result["branch"] == "cloud-decoded/migration/11111111-1111-1111-1111-111111111111"
 
         mock_repo_tools.create_branch.assert_awaited_once()
         branch_args = mock_repo_tools.create_branch.await_args.args
@@ -383,7 +384,7 @@ class TestMigrationToolsCreatePR:
         with pytest.raises(NoRepoCredentialError):
             await no_creds.create_migration_pr(
                 owner="acme", repo="backend", file_path="src/routes.py",
-                new_content="code", pr_title="title", pr_body="body",
+                new_content="code", pr_title="title", pr_body="body", branch_name="b",
             )
 
     async def test_propagates_repo_tools_errors(self, tools, mock_repo_tools):
@@ -392,7 +393,7 @@ class TestMigrationToolsCreatePR:
             with pytest.raises(RuntimeError, match="Could not get HEAD ref"):
                 await tools.create_migration_pr(
                     owner="acme", repo="backend", file_path="src/routes.py",
-                    new_content="code", pr_title="title", pr_body="body",
+                    new_content="code", pr_title="title", pr_body="body", branch_name="b",
                 )
 
 
@@ -478,6 +479,7 @@ class TestMigrationToolsExecuteOption:
     @pytest.fixture
     def base_context(self):
         return {
+            "incident_id": "11111111-1111-1111-1111-111111111111",
             "owner": "acme",
             "repo": "backend",
             "file_path": "src/api/routes.py",

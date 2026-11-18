@@ -65,8 +65,9 @@ Content-Type: application/json
 | `resource_type` | Resource type string (e.g., `aws_security_group`, `Deployment`, `AWS::EC2::SecurityGroup`) |
 | `resource_id` | Resource identifier (name, ARN, or `namespace/name`) |
 | `scope` | Region, namespace, or account for context |
-| `repository` | `"owner/repo"` — enables PR and issue creation |
-| `file_path` | Path to IaC/manifest file in repo — used for PR commits |
+| `repository` | `"owner/repo"`. Without it, Settings → Repositories (migration 063) is used |
+| `file_path` | The `.tf` file that defines the resource. Read at diagnose; a PR changes only that resource's block |
+| `base_branch` | Branch to read and open the PR against (default `main`) |
 
 ---
 
@@ -256,6 +257,18 @@ ingest → diagnose (LLM) → hitl_gate [PAUSE] → execute → complete
 - LLM identifies all drift items with severity, generates corrected content
 - Returns: `drift_items`, `drift_severity`, `drift_summary`, `corrected_content`, `options`
 - Overall severity = highest individual item severity
+- **Terraform PRs (G16, item 3, 2026-11-17):** diagnose reads the real `.tf`
+  file (repo from the payload, else Settings → Repositories), shows it
+  sanitized to the LLM, and takes back one `terraform_address` +
+  `corrected_block`. `core/iac_fix.py` splices that one block into the file;
+  the exact diff goes on opt_1. JSON, several blocks, a renamed resource or a
+  redaction placeholder are refused, and the card says why there's no PR
+  option. At execute the block is re-checked against the current file, then
+  terraform fmt + validate run in the isolated runner
+  (`services/terraform_runner`). Only if both pass is a branch
+  `cloud-decoded/drift/<incident-id>` created and the PR opened. No PR option
+  for CloudFormation, ARM/Bicep or generic sources until they get the same
+  minimal-edit treatment.
 
 ### 3. HITL Gate (Governance Rule 11)
 - Creates incident with drift details and severity

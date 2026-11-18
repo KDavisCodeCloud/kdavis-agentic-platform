@@ -22,6 +22,7 @@ _FERNET_KEY = Fernet.generate_key().decode()
 def _make_request(fetchrow_return=None) -> tuple:
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=fetchrow_return)
+    conn.fetchval = AsyncMock(return_value=None)
     conn.execute = AsyncMock(return_value=None)
     pool_ctx = AsyncMock()
     pool_ctx.__aenter__ = AsyncMock(return_value=conn)
@@ -65,34 +66,139 @@ class TestGetGithubAppInstallUrl:
 
 
 class TestGithubAppInstallCallback:
-    async def test_stores_installation_id_on_valid_state(self):
-        # Phase 3 (connectivity gaps): this is the customer's real browser
-        # navigating here (GitHub's setup_url), not an API call -- must
-        # return an actual redirect back into the dashboard, not bare JSON
-        # (which would just render as a blank page).
+    """
+    Linking needs proof of ownership (GitHub OAuth during install: the
+    installing user's token must list installation_id) AND proof of workspace
+    (our signed state, or a claim redeemed by the logged-in dashboard).
+    installation_id alone is a query param anyone can type.
+    """
+
+    APP_ROW = {"client_id": "Iv1.abc", "client_secret_encrypted": None}
+
+    def _request(self, holder=None):
+        from security.encryption import encrypt
+        request, conn = _make_request(fetchrow_return={**self.APP_ROW, "client_secret_encrypted": encrypt("sec")})
+        conn.fetchval = AsyncMock(return_value=holder)
+        return request, conn
+
+    async def _callback(self, request, *, state=None, code="oauth-code", can_access=True, installation_id="inst-123"):
+        with patch.object(wc_routes, "exchange_user_code", new=AsyncMock(return_value="ghu_user")) as exchange, \
+             patch.object(wc_routes, "user_can_access_installation",
+                          new=AsyncMock(return_value=can_access)) as access:
+            result = await wc_routes.github_app_install_callback(
+                request, installation_id=installation_id, state=state, code=code,
+            )
+        return result, exchange, access
+
+    @staticmethod
+    def _sqls(conn):
+        return [c.args[0] for c in conn.execute.await_args_list]
+
+    async def test_verified_owner_with_valid_state_is_linked(self):
         workspace_id = str(uuid4())
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            request, conn = self._request()
+            state = wc_routes.sign_workspace_state(workspace_id)
+            result, exchange, access = await self._callback(request, state=state)
+        assert result.headers["location"].endswith("/dashboard?connected=github")
+        assert exchange.await_args.args == ("Iv1.abc", "sec", "oauth-code")
+        assert access.await_args.args == ("ghu_user", "inst-123")
+        link = conn.execute.await_args_list[0]
+        assert "UPDATE workspaces" in link.args[0] and link.args[1:] == ("inst-123", workspace_id)
+
+    async def test_hijack_valid_state_but_user_cannot_access_installation(self):
+        """The attack: a real customer's signed state + someone else's installation_id."""
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            request, conn = self._request()
+            state = wc_routes.sign_workspace_state(str(uuid4()))
+            result, _, _ = await self._callback(request, state=state, can_access=False, installation_id="victim-999")
+        assert "github=unverified" in result.headers["location"]
+        assert not any("UPDATE workspaces" in s for s in self._sqls(conn))
+        unclaimed = conn.execute.await_args_list[-1]
+        assert "github_app_unclaimed_installations" in unclaimed.args[0] and unclaimed.args[1] == "victim-999"
+
+    async def test_hijack_typed_url_without_oauth_code_is_never_linked(self):
+        """Lab-style hand-completed callback (state, no code): unverified -> unclaimed."""
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            request, conn = self._request()
+            state = wc_routes.sign_workspace_state(str(uuid4()))
+            result, exchange, _ = await self._callback(request, state=state, code=None)
+        exchange.assert_not_awaited()
+        assert "github=unverified" in result.headers["location"]
+        assert not any("UPDATE workspaces" in s for s in self._sqls(conn))
+
+    async def test_github_refusing_the_code_is_unverified(self):
+        from core.github_app import GitHubAppError
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            request, conn = self._request()
+            with patch.object(wc_routes, "exchange_user_code", new=AsyncMock(side_effect=GitHubAppError("bad_code"))):
+                result = await wc_routes.github_app_install_callback(
+                    request, installation_id="inst-123", state=wc_routes.sign_workspace_state(str(uuid4())),
+                    code="stale")
+        assert "github=unverified" in result.headers["location"]
+        assert not any("UPDATE workspaces" in s for s in self._sqls(conn))
+
+    async def test_verified_owner_without_state_gets_a_claim_not_a_link(self):
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            request, conn = self._request()
+            result, _, _ = await self._callback(request, state=None)
+            location = result.headers["location"]
+            assert "github_claim=" in location
+            from urllib.parse import parse_qs, urlparse
+            claim = parse_qs(urlparse(location).query)["github_claim"][0]
+            assert wc_routes.verify_installation_claim(claim) == "inst-123"
+        assert not any("UPDATE workspaces" in s for s in self._sqls(conn))
+
+    async def test_verified_owner_cannot_take_an_installation_another_workspace_holds(self):
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            request, conn = self._request(holder=uuid4())
+            state = wc_routes.sign_workspace_state(str(uuid4()))
+            with pytest.raises(HTTPException) as exc:
+                await self._callback(request, state=state)
+        assert exc.value.status_code == 409
+        assert not any("UPDATE workspaces" in s for s in self._sqls(conn))
+
+
+class TestGithubAppClaim:
+    async def test_logged_in_workspace_redeems_a_verified_claim(self):
+        workspace_id = uuid4()
         request, conn = _make_request()
         with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
-            state = wc_routes.sign_workspace_state(workspace_id)
-            result = await wc_routes.github_app_install_callback(
-                request, installation_id="inst-123", state=state,
-            )
-        assert result.status_code in (302, 307)
-        assert result.headers["location"].endswith("/dashboard?connected=github")
-        conn.execute.assert_awaited_once()
-        args = conn.execute.await_args.args
-        assert "inst-123" in args
-        assert workspace_id in args
+            claim = wc_routes.sign_installation_claim("inst-123")
+            out = await wc_routes.claim_github_app_installation(
+                wc_routes.GithubAppClaimRequest(claim=claim), request, workspace={"id": workspace_id})
+        assert out == {"status": "linked", "installation_id": "inst-123"}
+        assert conn.execute.await_args_list[0].args[1:] == ("inst-123", str(workspace_id))
 
-    async def test_rejects_invalid_state(self):
+    @pytest.mark.parametrize("claim", ["garbage", "inst-123", "claim.inst-123:1:deadbeef"])
+    async def test_forged_claims_are_rejected(self, claim):
         request, conn = _make_request()
         with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
             with pytest.raises(HTTPException) as exc:
-                await wc_routes.github_app_install_callback(
-                    request, installation_id="inst-123", state="garbage",
-                )
+                await wc_routes.claim_github_app_installation(
+                    wc_routes.GithubAppClaimRequest(claim=claim), request, workspace={"id": uuid4()})
         assert exc.value.status_code == 400
         conn.execute.assert_not_awaited()
+
+    async def test_expired_claim_is_rejected(self):
+        import time as _time
+        request, conn = _make_request()
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            claim = wc_routes.sign_installation_claim("inst-123")
+            with patch("core.github_app.time.time", return_value=_time.time() + 3600):
+                with pytest.raises(HTTPException):
+                    await wc_routes.claim_github_app_installation(
+                        wc_routes.GithubAppClaimRequest(claim=claim), request, workspace={"id": uuid4()})
+        conn.execute.assert_not_awaited()
+
+    async def test_a_workspace_state_is_not_a_claim(self):
+        """The two signed tokens must not be interchangeable."""
+        request, conn = _make_request()
+        with patch.dict("os.environ", {"ENCRYPTION_KEY": _FERNET_KEY}):
+            state = wc_routes.sign_workspace_state("inst-123")
+            with pytest.raises(HTTPException):
+                await wc_routes.claim_github_app_installation(
+                    wc_routes.GithubAppClaimRequest(claim=state), request, workspace={"id": uuid4()})
 
 
 class TestSetupAwsRole:

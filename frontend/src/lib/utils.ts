@@ -34,6 +34,7 @@ export function agentLabel(agentId: string): string {
     agent_08_drift_detection: 'Drift',
     agent_09_onboarding_buddy:'Onboarding',
     agent_10_dependency_patch:'Dep Patch',
+    agent_11_resource_health: 'Resource Health',
   }
   return map[agentId] ?? agentId
 }

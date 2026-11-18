@@ -52,6 +52,8 @@ from botocore.exceptions import ClientError
 from core.repo_tools import RepoTools, get_repo_tools
 from core.workspace_credentials import build_kubeconfig
 
+from core.iac_fix import IacProposal, iac_pr_option, open_fix_pr
+from core.pr_branch import pr_branch_name
 from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
@@ -656,42 +658,25 @@ class DriftTools:
         log.warning("[DriftTools] kubectl apply exit_code=%s stderr=%s", result["exit_code"], result["stderr"])
         return result
 
-    async def create_drift_pr(
-        self,
-        owner: str,
-        repo: str,
-        branch_name: str,
-        file_path: str,
-        corrected_content: str,
-        pr_body: str,
-        base_branch: str = "main",
-        pr_title: Optional[str] = None,
-    ) -> dict:
+    async def create_drift_pr(self, proposal: Optional[dict], branch_name: str, pr_body: str) -> dict:
         """
-        Open a PR with the corrected IaC/manifest content, against whichever
-        provider (GitHub or Azure DevOps) this workspace has connected.
-        Delegates the 5-step branch/commit/PR flow to core.repo_tools
-        (Phase 2) -- this used to be its own direct GitHub implementation;
-        that logic is what core.repo_tools.GitHubRepoTools was lifted from.
+        Open a PR that changes only the drifted resource's block (G16): the
+        exact diff the approver saw, re-checked against the current file,
+        and terraform fmt + validate in the isolated runner before the
+        branch is created. core/iac_fix.py does all of it; this only names
+        the commit and PR.
         """
-        repo_tools = self._repo_tools()
-
-        await repo_tools.create_branch(owner, repo, branch_name, base_branch)
-        await repo_tools.push_commit(
-            owner, repo, branch_name,
-            {file_path: corrected_content},
-            f"fix(drift): restore {file_path} to desired state [Cloud Decoded Agent 08]",
+        iac = IacProposal.from_dict(proposal)
+        address = iac.address if iac else "resource"
+        result = await open_fix_pr(
+            self._repo_tools(), iac, branch_name,
+            pr_title=f"fix(drift): restore {address} to its declared state",
+            pr_body=pr_body,
+            commit_message=f"fix(drift): restore {address} [Cloud Decoded Agent 08]",
         )
-        title = pr_title or f"fix(drift): restore {file_path} to desired state"
-        pr = await repo_tools.create_pr(owner, repo, branch_name, title, pr_body, base=base_branch)
-
-        log.info("[DriftTools] Drift remediation PR created: %s", pr.get("pr_url"))
-        return {
-            "status": "pr_created",
-            "pr_url": pr.get("pr_url", ""),
-            "pr_number": pr.get("pr_number"),
-            "branch": branch_name,
-        }
+        log.info("[DriftTools] drift PR for %s: %s %s", address, result["status"],
+                 result.get("pr_url") or result.get("reason", ""))
+        return result
 
     async def create_drift_issue(
         self,
@@ -756,17 +741,11 @@ class DriftTools:
         report_body   = context.get("report_body", "")
 
         if option_id == "opt_1":
-            # Remediation PR — always safe; goes through code review
-            if not owner or not repo:
-                return {"status": "skipped", "reason": "repository not configured — cannot create PR"}
+            # Only in the catalog when diagnose produced a reviewed one-block change (G16).
 
-            branch_name = f"drift-correction/{resource_id.replace('/', '-').replace(':', '-')}"[:100]
             return await self.create_drift_pr(
-                owner=owner,
-                repo=repo,
-                branch_name=branch_name,
-                file_path=context.get("file_path", f"infra/{resource_id}"),
-                corrected_content=context.get("corrected_content", ""),
+                proposal=context.get("iac_proposal"),
+                branch_name=pr_branch_name("drift", context.get("incident_id")),
                 pr_body=report_body,
             )
 
@@ -912,15 +891,10 @@ def option_catalog(context: dict) -> dict[str, OptionSpec]:
     for Terraform/CloudFormation/generic sources the fix is a PR or an issue
     (Cloud Decoded never runs terraform apply).
     """
-    specs = [
-        OptionSpec(
-            "opt_1", "Open a PR restoring the IaC file",
-            "Writes the corrected content to the IaC file on a new branch and opens a pull request. "
-            "Nothing changes in the cloud until the PR is merged and your pipeline applies it. "
-            "Review the full diff before merging.",
-            "low", ("create_drift_pr",), proposal=True,
-        ),
-    ]
+    # G16: a PR is offered only for a Terraform change diagnose already
+    # computed as one resource block in the real file -- never a whole-file
+    # rewrite. Other sources (CloudFormation, ARM, generic) get the issue.
+    specs = iac_pr_option(context, "create_drift_pr")
     if context.get("drift_source") == "kubernetes":
         specs.append(OptionSpec(
             "opt_2", "Apply the corrected manifest to the cluster",

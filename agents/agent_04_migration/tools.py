@@ -21,6 +21,7 @@ import httpx
 
 from core.repo_tools import RepoTools, get_repo_tools
 
+from core.pr_branch import pr_branch_name
 from core.option_catalog import OptionSpec, catalog_dict, not_available_result
 
 log = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class MigrationTools:
         new_content: str,
         pr_title: str,
         pr_body: str,
+        branch_name: str,
         base_branch: str = "main",
     ) -> dict:
         """
@@ -81,7 +83,6 @@ class MigrationTools:
         """
         repo_tools = self._repo_tools()
 
-        branch_name = f"cloud-decoded/migrate-{_short_id()}"
         await repo_tools.create_branch(owner, repo, branch_name, base_branch)
         await repo_tools.push_commit(owner, repo, branch_name, {file_path: new_content}, f"chore(migration): {pr_title}")
         pr = await repo_tools.create_pr(owner, repo, branch_name, pr_title, pr_body, base=base_branch)
@@ -167,6 +168,7 @@ class MigrationTools:
                 new_content=migrated_code,
                 pr_title=context.get("pr_title", "chore: apply migration"),
                 pr_body=context.get("pr_body", context.get("migration_plan", "")),
+                branch_name=pr_branch_name("migration", context.get("incident_id")),
                 base_branch=context.get("base_branch", "main"),
             )
 
@@ -196,10 +198,6 @@ def _gh_headers(token: str) -> dict:
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-
-def _short_id() -> str:
-    import uuid
-    return str(uuid.uuid4())[:8]
 
 
 def option_catalog(context: dict) -> dict[str, OptionSpec]:

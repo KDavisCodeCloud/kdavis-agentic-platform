@@ -65,7 +65,8 @@ class GitHubAppError(Exception):
     token minting fails -- wraps GitHub's own error response."""
 
 
-def build_manifest(app_name: str, homepage_url: str, callback_url: str, webhook_url: str) -> dict:
+def build_manifest(app_name: str, homepage_url: str, callback_url: str, webhook_url: str,
+                   setup_url: str, user_callback_url: Optional[str] = None) -> dict:
     """
     The manifest GitHub creates the App from. `state` (CSRF-style, ties the
     redirect back to this registration attempt) is passed separately as a
@@ -75,6 +76,18 @@ def build_manifest(app_name: str, homepage_url: str, callback_url: str, webhook_
         "name": app_name,
         "url": homepage_url,
         "redirect_url": callback_url,
+        # Where GitHub sends the customer's browser after install, with
+        # installation_id + our signed state. Without it (lab run 2) the
+        # callback never fired and the workspace stayed unlinked.
+        # setup_on_update: also redirect when they change repo access later.
+        "setup_url": setup_url,
+        "setup_on_update": True,
+        # Ownership proof (Kelvin, 2026-11-17): after installing, the user
+        # authorizes the App and GitHub sends an OAuth `code` to the callback.
+        # The install callback only links an installation that the user's own
+        # token can see -- installation_id alone is a spoofable query param.
+        "request_oauth_on_install": True,
+        "callback_urls": [user_callback_url or setup_url],
         "hook_attributes": {"url": webhook_url},
         "public": False,
         "default_permissions": _APP_PERMISSIONS,
@@ -159,6 +172,89 @@ def build_install_url(app_slug: str, state: str) -> str:
     and this same `state` (used to tie the installation back to a
     workspace_id)."""
     return f"https://github.com/apps/{app_slug}/installations/new?state={state}"
+
+
+# ── installation ownership (OAuth during install) ───────────────────────────
+
+_CLAIM_TTL_SECONDS = 900
+_MAX_INSTALLATION_PAGES = 10
+
+
+def _sign(payload: str) -> str:
+    key = os.environ.get("ENCRYPTION_KEY", "").encode()
+    if not key:
+        raise GitHubAppError("ENCRYPTION_KEY not set -- cannot sign")
+    ts = str(int(time.time()))
+    sig = hmac.new(key, f"{payload}:{ts}".encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{ts}:{sig}"
+
+
+def sign_installation_claim(installation_id: str) -> str:
+    """A short-lived token saying "GitHub confirmed the user who just
+    authorized can access installation_id". Handed to the browser when the
+    install redirect arrives without our workspace state; the logged-in
+    dashboard redeems it, so the session proves the workspace."""
+    return _sign(f"claim.{installation_id}")
+
+
+def verify_installation_claim(claim: str) -> Optional[str]:
+    try:
+        payload, ts, sig = claim.rsplit(":", 2)
+    except (ValueError, AttributeError):
+        return None
+    key = os.environ.get("ENCRYPTION_KEY", "").encode()
+    expected = hmac.new(key, f"{payload}:{ts}".encode(), hashlib.sha256).hexdigest()
+    if not key or not hmac.compare_digest(expected, sig) or not payload.startswith("claim."):
+        return None
+    try:
+        if int(time.time()) - int(ts) > _CLAIM_TTL_SECONDS:
+            return None
+    except ValueError:
+        return None
+    return payload[len("claim."):]
+
+
+async def exchange_user_code(client_id: str, client_secret: str, code: str) -> str:
+    """Trades the OAuth `code` from the install redirect for a user access
+    token. The token is used once (user_can_access_installation) and never stored."""
+    async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
+        try:
+            resp = await client.post(
+                "https://github.com/login/oauth/access_token",
+                headers={"Accept": "application/json"},
+                data={"client_id": client_id, "client_secret": client_secret, "code": code},
+            )
+        except httpx.RequestError as exc:
+            raise GitHubAppError(f"Could not reach GitHub to verify the installing user: {exc}") from exc
+    body = resp.json() if resp.status_code == 200 else {}
+    token = body.get("access_token")
+    if not token:
+        raise GitHubAppError(f"GitHub refused the authorization code: {body.get('error') or resp.status_code}")
+    return token
+
+
+async def user_can_access_installation(user_token: str, installation_id: str) -> bool:
+    """True only if installation_id is among the installations this user can
+    access (GET /user/installations)."""
+    async with httpx.AsyncClient(timeout=_MAX_HTTP_TIMEOUT) as client:
+        for page in range(1, _MAX_INSTALLATION_PAGES + 1):
+            try:
+                resp = await client.get(
+                    f"{_GH_API}/user/installations",
+                    headers={"Authorization": f"Bearer {user_token}", "Accept": "application/vnd.github+json",
+                             "X-GitHub-Api-Version": "2022-11-28"},
+                    params={"per_page": 100, "page": page},
+                )
+            except httpx.RequestError as exc:
+                raise GitHubAppError(f"Could not list the user's installations: {exc}") from exc
+            if resp.status_code != 200:
+                raise GitHubAppError(f"Could not list the user's installations ({resp.status_code})")
+            installations = resp.json().get("installations", [])
+            if any(str(i.get("id")) == str(installation_id) for i in installations):
+                return True
+            if len(installations) < 100:
+                return False
+    return False
 
 
 def _mint_app_jwt(app_id: str, private_key_pem: str) -> str:

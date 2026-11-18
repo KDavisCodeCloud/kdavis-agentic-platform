@@ -164,11 +164,13 @@ def test_every_catalog_pr_or_issue_option_is_a_proposal():
 # ── lab cases end to end through the real tools ─────────────────────────────
 
 async def test_lab_a1_agent11_skipped_is_not_executed(mock_db, workspace_id, mock_router):
-    """A1/Z1: the alert carried no repo, opt_1 returned skipped, the incident said executed."""
+    """A1/Z1: the alert carried no repo, the option returned skipped, the incident said executed.
+    (Since item 3 the PR option only exists with a reviewed change; the issue option is the one
+    that can still find no repo.)"""
     wf = _make("agent_11", mock_db, workspace_id, mock_router)
     from agents.agent_11_resource_health.tools import option_catalog
     from core.option_catalog import bind_options
-    opt_1 = bind_options([{"id": "opt_1"}], option_catalog({}))[0]
+    opt_1 = bind_options([{"id": "opt_2"}], option_catalog({}))[0]
     result = await wf._tools.execute_option(opt_1, {"owner": "", "repo": "", "resource_id": "vm"})
     assert result["status"] == "skipped"
     with patch.object(wf.hitl, "mark_executed", new=AsyncMock()) as executed, \

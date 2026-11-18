@@ -468,6 +468,7 @@ class OnboardingWorkflow(BaseAgent):
             "slack_channel": state.get("slack_channel", ""),
         }
 
+        context["incident_id"] = state.get("incident_id")  # G17: fix branches are named for it
         result = await self._tools.execute_option(selected, context)
 
         self._write_audit(

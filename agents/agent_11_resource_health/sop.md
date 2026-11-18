@@ -446,3 +446,20 @@ step (`created` → `hitl_gate` → `execute:opt_1` → `hitl_gate` → `complet
 bugs 1-5 above before each respective fix deployed, were deleted rather
 than left as unapprovable orphans in the Cloud Decoded — Internal QA
 workspace.
+
+## IaC fix PRs (G13 + G16, item 3, 2026-11-17)
+
+Break-It Lab A1/Z1: the PR option read `owner`/`repo`/`corrected_content`
+from the alert payload, and SNS / Azure Monitor alerts carry none of them,
+so every fix returned `skipped` (and would have committed an empty file if a
+repo had been given). Now:
+
+- The repo comes from the payload if it names one, else the longest matching
+  prefix rule in Settings → Repositories, else the workspace default
+  (`core/repo_mapping.py`, migration 063).
+- Diagnose reads that `.tf` file and asks for one `terraform_address` +
+  `corrected_block`. opt_1 exists only when that splices cleanly, and it
+  carries the exact diff. Otherwise the card says why there's no PR option.
+- Execute re-checks the block, runs terraform fmt + validate in the isolated
+  runner, then opens the PR on `cloud-decoded/resource-health/<incident-id>`.
+  A failed check marks the incident failed with the reason; no PR is opened.

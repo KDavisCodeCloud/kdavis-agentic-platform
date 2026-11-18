@@ -6,6 +6,8 @@ export type IncidentStatus =
   | 'executed'
   // G1 (Break-It Lab): a PR/issue was opened; nothing live changed yet.
   | 'proposed'
+  // Item 3: the fix PR merged. Not verified live yet -- item 4 closes it.
+  | 'fix_merged'
   | 'held'
   | 'failed'
   | 'budget_exceeded'
@@ -19,9 +21,18 @@ export type IncidentStatus =
 // REJECTABLE_STATUSES / MANUALLY_RESOLVABLE_STATUSES (a test pins them equal).
 // Bulk select offers a checkbox for any status bulk resolve accepts.
 export const REJECTABLE_STATUSES: readonly IncidentStatus[] = ['pending_approval']
-export const MANUALLY_RESOLVABLE_STATUSES: readonly IncidentStatus[] = ['pending_approval', 'proposed']
+export const MANUALLY_RESOLVABLE_STATUSES: readonly IncidentStatus[] = ['pending_approval', 'proposed', 'fix_merged']
 
 export type ImpactLevel = 'low' | 'medium' | 'high'
+
+// Settings → Repositories (G13): where a resource's IaC lives. match_prefix
+// null = the workspace default; otherwise resources whose ID starts with it.
+export interface RepoMapping {
+  match_prefix: string | null
+  repository: string
+  base_branch: string
+  iac_path: string
+}
 
 // Gap-table #7-#9 (db.models.BlastRadius). All optional: agents that don't
 // produce them yet keep rendering exactly as before.
@@ -218,6 +229,12 @@ export const STATUS_META: Record<
     color: 'text-blue-400',
     dot:   'bg-blue-400',
     bg:    'bg-blue-400/10 border-blue-400/30',
+  },
+  fix_merged: {
+    label: 'Fix Merged — Awaiting Verification',
+    color: 'text-blue-300',
+    dot:   'bg-blue-300 animate-pulse',
+    bg:    'bg-blue-300/10 border-blue-300/30',
   },
   held: {
     label: 'Held',

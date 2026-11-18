@@ -34,6 +34,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_08_drift_detection.tools import DriftTools
 from agents.agent_08_drift_detection.tools import option_catalog
+from core.hcl_edit import HclEditError
+from core.iac_fix import attach_diff, iac_prompt_block, load_iac_file, prepare_proposal
 from core.option_catalog import bind_options, catalog_prompt_block
 from core.security import shield
 from core.severity import normalize_severity
@@ -75,6 +77,8 @@ class DriftState(TypedDict):
     drift_severity: Optional[str]
     drift_summary: Optional[str]
     corrected_content: Optional[str]
+    iac_proposal: Optional[dict]   # G16: the reviewed one-block change (core/iac_fix.py)
+    iac_note: Optional[str]        # why there's no PR option, shown on the card
     remediation_options: Optional[list]
     nothing_found: Optional[str]   # G15: why there is nothing to approve (no incident is created)
     tokens_used: int
@@ -356,6 +360,8 @@ class DriftWorkflow(BaseAgent):
             "drift_severity":     None,
             "drift_summary":      None,
             "corrected_content":  None,
+            "iac_proposal":       None,
+            "iac_note":           None,
             "remediation_options": None,
             "nothing_found": None,
             "selected_option":    None,
@@ -393,8 +399,20 @@ class DriftWorkflow(BaseAgent):
 
         await self.check_budget(estimated_tokens=5000, model="claude-sonnet-4-20250514")
 
+        # G16/G13: a PR edits one block of the real .tf file. Load it (repo from
+        # the payload, else Settings → Repositories) and show it to the LLM.
+        iac_target, iac_text, iac_note = None, None, None
+        if state["drift_source"] == "terraform":
+            iac_target, iac_text, iac_note = await load_iac_file(
+                self.db, self.workspace_id, self._tools._repo_tools, state["resource_id"],
+                _payload_repo(state),
+            )
+            if iac_text is not None:
+                user_message = f"{user_message}\n\n{iac_prompt_block(iac_target, iac_text, self.agent_id)}"
+
         # G12: the LLM may only propose actions this agent can execute (core/option_catalog.py)
-        _catalog = option_catalog({"drift_source": state["drift_source"]})
+        _catalog = option_catalog({"drift_source": state["drift_source"],
+                                   "iac_file_available": iac_text is not None})
         user_message = f"{user_message}\n\n{catalog_prompt_block(_catalog)}"
 
         response, estimated_tokens = self.call_llm(
@@ -414,7 +432,17 @@ class DriftWorkflow(BaseAgent):
         drift_severity    = diagnosis.get("drift_severity", "LOW")
         drift_summary     = diagnosis.get("drift_summary", "")
         corrected_content = diagnosis.get("corrected_content", "")
-        options           = bind_options(diagnosis.get("options", []), _catalog, self.agent_id)
+
+        iac_proposal = None
+        if iac_text is not None:
+            try:
+                iac_proposal = prepare_proposal(iac_target, iac_text, diagnosis.get("terraform_address", ""),
+                                                diagnosis.get("corrected_block", "")).to_dict()
+            except HclEditError as exc:
+                iac_note = f"No PR option: {exc}"
+        # Bind against what can actually run now: opt_1 only with a reviewed change.
+        _catalog = option_catalog({"drift_source": state["drift_source"], "iac_proposal": iac_proposal})
+        options = attach_diff(bind_options(diagnosis.get("options", []), _catalog, self.agent_id), iac_proposal)
 
         if not drift_items and str(drift_severity).upper() == "UNKNOWN":
             # The prompt's answer when desired or actual state is missing: that is
@@ -444,6 +472,8 @@ class DriftWorkflow(BaseAgent):
             "drift_severity":    drift_severity,
             "drift_summary":     drift_summary,
             "corrected_content": corrected_content,
+            "iac_proposal":      iac_proposal,
+            "iac_note":          iac_note,
             "remediation_options": options,
             # G15 (Break-It Lab A2): no drift items → no incident, audit entry only
             "nothing_found":     None if drift_items else (parsed_error or "No drift detected"),
@@ -485,6 +515,8 @@ class DriftWorkflow(BaseAgent):
             f"Summary:\n{state.get('drift_summary', '')[:400]}\n\n"
             f"Top Drift Items:\n{top_items_text}"
         )
+        if state.get("iac_note"):
+            raw_log += f"\n\n{state['iac_note']}"
 
         incident_id = await self.hitl.create_incident(
             incident_id=state["incident_id"],
@@ -560,11 +592,13 @@ class DriftWorkflow(BaseAgent):
             "repo":              repo,
             "file_path":         state.get("file_path", ""),
             "corrected_content": state.get("corrected_content", ""),
+            "iac_proposal":      state.get("iac_proposal"),
             "drift_summary":     state.get("drift_summary", ""),
             "report_body":       report_body,
             "issue_title":       f"Drift detected: {state['drift_source']}/{state['resource_id']}",
         }
 
+        context["incident_id"] = state.get("incident_id")  # G17: fix branches are named for it
         result = await self._tools.execute_option(selected, context)
 
         self._write_audit(
@@ -675,3 +709,11 @@ def _build_drift_report(
         f"---\n"
         f"*Generated by Cloud Decoded Agent 08. Review all changes before merging.*"
     )
+
+
+def _payload_repo(state: DriftState) -> dict:
+    """Agent 08 payloads name the repo as repository="owner/repo" + file_path."""
+    owner, _, repo = (state.get("repository") or "").partition("/")
+    payload = state.get("webhook_payload") or {}
+    return {"owner": owner, "repo": repo, "file_path": state.get("file_path", ""),
+            "base_branch": payload.get("base_branch")}

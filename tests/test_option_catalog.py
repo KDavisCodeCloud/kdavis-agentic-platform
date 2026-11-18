@@ -71,6 +71,9 @@ AGENTS = [
     ]),
     ("agent_08_drift_detection", "DriftTools", [
         {"drift_source": "terraform", "owner": "o", "repo": "r", "resource_id": "sg-1", "corrected_content": "x"},
+        # G16: the PR option exists only with a reviewed one-block change from diagnose
+        {"drift_source": "terraform", "owner": "o", "repo": "r", "resource_id": "sg-1",
+         "iac_proposal": {"address": "aws_security_group.web", "file_path": "main.tf"}},
         {"drift_source": "kubernetes", "owner": "o", "repo": "r", "resource_id": "deploy/web",
          "corrected_content": "kind: Deployment", "scope": "ns"},
     ]),
@@ -83,6 +86,8 @@ AGENTS = [
     ]),
     ("agent_11_resource_health", "ResourceHealthTools", [
         {"owner": "o", "repo": "r", "resource_id": "i-1", "report_body": "b", "corrected_content": "x"},
+        {"owner": "o", "repo": "r", "resource_id": "i-1", "report_body": "b",
+         "iac_proposal": {"address": "aws_instance.app", "file_path": "main.tf"}},
     ]),
 ]
 
@@ -115,7 +120,8 @@ async def test_option_runs_exactly_the_calls_its_label_describes(pkg, cls_name, 
     spec = catalog[option_id]
     tools, mocks = _mocked_tools(pkg, cls_name)
 
-    result = await tools.execute_option({"id": option_id, "title": "LLM-written text that must not matter"}, dict(ctx))
+    ctx = {**ctx, "incident_id": "11111111-1111-1111-1111-111111111111"}  # every workflow passes it (G17)
+    result = await tools.execute_option({"id": option_id, "title": "LLM-written text that must not matter"}, ctx)
 
     called = {name for name, m in mocks.items() if m.await_count}
     assert called == set(spec.calls), (

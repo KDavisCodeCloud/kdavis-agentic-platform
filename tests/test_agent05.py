@@ -1010,18 +1010,19 @@ class TestCreatePolicyPR:
                 new_content=json.dumps(SAMPLE_MINIMIZED_POLICY, indent=2),
                 pr_title="security(iam): minimize AppRole",
                 pr_body="## IAM Minimization",
+                branch_name="cloud-decoded/iam-minimize/11111111-1111-1111-1111-111111111111",
             )
 
         assert result["status"] == "pr_opened"
         assert result["pr_number"] == 5
-        assert "cloud-decoded/iam-minimize-" in result["branch"]
+        assert result["branch"] == "cloud-decoded/iam-minimize/11111111-1111-1111-1111-111111111111"
 
     async def test_raises_without_github_token(self):
         no_token = IAMMinimizeTools(github_token="")
         with pytest.raises(EnvironmentError, match="GITHUB_TOKEN"):
             await no_token.create_policy_pr(
                 owner="acme", repo="infra", file_path="f.json",
-                new_content="{}", pr_title="t", pr_body="b",
+                new_content="{}", pr_title="t", pr_body="b", branch_name="b",
             )
 
 
@@ -1041,6 +1042,7 @@ class TestExecuteOption:
     @pytest.fixture
     def aws_context(self):
         return {
+            "incident_id": "11111111-1111-1111-1111-111111111111",
             "cloud_provider": "aws",
             "policy_arn": "arn:aws:iam::123:policy/P",
             "minimized_policy": SAMPLE_MINIMIZED_POLICY,

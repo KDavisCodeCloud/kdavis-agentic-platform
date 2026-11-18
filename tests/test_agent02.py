@@ -440,6 +440,7 @@ class TestK8sToolsGitOpsPR:
                 commit_message="fix: increase payment-service memory to 1Gi",
                 pr_title="[Cloud Decoded] Increase payment-service memory limit",
                 pr_body="Automated fix for OOMKilled — see incident inc-002",
+                incident_id="11111111-1111-1111-1111-111111111111",
             )
 
         assert result["status"] == "pr_opened"
@@ -460,6 +461,7 @@ class TestK8sToolsGitOpsPR:
                 new_content="...",
                 commit_message="fix",
                 pr_title="Fix",
+                incident_id="11111111-1111-1111-1111-111111111111",
                 pr_body="body",
             )
 

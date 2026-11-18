@@ -43,6 +43,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agents.base_agent import BaseAgent
 from agents.agent_10_dependency_patch.tools import DependencyPatchTools
 from agents.agent_10_dependency_patch.tools import option_catalog
+from core.pr_branch import pr_branch_name
 from core.option_catalog import bind_options, catalog_prompt_block
 from core.severity import severity_from_counts
 
@@ -479,7 +480,7 @@ class DependencyPatchWorkflow(BaseAgent):
         )
 
         owner, _, repo = state["repository"].partition("/")
-        branch_name    = f"cloud-decoded/security-patch-{uuid.uuid4().hex[:8]}"
+        branch_name    = pr_branch_name("security-patch", state.get("incident_id"))
 
         report_body = _build_vulnerability_report(
             ecosystem=state["ecosystem"],
@@ -520,6 +521,7 @@ class DependencyPatchWorkflow(BaseAgent):
             "issue_body":      report_body,
         }
 
+        context["incident_id"] = state.get("incident_id")  # G17: fix branches are named for it
         result = await self._tools.execute_option(selected, context)
 
         self._write_audit(

@@ -52,17 +52,17 @@ def _test_private_key_pem() -> str:
 
 class TestBuildManifest:
     def test_includes_fine_grained_permissions_not_broader(self):
-        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh")
+        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh", "https://x.com/setup")
         assert manifest["default_permissions"] == {
             "contents": "write", "pull_requests": "write", "metadata": "read",
         }
 
     def test_is_not_public(self):
-        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh")
+        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh", "https://x.com/setup")
         assert manifest["public"] is False
 
     def test_hook_url_set_from_webhook_url_arg(self):
-        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh")
+        manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh", "https://x.com/setup")
         assert manifest["hook_attributes"]["url"] == "https://x.com/wh"
 
 
@@ -179,3 +179,75 @@ class TestWorkspaceState:
     def test_verify_rejects_garbage_input(self):
         with patch.dict("os.environ", {"ENCRYPTION_KEY": "test-key"}):
             assert verify_workspace_state("not-a-real-state") is None
+
+
+def test_manifest_sets_setup_url_so_install_redirects_back():
+    """Lab run 2: no Setup URL, so GitHub never redirected and the workspace stayed unlinked."""
+    manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh",
+                              "https://x.com/setup")
+    assert manifest["setup_url"] == "https://x.com/setup"
+    assert manifest["setup_on_update"] is True
+
+
+async def test_register_route_points_setup_url_at_the_install_callback(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    from api.routes import github_app_admin
+
+    conn = AsyncMock(); conn.fetchrow = AsyncMock(return_value=None)
+    ctx = AsyncMock(); ctx.__aenter__ = AsyncMock(return_value=conn); ctx.__aexit__ = AsyncMock(return_value=False)
+    pool = MagicMock(); pool.acquire = MagicMock(return_value=ctx)
+    monkeypatch.setenv("API_BASE_URL", "https://api.example.com")
+    out = await github_app_admin.register_github_app(SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db_pool=pool))), admin={})
+    assert out["manifest"]["setup_url"] == "https://api.example.com/api/v1/workspace/credentials/github-app/callback"
+
+
+def test_manifest_requests_oauth_on_install_for_ownership_proof():
+    manifest = build_manifest("Cloud Decoded", "https://x.com", "https://x.com/cb", "https://x.com/wh",
+                              "https://x.com/setup", "https://x.com/setup")
+    assert manifest["request_oauth_on_install"] is True
+    assert manifest["callback_urls"] == ["https://x.com/setup"]
+
+
+def _gh_client(*responses):
+    from unittest.mock import AsyncMock, MagicMock
+    client = AsyncMock()
+    client.get = AsyncMock(side_effect=list(responses))
+    client.post = AsyncMock(side_effect=list(responses))
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
+def _oauth_resp(status, body):
+    from unittest.mock import MagicMock
+    return MagicMock(status_code=status, json=lambda: body)
+
+
+async def test_user_access_check_finds_installation_on_a_later_page():
+    from unittest.mock import patch
+    from core.github_app import user_can_access_installation
+    page1 = {"installations": [{"id": n} for n in range(100)]}
+    page2 = {"installations": [{"id": 182810665}]}
+    client = _gh_client(_oauth_resp(200, page1), _oauth_resp(200, page2))
+    with patch("core.github_app.httpx.AsyncClient", return_value=client):
+        assert await user_can_access_installation("ghu_x", "182810665") is True
+    assert client.get.await_args.kwargs["headers"]["Authorization"] == "Bearer ghu_x"
+
+
+async def test_user_access_check_is_false_when_not_listed():
+    from unittest.mock import patch
+    from core.github_app import user_can_access_installation
+    client = _gh_client(_oauth_resp(200, {"installations": [{"id": 1}]}))
+    with patch("core.github_app.httpx.AsyncClient", return_value=client):
+        assert await user_can_access_installation("ghu_x", "999") is False
+
+
+async def test_code_exchange_error_raises():
+    import pytest
+    from unittest.mock import patch
+    from core.github_app import GitHubAppError, exchange_user_code
+    client = _gh_client(_oauth_resp(200, {"error": "bad_verification_code"}))
+    with patch("core.github_app.httpx.AsyncClient", return_value=client):
+        with pytest.raises(GitHubAppError, match="bad_verification_code"):
+            await exchange_user_code("id", "secret", "code")
