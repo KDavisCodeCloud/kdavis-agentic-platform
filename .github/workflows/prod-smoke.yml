@@ -1,0 +1,91 @@
+name: Production smoke test
+
+# Runs after every successful production deploy of the Cloud Decoded
+# frontend (Vercel, "Production – frontend") or API (Railway,
+# "kdavis-agentic-platform / production"). Both report deployments to
+# GitHub, which fires deployment_status here.
+#
+# It can't stop a deploy that's already live -- Vercel and Railway deploy
+# on their own, outside Actions. What it does on failure:
+#   - this run goes red on the deployed commit (GitHub emails on failure),
+#   - it opens an issue titled "Production smoke test failing", or
+#     comments on the open one, so a failure can't sit unseen,
+#   - when a later run passes, it closes that issue.
+#
+# Born from 2026-11-18, when Vercel prod shipped with no Supabase env vars
+# and login/signup were broken with every check green. See
+# scripts/prod_smoke.py for exactly what's checked.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"   # also every 6h, to catch config drift between deploys
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: prod-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: >-
+      github.event_name != 'deployment_status' || (
+        github.event.deployment_status.state == 'success' && (
+          github.event.deployment.environment == 'Production – frontend' ||
+          github.event.deployment.environment == 'kdavis-agentic-platform / production'
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Railway reports success when the container starts; give the API a
+      # moment to finish booting before the health checks hit it.
+      - name: Settle
+        if: github.event_name == 'deployment_status'
+        run: sleep 45
+      - name: Smoke test theclouddecoded.com
+        id: smoke
+        run: |
+          set -o pipefail
+          python scripts/prod_smoke.py --base https://theclouddecoded.com | tee smoke.txt
+
+      - name: Open or update the failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER: ${{ github.event_name == 'deployment_status' && github.event.deployment.environment || github.event_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "**Trigger:** ${TRIGGER} at \`${GITHUB_SHA::7}\`"
+            echo "**Run:** ${RUN_URL}"
+            echo
+            echo '```'
+            cat smoke.txt 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } > body.md
+          n=$(gh issue list --state open --search "Production smoke test failing in:title" --json number --jq '.[0].number')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --body-file body.md
+          else
+            gh issue create --title "Production smoke test failing" --body-file body.md
+          fi
+
+      - name: Close the failure issue on recovery
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          n=$(gh issue list --state open --search "Production smoke test failing in:title" --json number --jq '.[0].number')
+          if [ -n "$n" ]; then
+            gh issue close "$n" --comment "Passing again at \`${GITHUB_SHA::7}\`: ${RUN_URL}"
+          fi
